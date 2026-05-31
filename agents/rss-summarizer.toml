@@ -1,0 +1,10 @@
+name = "rss-summarizer"
+description = "Fetches and summarizes RSS feeds daily"
+background = true
+allows_reload = true
+persists_state = false
+schedule = "0 7 * * *"
+pipeline = ["rss-fetch", "llm-summarize"]
+
+[config]
+rss_url = "https://news.ycombinator.com/rss"

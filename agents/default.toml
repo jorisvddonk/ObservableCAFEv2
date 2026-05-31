@@ -1,0 +1,6 @@
+name = "default"
+description = "Standard chat agent"
+background = false
+allows_reload = true
+persists_state = true
+pipeline = ["trust-filter", "llm"]
