@@ -40,8 +40,8 @@ async fn main() -> Result<()> {
         bus,
         db,
     };
-
     let app = router::build_router(state);
+
     let addr = format!("0.0.0.0:{}", config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!("cafe-server listening on {}", addr);
