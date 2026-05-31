@@ -6,11 +6,11 @@ import (
 )
 
 type Config struct {
-	TelegramToken  string
-	CafeServerURL  string
-	CafeToken      string
-	DBPath         string
-	TrustedUsers   []string
+	TelegramToken string
+	CafeServerURL string
+	CafeToken     string
+	DBPath        string
+	TrustedUsers  []string
 }
 
 func LoadConfig() Config {
@@ -25,7 +25,7 @@ func LoadConfig() Config {
 
 	serverURL := os.Getenv("CAFE_SERVER_URL")
 	if serverURL == "" {
-		serverURL = "http://localhost:3000"
+		serverURL = "http://localhost:4000"
 	}
 
 	dbPath := os.Getenv("TELEGRAM_DB_PATH")

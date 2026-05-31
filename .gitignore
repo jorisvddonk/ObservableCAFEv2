@@ -1,3 +1,6 @@
+# TypeScript
+*.tsbuildinfo
+
 # Rust
 /target/
 **/*.rs.bk
@@ -16,6 +19,7 @@ cafe-web/dist/
 .env.local
 *.pem
 *.key
+cafe.db
 
 # Editor
 .vscode/
