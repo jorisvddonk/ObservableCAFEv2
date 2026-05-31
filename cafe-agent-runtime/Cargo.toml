@@ -1,0 +1,11 @@
+[package]
+name = "cafe-agent-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-agent-runtime"
+path = "src/main.rs"
+
+[dependencies]
+cafe-types = { path = "../cafe-types" }

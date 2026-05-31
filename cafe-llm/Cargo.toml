@@ -1,0 +1,11 @@
+[package]
+name = "cafe-llm"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-llm"
+path = "src/main.rs"
+
+[dependencies]
+cafe-types = { path = "../cafe-types" }

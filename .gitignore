@@ -1,0 +1,23 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Go
+cafe-telegram/cafe-telegram
+
+# Node / frontend
+cafe-web/node_modules/
+cafe-web/dist/
+
+# Runtime / local config
+*.sock
+.env
+.env.local
+*.pem
+*.key
+
+# Editor
+.vscode/
+.idea/
+*.swp

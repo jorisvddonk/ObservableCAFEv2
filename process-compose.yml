@@ -1,0 +1,66 @@
+version: "0.5"
+
+processes:
+  cafe-bus:
+    command: ./target/debug/cafe-bus
+    readiness_probe:
+      exec:
+        command: "test -S /tmp/cafe-bus.sock"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    restart_policy:
+      restart: on_failure
+      max_restarts: 3
+
+  cafe-store:
+    command: ./target/debug/cafe-store
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    restart_policy:
+      restart: on_failure
+
+  cafe-llm:
+    command: ./target/debug/cafe-llm
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    environment:
+      - "LLM_BACKEND=ollama"
+      - "OLLAMA_URL=http://localhost:11434"
+    restart_policy:
+      restart: on_failure
+
+  cafe-agent-runtime:
+    command: ./target/debug/cafe-agent-runtime
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+      cafe-store:
+        condition: process_healthy
+    restart_policy:
+      restart: on_failure
+
+  cafe-server:
+    command: ./target/debug/cafe-server
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+      cafe-store:
+        condition: process_healthy
+    environment:
+      - "PORT=3000"
+    restart_policy:
+      restart: on_failure
+
+  cafe-telegram:
+    command: ./cafe-telegram/cafe-telegram
+    depends_on:
+      cafe-server:
+        condition: process_healthy
+    environment:
+      - "TELEGRAM_TOKEN="
+    disabled: true   # enable when TELEGRAM_TOKEN is set
+    restart_policy:
+      restart: on_failure
