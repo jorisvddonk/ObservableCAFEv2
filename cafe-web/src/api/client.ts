@@ -1,4 +1,4 @@
-const BASE_URL = '';  // proxied via vite dev server; empty = same origin
+const BASE_URL = 'http://localhost:4000';
 
 let _token = localStorage.getItem('cafe_token') ?? '';
 
