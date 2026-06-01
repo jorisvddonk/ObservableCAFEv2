@@ -32,6 +32,7 @@ processes:
       - "RUST_BACKTRACE=1"
       - "LLM_BACKEND=ollama"
       - "OLLAMA_URL=http://localhost:11434"
+      - "OLLAMA_MODEL=Gemma-3-4b-it-GGUF:latest"
     readiness_probe:
       exec:
         command: "true"

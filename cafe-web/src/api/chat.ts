@@ -1,10 +1,8 @@
 import { getToken } from './client';
 import type { Chunk } from '../types';
 
-/**
- * Send a message and stream the response via fetch + ReadableStream.
- * Calls onChunk for each received chunk, onDone when stream_complete arrives.
- */
+const BASE_URL = 'http://localhost:4000';
+
 export async function streamChat(
   sessionId: string,
   content: string,
@@ -13,7 +11,7 @@ export async function streamChat(
   onError: (err: Error) => void,
 ): Promise<void> {
   try {
-    const res = await fetch(`/api/sessions/${sessionId}/chat`, {
+    const res = await fetch(`${BASE_URL}/api/sessions/${sessionId}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
