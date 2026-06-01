@@ -1,7 +1,26 @@
 import { getToken } from './client';
 import type { Chunk } from '../types';
 
-const BASE_URL = 'http://localhost:4000';
+function resolveApiBase(): string {
+  if (typeof window === 'undefined') return '';
+
+  const explicit = (window as any).__CAFE_API_URL__;
+  if (typeof explicit === 'string' && explicit.length > 0) {
+    return explicit;
+  }
+
+  const origin = window.location.origin;
+  const m = origin.match(/^(https?:\/\/[^:]+):(\d+)$/);
+  if (m) {
+    const port = parseInt(m[2], 10);
+    if (port === 8081) {
+      return `${m[1]}:4000`;
+    }
+    return origin;
+  }
+
+  return `${origin}:4000`;
+}
 
 export async function streamChat(
   sessionId: string,
@@ -11,7 +30,10 @@ export async function streamChat(
   onError: (err: Error) => void,
 ): Promise<void> {
   try {
-    const res = await fetch(`${BASE_URL}/api/sessions/${sessionId}/chat`, {
+    const base = resolveApiBase();
+    const url = `${base}/api/sessions/${sessionId}/chat`;
+    console.log('[chat.ts] origin=', window.location.origin, 'base=', base, 'url=', url);
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -34,7 +56,6 @@ export async function streamChat(
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Parse SSE lines
       let newlineIdx: number;
       while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, newlineIdx).trim();

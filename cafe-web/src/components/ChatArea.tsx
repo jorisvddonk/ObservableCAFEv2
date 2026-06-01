@@ -3,8 +3,18 @@ import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
 import { streamChat } from '../api/chat';
 import { Message } from './Message';
-import { StreamingIndicator } from './StreamingIndicator';
 import type { Chunk } from '../types';
+
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 export function ChatArea() {
   const store = useSessionStore();
@@ -12,19 +22,18 @@ export function ChatArea() {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [store.messages, store.streamingText]);
+  }, [store.messages]);
 
   const send = async () => {
     const text = input.trim();
-    if (!text || store.streaming || !store.activeSessionId) return;
+    const state = useSessionStore.getState();
+    if (!text || state.streaming || !state.activeSessionId) return;
     setInput('');
 
-    // Optimistically add user message
     const userChunk: Chunk = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       content_type: 'text',
       content: text,
       data: null,
@@ -33,34 +42,34 @@ export function ChatArea() {
       annotations: { 'chat.role': 'user' },
       timestamp: Date.now(),
     };
-    store.appendChunk(userChunk);
-    store.setStreaming(true);
+    state.appendChunk(userChunk);
+    state.setStreaming(true);
 
     await streamChat(
-      store.activeSessionId,
+      state.activeSessionId,
       text,
       (chunk) => {
-        if (chunk.content_type === 'text' && chunk.annotations['chat.is_streaming']) {
-          store.appendStreamToken(chunk.content ?? '');
-        } else if (chunk.annotations['chat.stream_complete']) {
-          // Build final assistant chunk from accumulated text
-          const finalChunk: Chunk = {
-            ...chunk,
+        if (chunk.content_type === 'text' && chunk.annotations['chat.role'] === 'assistant') {
+          const live = useSessionStore.getState();
+          const assistantChunk: Chunk = {
+            id: chunk.id,
             content_type: 'text',
-            content: store.streamingText + (chunk.content ?? ''),
+            content: chunk.content,
+            data: null,
+            mime_type: null,
+            producer: chunk.producer,
             annotations: { ...chunk.annotations, 'chat.role': 'assistant' },
+            timestamp: chunk.timestamp,
           };
-          store.finaliseStream(finalChunk);
+          live.appendChunk(assistantChunk);
         }
       },
       () => {
-        store.setStreaming(false);
-        store.clearStreamingText();
+        useSessionStore.getState().setStreaming(false);
       },
       (err) => {
-        console.error('Stream error:', err);
-        store.setStreaming(false);
-        store.clearStreamingText();
+        console.error('[ChatArea] onError', err);
+        useSessionStore.getState().setStreaming(false);
       },
     );
   };
@@ -135,7 +144,6 @@ export function ChatArea() {
         {store.messages.map((chunk) => (
           <Message key={chunk.id} chunk={chunk} />
         ))}
-        <StreamingIndicator text={store.streamingText} />
         <div ref={bottomRef} />
       </div>
 
@@ -153,7 +161,9 @@ export function ChatArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={store.streaming ? 'Waiting for response…' : 'Type a message… (Enter to send, Shift+Enter for newline)'}
+          placeholder={
+            store.streaming ? 'Waiting for response…' : 'Type a message… (Enter to send, Shift+Enter for newline)'
+          }
           disabled={store.streaming}
           rows={1}
           style={{

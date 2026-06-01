@@ -10,19 +10,12 @@ import { TokenSetup } from './components/TokenSetup';
 export function App() {
   const [hasToken, setHasToken] = useState(() => !!getToken());
   const { refresh } = useSessions();
-  const store = useSessionStore();
 
   useEffect(() => {
+    console.log('[App] mount origin=', window.location.origin);
     if (!hasToken) return;
     refresh().then(() => {
-      // Auto-select first session or restore from hash
-      const hash = window.location.hash.slice(1);
-      const sessions = useSessionStore.getState().sessions;
-      if (hash && sessions.some((s) => s.session_id === hash)) {
-        // useSessions hook handles hash restore
-      } else if (sessions.length > 0 && !store.activeSessionId) {
-        // Will be handled by useSessions useEffect
-      }
+      console.log('[App] refresh complete, sessions=', useSessionStore.getState().sessions.length);
     });
   }, [hasToken]);
 

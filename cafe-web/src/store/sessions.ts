@@ -25,18 +25,40 @@ export const useSessionStore = create<SessionStore>((set) => ({
   streaming: false,
   streamingText: '',
 
-  setSessions: (sessions) => set({ sessions }),
-  setActiveSession: (id) => set({ activeSessionId: id, messages: [], streamingText: '' }),
-  setMessages: (messages) => set({ messages }),
-  appendChunk: (chunk) => set((s) => ({ messages: [...s.messages, chunk] })),
-  appendStreamToken: (text) =>
-    set((s) => ({ streamingText: s.streamingText + text })),
-  finaliseStream: (chunk) =>
+  setSessions: (sessions) => {
+    console.log('[store] setSessions count=', sessions.length);
+    set({ sessions });
+  },
+  setActiveSession: (id) => {
+    console.log('[store] setActiveSession id=', id);
+    set({ activeSessionId: id, messages: [], streamingText: '' });
+  },
+  setMessages: (messages) => {
+    console.log('[store] setMessages count=', messages.length);
+    set({ messages });
+  },
+  appendChunk: (chunk) => {
+    console.log('[store] appendChunk id=', chunk.id, 'role=', chunk.annotations['chat.role']);
+    set((s) => ({ messages: [...s.messages, chunk] }));
+  },
+  appendStreamToken: (text) => {
+    console.log('[store] appendStreamToken len=', text.length, 'total=', useSessionStore.getState().streamingText.length + text.length);
+    set((s) => ({ streamingText: s.streamingText + text }));
+  },
+  finaliseStream: (chunk) => {
+    console.log('[store] finaliseStream contentLen=', chunk.content?.length ?? 0);
     set((s) => ({
       messages: [...s.messages, chunk],
       streamingText: '',
       streaming: false,
-    })),
-  setStreaming: (v) => set({ streaming: v }),
-  clearStreamingText: () => set({ streamingText: '' }),
+    }));
+  },
+  setStreaming: (v) => {
+    console.log('[store] setStreaming=', v);
+    set({ streaming: v });
+  },
+  clearStreamingText: () => {
+    console.log('[store] clearStreamingText');
+    set({ streamingText: '' });
+  },
 }));
