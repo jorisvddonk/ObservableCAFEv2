@@ -6,7 +6,42 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use tracing;
 
+/// Nested `[initial_chunk]` table in a TOML agent file.
+/// This is the preferred format for config-seeding null chunks (see task.md).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct InitialChunkTable {
+    /// "text" | "null" | "binary" — defaults to "text"
+    #[serde(rename = "type")]
+    pub chunk_type: Option<String>,
+    pub content: Option<String>,
+    /// base64-encoded bytes (binary chunks only)
+    pub data: Option<String>,
+    pub mime_type: Option<String>,
+    pub annotations: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
 /// Raw TOML representation of an agent file (superset of AgentDefinition).
+///
+/// Supports two styles for the initial chunk:
+///
+/// **Flat style (legacy):**
+/// ```toml
+/// initial_chunk_content = "hello"
+/// initial_chunk_type    = "text"
+/// [initial_chunk_annotations]
+/// chat.role = "user"
+/// ```
+///
+/// **Nested style (preferred for config-seeding):**
+/// ```toml
+/// [initial_chunk]
+/// type = "null"
+/// [initial_chunk.annotations]
+/// "config.type" = "runtime"
+/// "config.llm.model" = "gemma3:1b"
+/// ```
+///
+/// If both are present, `initial_chunk` (nested) takes precedence.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentFile {
     pub name: String,
@@ -16,28 +51,60 @@ pub struct AgentFile {
     pub persists_state: Option<bool>,
     pub pipeline: Option<Vec<String>>,
     pub schedule: Option<String>,
+    // --- flat style ---
     pub initial_chunk_content: Option<String>,
     pub initial_chunk_type: Option<String>,
     pub initial_chunk_data: Option<String>, // base64 encoded for binary
     pub initial_chunk_mime_type: Option<String>,
     pub initial_chunk_annotations: Option<std::collections::HashMap<String, serde_json::Value>>,
+    // --- nested style ---
+    pub initial_chunk: Option<InitialChunkTable>,
 }
 
 impl From<AgentFile> for AgentDefinition {
     fn from(f: AgentFile) -> Self {
-        // Handle binary data if present
-        let initial_chunk_data = if let Some(data_str) = f.initial_chunk_data {
-            // Decode base64 data
-            match STANDARD.decode(data_str) {
-                Ok(data) => Some(data),
-                Err(e) => {
-                    tracing::warn!("Failed to decode base64 initial chunk data: {}", e);
+        // Nested `[initial_chunk]` table takes precedence over flat keys.
+        let (chunk_type, chunk_content, chunk_data, chunk_mime_type, chunk_annotations) =
+            if let Some(ref ic) = f.initial_chunk {
+                let data = if let Some(ref data_str) = ic.data {
+                    match STANDARD.decode(data_str) {
+                        Ok(d) => Some(d),
+                        Err(e) => {
+                            tracing::warn!("Failed to decode base64 initial_chunk.data: {}", e);
+                            None
+                        }
+                    }
+                } else {
                     None
-                }
-            }
-        } else {
-            None
-        };
+                };
+                (
+                    ic.chunk_type.clone().unwrap_or_else(|| "text".into()),
+                    ic.content.clone().unwrap_or_default(),
+                    data,
+                    ic.mime_type.clone(),
+                    ic.annotations.clone().unwrap_or_default(),
+                )
+            } else {
+                // Fall back to flat style
+                let data = if let Some(data_str) = f.initial_chunk_data {
+                    match STANDARD.decode(data_str) {
+                        Ok(d) => Some(d),
+                        Err(e) => {
+                            tracing::warn!("Failed to decode base64 initial chunk data: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                (
+                    f.initial_chunk_type.unwrap_or_else(|| "text".into()),
+                    f.initial_chunk_content.unwrap_or_default(),
+                    data,
+                    f.initial_chunk_mime_type,
+                    f.initial_chunk_annotations.unwrap_or_default(),
+                )
+            };
 
         AgentDefinition {
             name: f.name,
@@ -47,11 +114,11 @@ impl From<AgentFile> for AgentDefinition {
             persists_state: f.persists_state.unwrap_or(true),
             pipeline: f.pipeline.unwrap_or_else(|| vec!["llm".into()]),
             schedule: f.schedule,
-            initial_chunk_content: f.initial_chunk_content.unwrap_or_default(),
-            initial_chunk_type: f.initial_chunk_type.unwrap_or_else(|| "text".into()),
-            initial_chunk_data,
-            initial_chunk_mime_type: f.initial_chunk_mime_type,
-            initial_chunk_annotations: f.initial_chunk_annotations.unwrap_or_default(),
+            initial_chunk_content: chunk_content,
+            initial_chunk_type: chunk_type,
+            initial_chunk_data: chunk_data,
+            initial_chunk_mime_type: chunk_mime_type,
+            initial_chunk_annotations: chunk_annotations,
         }
     }
 }
@@ -179,6 +246,7 @@ mod tests {
             initial_chunk_data: None,
             initial_chunk_mime_type: None,
             initial_chunk_annotations: Some(annotations),
+            initial_chunk: None,
         };
 
         let agent: AgentDefinition = agent_file.into();
@@ -196,6 +264,58 @@ mod tests {
         assert_eq!(agent.initial_chunk_annotations.get("chat.source").unwrap(), &json!("test"));
         assert_eq!(agent.initial_chunk_annotations.get("chat.priority").unwrap(), &json!("high"));
         assert_eq!(agent.initial_chunk_annotations.get("custom.value").unwrap(), &json!(42));
+    }
+
+    #[test]
+    fn test_load_agent_file_with_nested_initial_chunk_null() {
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, r#"name = "volition""#).unwrap();
+        writeln!(temp_file, r#"pipeline = ["stt", "llm", "tts"]"#).unwrap();
+        writeln!(temp_file, "").unwrap();
+        writeln!(temp_file, "[initial_chunk]").unwrap();
+        writeln!(temp_file, r#"type = "null""#).unwrap();
+        writeln!(temp_file, "").unwrap();
+        writeln!(temp_file, "[initial_chunk.annotations]").unwrap();
+        writeln!(temp_file, r#""config.type" = "runtime""#).unwrap();
+        writeln!(temp_file, r#""config.llm.system_prompt" = "You are Volition""#).unwrap();
+        writeln!(temp_file, r#""config.llm.temperature" = 0.7"#).unwrap();
+        writeln!(temp_file, r#""config.tts.profile" = "Volition""#).unwrap();
+
+        let agent = load_agent_file(temp_file.path()).unwrap();
+        assert_eq!(agent.name, "volition");
+        assert_eq!(agent.initial_chunk_type, "null");
+        assert_eq!(
+            agent.initial_chunk_annotations.get("config.type").unwrap(),
+            &serde_json::json!("runtime")
+        );
+        assert_eq!(
+            agent.initial_chunk_annotations.get("config.llm.system_prompt").unwrap(),
+            &serde_json::json!("You are Volition")
+        );
+        assert_eq!(
+            agent.initial_chunk_annotations.get("config.tts.profile").unwrap(),
+            &serde_json::json!("Volition")
+        );
+    }
+
+    #[test]
+    fn test_nested_initial_chunk_overrides_flat_keys() {
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, r#"name = "agent""#).unwrap();
+        // flat style (should be ignored when nested is present)
+        writeln!(temp_file, r#"initial_chunk_content = "flat content""#).unwrap();
+        writeln!(temp_file, r#"initial_chunk_type = "text""#).unwrap();
+        writeln!(temp_file, "").unwrap();
+        // nested style takes precedence
+        writeln!(temp_file, "[initial_chunk]").unwrap();
+        writeln!(temp_file, r#"type = "null""#).unwrap();
+        writeln!(temp_file, "[initial_chunk.annotations]").unwrap();
+        writeln!(temp_file, r#""config.type" = "runtime""#).unwrap();
+
+        let agent = load_agent_file(temp_file.path()).unwrap();
+        assert_eq!(agent.initial_chunk_type, "null");
+        assert_eq!(agent.initial_chunk_content, "");
+        assert!(agent.initial_chunk_annotations.contains_key("config.type"));
     }
 
     #[test]

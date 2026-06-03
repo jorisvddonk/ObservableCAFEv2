@@ -1,21 +1,16 @@
 name = "rss-summarizer"
 description = "Fetches and summarizes RSS feeds daily"
-# For text initial chunk:
-# initial_chunk_content = "Starting RSS summarization cycle..."
-# initial_chunk_type = "text"
-#
-# For null initial chunk:
-# initial_chunk_type = "null"
-#
-# With annotations:
-# [initial_chunk_annotations]
-#   chat.source = "scheduler"
-#   chat.importance = "info"
 background = true
 allows_reload = true
 persists_state = false
 schedule = "0 7 * * *"
 pipeline = ["rss-fetch", "llm-summarize"]
 
-[config]
-rss_url = "https://news.ycombinator.com/rss"
+# Seed the session with a runtime config null chunk so resolve_session_config
+# can read config.rss.url (and any other evaluator config) from history.
+[initial_chunk]
+type = "null"
+
+[initial_chunk.annotations]
+"config.type" = "runtime"
+"config.rss.url" = "https://news.ycombinator.com/rss"

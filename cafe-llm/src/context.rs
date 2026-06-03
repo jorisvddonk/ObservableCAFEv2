@@ -1,5 +1,5 @@
 use crate::backends::LlmMessage;
-use cafe_types::{Chunk, ContentType};
+use cafe_types::{keys, Chunk, ContentType};
 
 /// Build an LLM message list from session history.
 pub fn build_messages(history: &[Chunk], system_prompt: Option<&str>) -> Vec<LlmMessage> {
@@ -38,8 +38,8 @@ pub fn build_messages(history: &[Chunk], system_prompt: Option<&str>) -> Vec<Llm
     messages
 }
 
-/// Extract the most recent runtime config from session history.
-pub struct SessionConfig {
+/// Resolved LLM config derived from a session's chunk history.
+pub struct LlmConfig {
     pub backend: Option<String>,
     pub model: Option<String>,
     pub system_prompt: Option<String>,
@@ -47,8 +47,16 @@ pub struct SessionConfig {
     pub max_tokens: Option<u32>,
 }
 
-pub fn extract_config(history: &[Chunk]) -> SessionConfig {
-    let mut cfg = SessionConfig {
+/// Extract LLM config by scanning history in **forward chronological order**,
+/// merging all `config.type: runtime` null chunks on a per-key basis.
+/// Later chunks win per key; a chunk that only sets one key does not wipe
+/// the others (partial update semantics).
+///
+/// Reads the namespaced `config.llm.*` annotation keys as the canonical source.
+/// Falls back to the legacy flat keys (`config.model`, etc.) so existing sessions
+/// that were seeded with the old format continue to work.
+pub fn extract_config(history: &[Chunk]) -> LlmConfig {
+    let mut cfg = LlmConfig {
         backend: None,
         model: None,
         system_prompt: None,
@@ -56,15 +64,75 @@ pub fn extract_config(history: &[Chunk]) -> SessionConfig {
         max_tokens: None,
     };
 
-    // Scan in reverse to find the most recent config chunk
-    for chunk in history.iter().rev() {
-        if chunk.is_runtime_config() {
-            cfg.backend = chunk.get_annotation("config.backend");
-            cfg.model = chunk.get_annotation("config.model");
-            cfg.system_prompt = chunk.get_annotation("config.system_prompt");
-            cfg.temperature = chunk.get_annotation("config.temperature");
-            cfg.max_tokens = chunk.get_annotation("config.max_tokens");
-            break;
+    for chunk in history {
+        if chunk.content_type != ContentType::Null {
+            continue;
+        }
+        if chunk
+            .annotations
+            .get(keys::CONFIG_TYPE)
+            .and_then(|v| v.as_str())
+            != Some("runtime")
+        {
+            continue;
+        }
+
+        // Namespaced keys (preferred, config.llm.*)
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_BACKEND) {
+            cfg.backend = v.as_str().map(String::from);
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_MODEL) {
+            cfg.model = v.as_str().map(String::from);
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_SYSTEM_PROMPT) {
+            cfg.system_prompt = v.as_str().map(String::from);
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_TEMPERATURE) {
+            cfg.temperature = v
+                .as_f64()
+                .map(|f| f as f32)
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_MAX_TOKENS) {
+            cfg.max_tokens = v
+                .as_u64()
+                .map(|n| n as u32)
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+        }
+
+        // Legacy flat keys (config.backend, config.model, …) — kept for
+        // backwards compatibility with sessions seeded before the namespace change.
+        // Only applied when the namespaced key hasn't already set the field this chunk.
+        if cfg.backend.is_none() {
+            if let Some(v) = chunk.annotations.get(keys::CONFIG_BACKEND) {
+                cfg.backend = v.as_str().map(String::from);
+            }
+        }
+        if cfg.model.is_none() {
+            if let Some(v) = chunk.annotations.get(keys::CONFIG_MODEL) {
+                cfg.model = v.as_str().map(String::from);
+            }
+        }
+        if cfg.system_prompt.is_none() {
+            if let Some(v) = chunk.annotations.get(keys::CONFIG_SYSTEM_PROMPT) {
+                cfg.system_prompt = v.as_str().map(String::from);
+            }
+        }
+        if cfg.temperature.is_none() {
+            if let Some(v) = chunk.annotations.get(keys::CONFIG_TEMPERATURE) {
+                cfg.temperature = v
+                    .as_f64()
+                    .map(|f| f as f32)
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+            }
+        }
+        if cfg.max_tokens.is_none() {
+            if let Some(v) = chunk.annotations.get(keys::CONFIG_MAX_TOKENS) {
+                cfg.max_tokens = v
+                    .as_u64()
+                    .map(|n| n as u32)
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+            }
         }
     }
 
