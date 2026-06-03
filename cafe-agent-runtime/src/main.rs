@@ -39,7 +39,15 @@ async fn main() -> Result<()> {
 
         if def.background {
             info!("cafe-agent-runtime: starting background agent '{}'", name);
-            if let Err(e) = lifecycle::create_agent_session(&config.socket_path, &name).await {
+            if let Err(e) = lifecycle::create_agent_session(
+                &config.socket_path,
+                &name,
+                Some(def.initial_chunk_content.clone()),
+                Some(def.initial_chunk_type.clone()),
+                def.initial_chunk_data.clone(),
+                def.initial_chunk_mime_type.clone(),
+                def.initial_chunk_annotations.clone(),
+            ).await {
                 warn!("cafe-agent-runtime: failed to create session for '{}': {}", name, e);
             }
 
@@ -65,7 +73,7 @@ async fn main() -> Result<()> {
 
     // 4. Start file watcher for hot-reload
     let dirs: Vec<String> = config.agent_paths.clone();
-    let (mut _watcher_handle, mut change_rx) = match watcher::start_watcher(&dirs) {
+    let (_watcher_handle, change_rx) = match watcher::start_watcher(&dirs) {
         Ok(w) => w,
         Err(e) => {
             warn!("cafe-agent-runtime: file watcher failed to start: {}", e);

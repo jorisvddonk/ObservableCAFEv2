@@ -22,6 +22,11 @@ pub struct AgentDefinition {
     pub persists_state: bool,
     pub pipeline: Vec<String>,
     pub schedule: Option<String>,
+    pub initial_chunk_content: String,
+    pub initial_chunk_type: String,
+    pub initial_chunk_data: Option<Vec<u8>>,
+    pub initial_chunk_mime_type: Option<String>,
+    pub initial_chunk_annotations: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl Default for AgentDefinition {
@@ -34,6 +39,11 @@ impl Default for AgentDefinition {
             persists_state: true,
             pipeline: vec!["trust-filter".into(), "llm".into()],
             schedule: None,
+            initial_chunk_content: String::new(),
+            initial_chunk_type: "text".into(),
+            initial_chunk_data: None,
+            initial_chunk_mime_type: None,
+            initial_chunk_annotations: std::collections::HashMap::new(),
         }
     }
 }

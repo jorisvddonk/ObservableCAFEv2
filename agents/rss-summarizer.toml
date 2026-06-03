@@ -1,5 +1,16 @@
 name = "rss-summarizer"
 description = "Fetches and summarizes RSS feeds daily"
+# For text initial chunk:
+# initial_chunk_content = "Starting RSS summarization cycle..."
+# initial_chunk_type = "text"
+#
+# For null initial chunk:
+# initial_chunk_type = "null"
+#
+# With annotations:
+# [initial_chunk_annotations]
+#   chat.source = "scheduler"
+#   chat.importance = "info"
 background = true
 allows_reload = true
 persists_state = false

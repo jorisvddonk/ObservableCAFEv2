@@ -1,5 +1,22 @@
 name = "default"
 description = "Standard chat agent"
+# For text initial chunk:
+# initial_chunk_content = "Hello! How can I help you today?"
+# initial_chunk_type = "text"
+#
+# For null initial chunk:
+# initial_chunk_type = "null"
+#
+# For binary initial chunk:
+# initial_chunk_content = ""  # ignored for binary
+# initial_chunk_type = "binary"
+# initial_chunk_data = "base64-encoded-data-here"
+# initial_chunk_mime_type = "application/octet-stream"
+#
+# With annotations:
+# [initial_chunk_annotations]
+#   chat.priority = "high"
+#   chat.source = "system"
 background = false
 allows_reload = true
 persists_state = true
