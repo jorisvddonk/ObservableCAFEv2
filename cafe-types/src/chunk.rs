@@ -137,6 +137,23 @@ impl Chunk {
                 .and_then(|v| v.as_str())
                 == Some("runtime")
     }
+
+    /// If this chunk carries a JSON-RPC request, return it.
+    pub fn as_rpc_request(&self) -> Option<crate::jsonrpc::JsonRpcRequest> {
+        self.get_annotation(crate::annotation::keys::JSONRPC_REQUEST)
+    }
+
+    /// If this chunk carries a JSON-RPC response, return it.
+    pub fn as_rpc_response(&self) -> Option<crate::jsonrpc::JsonRpcResponse> {
+        self.get_annotation(crate::annotation::keys::JSONRPC_RESPONSE)
+    }
+
+    /// True if this is a JSON-RPC response matching the given call id.
+    pub fn is_rpc_response_for(&self, call_id: &str) -> bool {
+        self.as_rpc_response()
+            .map(|r| r.id == call_id)
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -193,5 +210,35 @@ mod tests {
 
         let not_config = Chunk::new_null("com.test");
         assert!(!not_config.is_runtime_config());
+    }
+
+    #[test]
+    fn rpc_request_roundtrip() {
+        use crate::jsonrpc::JsonRpcRequest;
+        use crate::annotation::keys;
+
+        let req = JsonRpcRequest::new("tts.invoke", serde_json::json!({"text": "hello"}));
+        let call_id = req.id.clone();
+
+        let chunk = Chunk::new_null("com.test").with_annotation(keys::JSONRPC_REQUEST, &req);
+        let extracted = chunk.as_rpc_request().unwrap();
+        assert_eq!(extracted.id, call_id);
+        assert_eq!(extracted.method, "tts.invoke");
+    }
+
+    #[test]
+    fn rpc_response_is_rpc_response_for() {
+        use crate::jsonrpc::JsonRpcResponse;
+        use crate::annotation::keys;
+
+        let resp = JsonRpcResponse::ok("my-call-id", serde_json::json!({"chunk_id": "xyz"}));
+        let chunk = Chunk::new_null("com.test").with_annotation(keys::JSONRPC_RESPONSE, &resp);
+
+        assert!(chunk.is_rpc_response_for("my-call-id"));
+        assert!(!chunk.is_rpc_response_for("other-id"));
+
+        // Chunk without response annotation
+        let plain = Chunk::new_null("com.test");
+        assert!(!plain.is_rpc_response_for("my-call-id"));
     }
 }

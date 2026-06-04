@@ -1,4 +1,4 @@
-use crate::handlers::{admin, chat, chunks, quickies, sessions, stream};
+use crate::handlers::{admin, agents, chat, chunks, quickies, sessions, stream};
 use crate::AppState;
 use axum::{
     routing::{delete, get, patch, post},
@@ -20,6 +20,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/sessions", post(sessions::create_session))
         .route("/api/sessions/:id", delete(sessions::delete_session))
         .route("/api/sessions/:id/history", get(sessions::get_history))
+        // Agents
+        .route("/api/agents", get(agents::list_agents))
         // Messaging
         .route("/api/sessions/:id/chat", post(chat::chat))
         .route("/api/sessions/:id/stream", get(stream::stream_session))

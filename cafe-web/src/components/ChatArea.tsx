@@ -49,19 +49,12 @@ export function ChatArea() {
       state.activeSessionId,
       text,
       (chunk) => {
+        // Always append to allChunks for the viewer
+        useSessionStore.getState().appendChunk(chunk);
+
         if (chunk.content_type === 'text' && chunk.annotations['chat.role'] === 'assistant') {
-          const live = useSessionStore.getState();
-          const assistantChunk: Chunk = {
-            id: chunk.id,
-            content_type: 'text',
-            content: chunk.content,
-            data: null,
-            mime_type: null,
-            producer: chunk.producer,
-            annotations: { ...chunk.annotations, 'chat.role': 'assistant' },
-            timestamp: chunk.timestamp,
-          };
-          live.appendChunk(assistantChunk);
+          // appendChunk already added it; nothing more needed for the chat view
+          // (appendChunk feeds both messages and allChunks)
         }
       },
       () => {

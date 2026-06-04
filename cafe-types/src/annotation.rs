@@ -51,6 +51,10 @@ pub mod keys {
 
     pub const ERROR_MESSAGE: &str = "error.message";
     pub const ERROR_CODE: &str = "error.code";
+
+    // JSON-RPC over bus
+    pub const JSONRPC_REQUEST: &str = "jsonrpc.request";
+    pub const JSONRPC_RESPONSE: &str = "jsonrpc.response";
 }
 
 /// Standard chat role values.

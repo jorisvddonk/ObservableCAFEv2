@@ -1,8 +1,18 @@
 import { apiFetch } from './client';
 import type { SessionInfo, SessionConfig } from '../types';
 
+export interface AgentInfo {
+  id: string;
+  description: string;
+  background: boolean;
+}
+
 export async function listSessions(): Promise<SessionInfo[]> {
   return apiFetch<SessionInfo[]>('/api/sessions');
+}
+
+export async function listAgents(): Promise<AgentInfo[]> {
+  return apiFetch<AgentInfo[]>('/api/agents');
 }
 
 export async function createSession(

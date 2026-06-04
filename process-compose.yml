@@ -104,3 +104,21 @@ processes:
     depends_on:
       cafe-server:
         condition: process_healthy
+
+  cafe-tts:
+    command: ./target/debug/cafe-tts
+    environment:
+      - "RUST_BACKTRACE=1"
+      - "VOICEBOX_URL=http://127.0.0.1:17493"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    # Optional — only meaningful when Voicebox is running.
+    # Set disabled: true if you don't have Voicebox available.
+    disabled: false

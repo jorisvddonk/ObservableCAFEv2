@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod agents;
 pub mod chat;
 pub mod chunks;
 pub mod quickies;

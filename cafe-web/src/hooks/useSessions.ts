@@ -19,7 +19,9 @@ export function useSessions() {
     window.location.hash = id;
     try {
       const { chunks } = await getHistory(id);
-      // Only show chat messages
+      // Raw full history for the chunk viewer
+      store.setAllChunks(chunks);
+      // Only show chat messages in the chat area
       const chatChunks = chunks.filter(
         (c) =>
           c.content_type === 'text' &&
@@ -32,8 +34,8 @@ export function useSessions() {
     }
   }, []);
 
-  const newSession = useCallback(async () => {
-    const { id } = await createSession();
+  const newSession = useCallback(async (agentId = 'default') => {
+    const { id } = await createSession(agentId);
     await refresh();
     await switchSession(id);
     return id;

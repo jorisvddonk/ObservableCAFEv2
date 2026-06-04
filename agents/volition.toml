@@ -1,0 +1,24 @@
+name = "volition"
+description = "Conversational agent with TTS — responds with audio via Voicebox"
+background = false
+allows_reload = true
+persists_state = true
+
+# Pipeline: trust-filter runs in-process; llm is handled by cafe-llm's existing
+# subscription; tts fires after each LLM stream completion via JSON-RPC.
+pipeline = ["trust-filter", "llm", "tts"]
+
+# Seed the session with runtime config so resolve_session_config can read
+# TTS and LLM settings from history.
+[initial_chunk]
+type = "null"
+
+[initial_chunk.annotations]
+"config.type"           = "runtime"
+# LLM settings
+"config.llm.system_prompt" = "You are Volition, a concise and thoughtful assistant. Keep responses short and natural — they will be spoken aloud."
+"config.llm.temperature"   = 0.7
+# TTS settings — profile name must match a Voicebox profile
+"config.tts.profile"    = "Volition"
+# Uncomment and set an engine if your Voicebox install needs one:
+# "config.tts.engine" = "qwen"

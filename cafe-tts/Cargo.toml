@@ -1,0 +1,18 @@
+[package]
+name = "cafe-tts"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-tts"
+path = "src/main.rs"
+
+[dependencies]
+cafe-types         = { path = "../cafe-types" }
+tokio              = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow             = { workspace = true }
+reqwest            = { version = "0.12", features = ["json"] }
