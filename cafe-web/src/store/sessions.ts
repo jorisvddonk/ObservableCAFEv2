@@ -49,7 +49,10 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   appendChunk: (chunk) => {
     console.log('[store] appendChunk id=', chunk.id, 'role=', chunk.annotations['chat.role']);
-    set((s) => ({ messages: [...s.messages, chunk], allChunks: [...s.allChunks, chunk] }));
+    set((s) => {
+      if (s.allChunks.some((c) => c.id === chunk.id)) return s;
+      return { messages: [...s.messages, chunk], allChunks: [...s.allChunks, chunk] };
+    });
   },
   appendStreamToken: (text) => {
     console.log('[store] appendStreamToken len=', text.length, 'total=', useSessionStore.getState().streamingText.length + text.length);
