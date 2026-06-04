@@ -17,8 +17,10 @@ a reactive multi-agent LLM platform. Processes communicate via a central message
     subscribe_all   subscribe     subscribe        subscribe
          │          + publish     + publish        + publish
          ▼              │              │               │
-    cafe-store      cafe-llm    cafe-agent-runtime  cafe-server
+    cafe-store          cafe-llm    cafe-agent-runtime  cafe-server
     (SQLite)        (LLM calls)  (agent lifecycle)  (HTTP gateway)
+     cafe-tts         cafe-comfy
+    (TTS/Voicebox)  (ComfyUI/img)
                                                         │
                                               ┌─────────┴──────────┐
                                          HTTP/SSE              HTTP/SSE
@@ -64,7 +66,9 @@ Services must start in this order due to socket dependencies:
    cafe-llm          — connects to bus immediately (parallel with store)
    cafe-agent-runtime — connects to bus, initialises agents
 3. cafe-server       — connects to bus; starts accepting HTTP after bus is ready
-4. cafe-web          — static files, served by cafe-server or separately
+4. cafe-tts          — connects to bus (parallel with server, optional)
+   cafe-comfy        — connects to bus (parallel with server, optional)
+5. cafe-web          — static files, served by cafe-server or separately
    cafe-tui          — connects to cafe-server HTTP
    cafe-telegram     — connects to cafe-server HTTP
 ```
@@ -151,9 +155,12 @@ observablecafe/
 │   ├── cafe-agent-runtime.md # build guide
 │   ├── cafe-tui.md         # build guide
 │   ├── cafe-telegram.md    # build guide (Go)
+│   ├── cafe-comfy.md       # build guide
 │   └── cafe-web.md         # build guide (TypeScript)
 ├── cafe-types/             # shared Rust library
 ├── cafe-bus/               # bus binary
+├── cafe-tts/               # Voicebox TTS synthesis via cafe-bus
+├── cafe-comfy/             # ComfyUI image generation via cafe-bus
 ├── cafe-store/             # persistence binary
 ├── cafe-llm/               # LLM bridge binary
 ├── cafe-server/            # HTTP server binary

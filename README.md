@@ -16,6 +16,7 @@ architecture as a suite of small, composable programs.
 | `cafe-agent-runtime`   | Rust       | Agent loader, hot-reload, cron scheduler          |
 | `cafe-telegram`        | Go         | Telegram bot bridge                               |
 | `cafe-tts`             | Rust       | Voicebox TTS synthesis via cafe-bus               |
+| `cafe-comfy`           | Rust       | ComfyUI image generation via cafe-bus             |
 | `cafe-web`             | TypeScript | React frontend SPA                                |
 
 ## Prerequisites

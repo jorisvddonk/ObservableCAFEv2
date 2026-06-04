@@ -40,6 +40,7 @@ observablecafe/
 │   ├── cafe-agent-runtime.md # Build guide for the agent host
 │   ├── cafe-tui.md         # Build guide for the terminal client
 │   ├── cafe-telegram.md    # Build guide for the Telegram bridge (Go)
+│   ├── cafe-comfy.md       # Build guide for the ComfyUI image generation bridge
 │   └── cafe-web.md         # Build guide for the React frontend (TypeScript)
 ├── cafe-types/             # Rust library: shared data model
 ├── cafe-bus/               # Rust binary: central message bus
@@ -49,6 +50,8 @@ observablecafe/
 ├── cafe-tui/               # Rust binary: terminal UI client
 ├── cafe-agent-runtime/     # Rust binary: agent loader + scheduler
 ├── cafe-telegram/          # Go binary: Telegram bot bridge
+├── cafe-tts/               # Rust binary: Voicebox TTS bridge
+├── cafe-comfy/             # Rust binary: ComfyUI image generation bridge
 └── cafe-web/               # TypeScript/React: browser frontend
 ```
 
@@ -64,10 +67,13 @@ Build and stabilise components in this order. Later components depend on earlier
 3. cafe-store        — depends on cafe-types; connects to cafe-bus as a subscriber
 4. cafe-llm          — depends on cafe-types; connects to cafe-bus
 5. cafe-agent-runtime — depends on cafe-types; connects to cafe-bus
-6. cafe-server       — depends on cafe-types; connects to cafe-bus + exposes HTTP
+6. cafe-tts           — depends on cafe-types; connects to cafe-bus (optional — needs Voicebox)
+7. cafe-comfy         — depends on cafe-types; connects to cafe-bus (optional — needs ComfyUI)
+8. cafe-server        — depends on cafe-types; connects to cafe-bus + exposes HTTP
 7. cafe-tui          — depends on HTTP API from cafe-server
 8. cafe-telegram     — depends on HTTP API from cafe-server (Go, independent)
-9. cafe-web          — depends on HTTP API from cafe-server (TypeScript, independent)
+10. cafe-web          — depends on HTTP API from cafe-server (TypeScript, independent)
+11. cafe-telegram     — depends on HTTP API from cafe-server (Go, independent)
 ```
 
 **Start with `cafe-types`.** Every other component imports it. Its public API (structs,
@@ -85,6 +91,8 @@ enums, serialization) must be stable before writing logic in other crates.
 | cafe-llm           | Rust       | `reqwest`, `tokio`, `futures-util`             |
 | cafe-server        | Rust       | `axum`, `tokio`, `tower-http`                  |
 | cafe-agent-runtime | Rust       | `tokio`, `notify`, `tokio-cron-scheduler`      |
+| cafe-tts           | Rust       | `reqwest`, `tokio`, `futures-util`             |
+| cafe-comfy         | Rust       | `reqwest`, `tokio`, `serde_json`               |
 | cafe-tui           | Rust       | `ratatui`, `crossterm`, `reqwest`              |
 | cafe-telegram      | Go         | `go-telegram-bot-api/telegram-bot-api`         |
 | cafe-web           | TypeScript | React, Vite, `eventsource` (SSE)               |
@@ -109,6 +117,10 @@ in production paths.
 | `PORT`                | `3000`                   | cafe-server                |
 | `CAFE_ADMIN_TOKEN`    | *(generated on first run)* | cafe-server              |
 | `TELEGRAM_TOKEN`      | *(empty)*                | cafe-telegram              |
+| `VOICEBOX_URL`        | `http://127.0.0.1:17493` | cafe-tts                  |
+| `COMFY_URL`           | `http://127.0.0.1:8188`  | cafe-comfy                |
+| `COMFY_WORKFLOW_PATH` | `./cafe-comfy/workflow.json` | cafe-comfy                |
+| `COMFY_WORKFLOW_INPUT_NODE` | `6`               | cafe-comfy                |
 | `CAFE_TRACE`          | `0`                      | all (enables debug logging)|
 
 ---
