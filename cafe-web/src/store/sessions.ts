@@ -51,8 +51,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
     console.log('[store] appendChunk id=', chunk.id, 'role=', chunk.annotations['chat.role']);
     set((s) => {
       if (s.allChunks.some((c) => c.id === chunk.id)) return s;
-      // The frontend creates its own optimistic user chunk; skip the server echo.
-      if (chunk.producer !== 'com.nominal.cafe-web' && chunk.annotations['chat.role'] === 'user') return s;
       return { messages: [...s.messages, chunk], allChunks: [...s.allChunks, chunk] };
     });
   },

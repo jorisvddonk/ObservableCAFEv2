@@ -6,17 +6,6 @@ import { openSessionStream } from '../api/stream';
 import { Message } from './Message';
 import type { Chunk } from '../types';
 
-function uuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 /** True if a chunk should appear in the chat message list. */
 function isChatMessage(chunk: Chunk): boolean {
   if (
@@ -90,19 +79,6 @@ export function ChatArea() {
     if (!text || state.streaming || !state.activeSessionId) return;
     setInput('');
 
-    const userChunk: Chunk = {
-      id: uuid(),
-      content_type: 'text',
-      content: text,
-      data: null,
-      mime_type: null,
-      producer: 'com.nominal.cafe-web',
-      annotations: { 'chat.role': 'user' },
-      timestamp: Date.now(),
-    };
-    // Add locally — also register in seenIds so the stream doesn't double-add
-    seenIds.current.add(userChunk.id);
-    state.appendChunk(userChunk);
     state.setStreaming(true);
 
     await streamChat(
