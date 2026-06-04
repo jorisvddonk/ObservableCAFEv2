@@ -54,7 +54,7 @@ export function QuickiesPanel() {
         q.starter_message,
         (chunk) => {
           if (chunk.content_type === 'text' && chunk.annotations['chat.is_streaming']) {
-            store.appendStreamToken(chunk.content ?? '');
+            store.appendStreamToken(typeof chunk.content === 'string' ? chunk.content : '');
           } else if (chunk.annotations['chat.stream_complete']) {
             const finalChunk: Chunk = {
               ...chunk,

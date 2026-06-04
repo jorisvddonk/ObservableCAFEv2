@@ -1,4 +1,5 @@
 mod auth;
+mod binary_ref;
 mod bus_client;
 mod config;
 mod db;

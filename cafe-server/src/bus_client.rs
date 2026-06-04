@@ -78,6 +78,30 @@ impl BusClient {
         Ok(vec![])
     }
 
+    /// Fetch the history of a session as a Vec<Chunk> by subscribing and
+    /// draining until HistoryComplete. Returns an error if the session is
+    /// not found.
+    pub async fn get_history(&self, session_id: &str) -> Result<Vec<Chunk>> {
+        let (mut writer, mut lines) = self.open().await?;
+        let msg = serde_json::to_string(&ClientMessage::Subscribe {
+            session_id: session_id.to_string(),
+        })? + "\n";
+        writer.write_all(msg.as_bytes()).await?;
+
+        let mut chunks = Vec::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            match serde_json::from_str::<ServerMessage>(&line) {
+                Ok(ServerMessage::Chunk { chunk, .. }) => chunks.push(chunk),
+                Ok(ServerMessage::HistoryComplete { .. }) => break,
+                Ok(ServerMessage::Error { message, .. }) => {
+                    return Err(anyhow::anyhow!("{}", message));
+                }
+                _ => {}
+            }
+        }
+        Ok(chunks)
+    }
+
     /// Subscribe to a session and return a channel receiver of chunks.
     /// Spawns a background task that forwards chunks until the connection closes.
     pub async fn subscribe(

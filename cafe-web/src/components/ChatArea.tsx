@@ -27,7 +27,7 @@ function isChatMessage(chunk: Chunk): boolean {
     return true;
   }
   if (
-    chunk.content_type === 'binary' &&
+    (chunk.content_type === 'binary' || chunk.content_type === 'binary-ref') &&
     chunk.annotations['chat.role'] === 'assistant'
   ) {
     return true;

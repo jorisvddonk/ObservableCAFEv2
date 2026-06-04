@@ -1,6 +1,6 @@
-use crate::{auth::AuthUser, AppState};
+use crate::{auth::AuthUser, binary_ref::{BinaryRefQuery, serialize_chunk}, AppState};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -86,31 +86,20 @@ pub async fn get_history(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(session_id): Path<String>,
+    Query(query): Query<BinaryRefQuery>,
 ) -> impl IntoResponse {
-    // Subscribe and collect history until history_complete
-    match state.bus.subscribe(&session_id).await {
-        Ok(mut rx) => {
-            let mut chunks = Vec::new();
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    cafe_types::ServerMessage::Chunk { chunk, .. } => {
-                        chunks.push(chunk);
-                    }
-                    cafe_types::ServerMessage::HistoryComplete { .. } => break,
-                    cafe_types::ServerMessage::Error { message, code, .. } => {
-                        return (
-                            StatusCode::NOT_FOUND,
-                            Json(json!({ "error": message, "code": code })),
-                        )
-                            .into_response();
-                    }
-                    _ => {}
-                }
-            }
-            Json(json!({ "session_id": session_id, "chunks": chunks })).into_response()
+    let use_refs = query.enabled();
+
+    match state.bus.get_history(&session_id).await {
+        Ok(chunks) => {
+            let serialized: Vec<serde_json::Value> = chunks
+                .iter()
+                .map(|c| serialize_chunk(c, use_refs))
+                .collect();
+            Json(json!({ "session_id": session_id, "chunks": serialized })).into_response()
         }
         Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::NOT_FOUND,
             Json(json!({ "error": e.to_string() })),
         )
             .into_response(),

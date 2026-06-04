@@ -3,6 +3,7 @@ import type { Chunk } from '../types';
 
 /**
  * Open a persistent SSE connection to /api/sessions/:id/stream.
+ * Requests binary-refs so large audio/image payloads are not inlined.
  * Delivers history replay followed by all live chunks indefinitely.
  *
  * Returns a cleanup function — call it to close the connection.
@@ -14,9 +15,9 @@ export function openSessionStream(
   onError?: (err: Event) => void,
 ): () => void {
   const base = getApiBaseUrl();
-  // EventSource doesn't support custom headers, so pass the token as a query param.
-  // cafe-server's auth middleware needs to accept it there — see note below.
-  const url = `${base}/api/sessions/${sessionId}/stream?token=${encodeURIComponent(getToken())}`;
+  const token = encodeURIComponent(getToken());
+  // binaryRefs=1: binary chunks arrive as lightweight refs; fetched on demand.
+  const url = `${base}/api/sessions/${sessionId}/stream?token=${token}&binaryRefs=1`;
 
   const es = new EventSource(url);
 
@@ -24,19 +25,16 @@ export function openSessionStream(
     try {
       const payload = JSON.parse(ev.data);
 
-      // history_complete marker
       if (payload.type === 'history_complete') {
         onHistoryComplete(payload.count ?? 0);
         return;
       }
 
-      // error marker
       if (payload.type === 'error') {
         console.warn('[stream] server error:', payload.message);
         return;
       }
 
-      // Regular chunk
       if (payload.id && payload.content_type) {
         onChunk(payload as Chunk);
       }

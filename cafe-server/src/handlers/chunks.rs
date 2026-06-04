@@ -1,11 +1,11 @@
 use crate::{auth::AuthUser, AppState};
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::IntoResponse,
     Json,
 };
-use cafe_types::{keys, Chunk};
+use cafe_types::{keys, Chunk, ContentType};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -186,4 +186,66 @@ pub async fn delete_chunk(
         )
             .into_response(),
     }
+}
+
+/// GET /api/sessions/:session_id/chunks/:chunk_id/binary
+///
+/// Returns the raw binary data for a single chunk. Suitable for use as an
+/// `<audio src>` or `<img src>` URL. Aggressively cacheable by chunk_id since
+/// chunks are immutable.
+pub async fn get_chunk_binary(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path((session_id, chunk_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    // Fetch session history from the bus and find the chunk by id
+    let history = match state.bus.get_history(&session_id).await {
+        Ok(h) => h,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let chunk = match history.into_iter().find(|c| c.id == chunk_id) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Chunk not found" })),
+            )
+                .into_response();
+        }
+    };
+
+    if chunk.content_type != ContentType::Binary {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Chunk is not binary" })),
+        )
+            .into_response();
+    }
+
+    let data = chunk.data.unwrap_or_default();
+    let mime = chunk
+        .mime_type
+        .unwrap_or_else(|| "application/octet-stream".into());
+    let len = data.len();
+
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_LENGTH, len.to_string()),
+            (
+                header::CACHE_CONTROL,
+                "immutable, max-age=31536000".to_string(),
+            ),
+        ],
+        data,
+    )
+        .into_response()
 }

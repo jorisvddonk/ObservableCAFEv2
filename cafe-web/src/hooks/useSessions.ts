@@ -21,13 +21,15 @@ export function useSessions() {
       const { chunks } = await getHistory(id);
       // Raw full history for the chunk viewer
       store.setAllChunks(chunks);
-      // Show text chat messages AND binary media (audio/image) from assistant
+      // Show text chat messages AND binary media (audio/image) from assistant.
+      // Includes both full binary chunks and binary-ref placeholders.
       const chatChunks = chunks.filter(
         (c) =>
           (c.content_type === 'text' &&
             (c.annotations['chat.role'] === 'user' ||
               c.annotations['chat.role'] === 'assistant')) ||
-          (c.content_type === 'binary' && c.annotations['chat.role'] === 'assistant'),
+          ((c.content_type === 'binary' || c.content_type === 'binary-ref') &&
+            c.annotations['chat.role'] === 'assistant'),
       );
       store.setMessages(chatChunks);
     } catch (err) {

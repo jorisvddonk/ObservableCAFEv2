@@ -1,12 +1,23 @@
+use crate::binary_ref::serialize_chunk;
 use axum::response::sse::Event;
 use cafe_types::{Chunk, ServerMessage};
 use std::convert::Infallible;
 
-/// Convert a ServerMessage into an SSE Event.
+/// Convert a ServerMessage into an SSE Event (full binary, no substitution).
+#[allow(dead_code)]
 pub fn message_to_event(msg: &ServerMessage) -> Option<Result<Event, Infallible>> {
+    message_to_event_with_refs(msg, false)
+}
+
+/// Convert a ServerMessage into an SSE Event, optionally substituting binary
+/// chunks with lightweight binary-ref objects.
+pub fn message_to_event_with_refs(
+    msg: &ServerMessage,
+    binary_refs: bool,
+) -> Option<Result<Event, Infallible>> {
     match msg {
         ServerMessage::Chunk { chunk, .. } => {
-            let data = serde_json::to_string(chunk).ok()?;
+            let data = serde_json::to_string(&serialize_chunk(chunk, binary_refs)).ok()?;
             Some(Ok(Event::default().data(data)))
         }
         ServerMessage::HistoryComplete { count, .. } => {

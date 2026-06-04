@@ -19,6 +19,7 @@ function chunkColor(chunk: Chunk): string {
     return '#607d8b';                                               // grey   — other null
   }
   if (chunk.content_type === 'binary') return '#f06292';           // pink   — audio/image
+  if (chunk.content_type === 'binary-ref') return '#e91e8c';       // hot pink — binary ref
   const role = chunk.annotations['chat.role'] as string | undefined;
   return role ? (ROLE_COLORS[role] ?? '#aaa') : '#aaa';
 }
@@ -32,6 +33,10 @@ function contentTypeLabel(chunk: Chunk): string {
     return 'null';
   }
   if (chunk.content_type === 'binary') return chunk.mime_type?.split('/')[1] ?? 'binary';
+  if (chunk.content_type === 'binary-ref') {
+    const ref = chunk.content as { mime_type?: string } | null;
+    return ref?.mime_type?.split('/')[1] ?? 'bin-ref';
+  }
   const role = chunk.annotations['chat.role'] as string | undefined;
   return role ?? 'text';
 }
@@ -54,7 +59,7 @@ function ChunkRow({
 
   let preview = '';
   if (chunk.content_type === 'text') {
-    preview = (chunk.content ?? '').slice(0, 80);
+    preview = (typeof chunk.content === 'string' ? chunk.content : '').slice(0, 80);
   } else if (chunk.content_type === 'null') {
     if (chunk.annotations['jsonrpc.request']) {
       const r = chunk.annotations['jsonrpc.request'] as { method?: string; id?: string };
@@ -72,6 +77,9 @@ function ChunkRow({
     preview = `${chunk.mime_type ?? 'unknown'} ${
       chunk.data ? Math.round((chunk.data.length * 3) / 4 / 1024) + ' KB' : ''
     }`;
+  } else if (chunk.content_type === 'binary-ref') {
+    const ref = chunk.content as { mime_type?: string; byte_size?: number } | null;
+    preview = `${ref?.mime_type ?? 'unknown'} ${ref?.byte_size ? Math.round(ref.byte_size / 1024) + ' KB' : ''}`;
   }
 
   return (
@@ -227,7 +235,9 @@ function applyFilter(chunks: Chunk[], filter: FilterType, search: string): Chunk
   let result = chunks;
 
   if (filter === 'text')   result = result.filter((c) => c.content_type === 'text');
-  if (filter === 'binary') result = result.filter((c) => c.content_type === 'binary');
+  if (filter === 'binary') result = result.filter(
+    (c) => c.content_type === 'binary' || c.content_type === 'binary-ref',
+  );
   if (filter === 'null')   result = result.filter((c) => c.content_type === 'null');
   if (filter === 'rpc')    result = result.filter(
     (c) => c.annotations['jsonrpc.request'] || c.annotations['jsonrpc.response'],
@@ -237,10 +247,11 @@ function applyFilter(chunks: Chunk[], filter: FilterType, search: string): Chunk
   if (search.trim()) {
     const q = search.toLowerCase();
     result = result.filter((c) => {
+      const contentStr = typeof c.content === 'string' ? c.content : JSON.stringify(c.content ?? '');
       return (
         c.id.includes(q) ||
         c.producer.toLowerCase().includes(q) ||
-        (c.content ?? '').toLowerCase().includes(q) ||
+        contentStr.toLowerCase().includes(q) ||
         JSON.stringify(c.annotations).toLowerCase().includes(q)
       );
     });

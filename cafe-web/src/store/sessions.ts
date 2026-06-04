@@ -55,7 +55,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set((s) => ({ streamingText: s.streamingText + text }));
   },
   finaliseStream: (chunk) => {
-    console.log('[store] finaliseStream contentLen=', chunk.content?.length ?? 0);
+    console.log('[store] finaliseStream contentLen=', typeof chunk.content === 'string' ? chunk.content.length : 0);
     set((s) => ({
       messages: [...s.messages, chunk],
       allChunks: [...s.allChunks, chunk],

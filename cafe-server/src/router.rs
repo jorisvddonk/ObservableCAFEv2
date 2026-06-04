@@ -35,6 +35,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sessions/:id/chunks/:chunk_id",
             delete(chunks::delete_chunk),
         )
+        .route(
+            "/api/sessions/:session_id/chunks/:chunk_id/binary",
+            get(chunks::get_chunk_binary),
+        )
         // Quickies
         .route("/api/quickies", get(quickies::list_quickies))
         .route("/api/quickies", post(quickies::create_quickie))
