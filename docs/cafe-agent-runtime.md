@@ -120,7 +120,7 @@ cafe-agent-runtime/src/
 ## Startup sequence
 
 ```
-1. Read CAFE_AGENT_PATHS (colon-separated directories)
+1. Read ObservableCAFE_AGENT_SEARCH_PATHS (falls back to CAFE_AGENT_PATHS)
 2. Scan each directory for *.toml files
 3. Parse each file into AgentDefinition
 4. Connect to cafe-bus
@@ -189,4 +189,4 @@ scheduler.start().await?;
 | Variable              | Default                    | Description                          |
 |-----------------------|----------------------------|--------------------------------------|
 | `CAFE_BUS_SOCKET`     | `/tmp/cafe-bus.sock`       | Bus socket path                      |
-| `CAFE_AGENT_PATHS`    | `./agents`                 | Colon-separated agent search paths   |
+| `ObservableCAFE_AGENT_SEARCH_PATHS` | `./agents`                 | Colon-separated agent search paths (`CAFE_AGENT_PATHS` fallback)   |

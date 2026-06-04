@@ -12,7 +12,9 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
-        let paths_str = std::env::var("CAFE_AGENT_PATHS").unwrap_or_else(|_| "./agents".into());
+        let paths_str = std::env::var("ObservableCAFE_AGENT_SEARCH_PATHS")
+            .or_else(|_| std::env::var("CAFE_AGENT_PATHS"))
+            .unwrap_or_else(|_| "./agents".into());
         let agent_paths = paths_str.split(':').map(String::from).collect();
         Self {
             socket_path: std::env::var("CAFE_BUS_SOCKET")

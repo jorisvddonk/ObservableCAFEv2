@@ -10,13 +10,14 @@ pub struct AgentInfo {
 }
 
 /// GET /api/agents — list available agent definitions by scanning agent TOML files.
-/// Uses the same CAFE_AGENT_PATHS env var as cafe-agent-runtime.
+/// Uses ObservableCAFE_AGENT_SEARCH_PATHS (falls back to CAFE_AGENT_PATHS) env var
 pub async fn list_agents(
     State(_state): State<AppState>,
     _auth: AuthUser,
 ) -> impl IntoResponse {
-    let paths_str =
-        std::env::var("CAFE_AGENT_PATHS").unwrap_or_else(|_| "./agents".into());
+    let paths_str = std::env::var("ObservableCAFE_AGENT_SEARCH_PATHS")
+        .or_else(|_| std::env::var("CAFE_AGENT_PATHS"))
+        .unwrap_or_else(|_| "./agents".into());
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
