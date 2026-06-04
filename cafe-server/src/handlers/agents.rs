@@ -10,18 +10,22 @@ pub struct AgentInfo {
 }
 
 /// GET /api/agents — list available agent definitions by scanning agent TOML files.
-/// Uses ObservableCAFE_AGENT_SEARCH_PATHS (falls back to CAFE_AGENT_PATHS) env var
+/// Uses ObservableCAFE_AGENT_SEARCH_PATHS (falls back to CAFE_AGENT_PATHS) env var.
+/// ./agents is always included as a search path.
 pub async fn list_agents(
     State(_state): State<AppState>,
     _auth: AuthUser,
 ) -> impl IntoResponse {
-    let paths_str = std::env::var("ObservableCAFE_AGENT_SEARCH_PATHS")
+    let mut dirs: Vec<String> = vec!["./agents".to_string()];
+    if let Ok(paths_str) = std::env::var("ObservableCAFE_AGENT_SEARCH_PATHS")
         .or_else(|_| std::env::var("CAFE_AGENT_PATHS"))
-        .unwrap_or_else(|_| "./agents".into());
+    {
+        dirs.extend(paths_str.split(':').map(String::from));
+    }
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
-    for dir in paths_str.split(':') {
+    for dir in dirs {
         let pattern = format!("{}/*.toml", dir);
         if let Ok(paths) = glob::glob(&pattern) {
             for entry in paths.flatten() {
