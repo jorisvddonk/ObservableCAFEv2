@@ -130,9 +130,8 @@ impl PipelineExecutor {
                 }
 
                 PipelineStep::Rpc(namespace) => {
-                    // Only run TTS in the post-LLM phase; other RPC steps
-                    // (stt, llm) are handled elsewhere.
-                    if namespace != "tts" {
+                    // Only run post-LLM RPC steps; (stt, llm) are handled elsewhere.
+                    if namespace != "tts" && namespace != "comfy" {
                         continue;
                     }
 
@@ -409,6 +408,12 @@ fn build_rpc_params(
             "profile": config.tts_profile.as_deref().unwrap_or("default"),
             "engine": config.tts_engine,
         }),
+        "comfy" => serde_json::json!({
+            "text": assembled_text,
+            "workflow_path": config.comfy_workflow_path,
+            "workflow_input_node": config.comfy_workflow_input_node,
+            "endpoint": config.comfy_endpoint,
+        }),
         "stt" => serde_json::json!({
             "base_url": config.stt_base_url,
         }),
@@ -525,5 +530,29 @@ mod tests {
         let config = SessionConfig::default();
         let params = build_rpc_params("tts", "Hi", &config);
         assert_eq!(params["profile"], "default");
+    }
+
+    #[test]
+    fn build_rpc_params_comfy() {
+        let config = SessionConfig {
+            comfy_workflow_path: Some("my_workflow.json".into()),
+            comfy_workflow_input_node: Some("3".into()),
+            comfy_endpoint: Some("http://localhost:8188".into()),
+            ..Default::default()
+        };
+        let params = build_rpc_params("comfy", "a cat in space", &config);
+        assert_eq!(params["text"], "a cat in space");
+        assert_eq!(params["workflow_path"], "my_workflow.json");
+        assert_eq!(params["workflow_input_node"], "3");
+        assert_eq!(params["endpoint"], "http://localhost:8188");
+    }
+
+    #[test]
+    fn build_rpc_params_comfy_defaults() {
+        let config = SessionConfig::default();
+        let params = build_rpc_params("comfy", "a dog", &config);
+        assert_eq!(params["text"], "a dog");
+        assert!(params["workflow_path"].is_null());
+        assert!(params["workflow_input_node"].is_null());
     }
 }

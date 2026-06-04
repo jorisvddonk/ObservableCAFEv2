@@ -1,0 +1,17 @@
+name = "comfy"
+description = "Image generation agent — runs a ComfyUI workflow and produces an image"
+background = false
+allows_reload = true
+persists_state = true
+
+pipeline = ["trust-filter", "llm", "comfy"]
+
+[initial_chunk]
+type = "null"
+
+[initial_chunk.annotations]
+"config.type"                        = "runtime"
+"config.llm.system_prompt"           = "You are an image generation assistant. Respond with a detailed image prompt describing what to generate. Keep your response to just the prompt text."
+"config.llm.temperature"             = 0.8
+"config.comfy.workflow_path"         = "workflow.json"
+"config.comfy.workflow_input_node"   = "6"

@@ -44,6 +44,11 @@ pub struct SessionConfig {
     pub tts_engine: Option<String>,
     pub tts_endpoint: Option<String>,
 
+    // ComfyUI evaluator
+    pub comfy_workflow_path: Option<String>,
+    pub comfy_workflow_input_node: Option<String>,
+    pub comfy_endpoint: Option<String>,
+
     // STT evaluator
     pub stt_base_url: Option<String>,
     pub stt_response_format: Option<String>,
@@ -127,6 +132,15 @@ fn apply_config_key(cfg: &mut SessionConfig, key: &str, value: &serde_json::Valu
         }
         keys::CONFIG_TTS_ENDPOINT => {
             cfg.tts_endpoint = value.as_str().map(String::from);
+        }
+        keys::CONFIG_COMFY_WORKFLOW_PATH => {
+            cfg.comfy_workflow_path = value.as_str().map(String::from);
+        }
+        keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE => {
+            cfg.comfy_workflow_input_node = value.as_str().map(String::from);
+        }
+        keys::CONFIG_COMFY_ENDPOINT => {
+            cfg.comfy_endpoint = value.as_str().map(String::from);
         }
         keys::CONFIG_STT_BASE_URL => {
             cfg.stt_base_url = value.as_str().map(String::from);
@@ -228,6 +242,9 @@ mod tests {
         assert!(cfg.tts_profile.is_none());
         assert!(cfg.tts_engine.is_none());
         assert!(cfg.tts_endpoint.is_none());
+        assert!(cfg.comfy_workflow_path.is_none());
+        assert!(cfg.comfy_workflow_input_node.is_none());
+        assert!(cfg.comfy_endpoint.is_none());
         assert!(cfg.stt_base_url.is_none());
         assert!(cfg.stt_response_format.is_none());
         assert!(cfg.rss_url.is_none());
@@ -257,10 +274,7 @@ mod tests {
                 keys::CONFIG_LLM_SYSTEM_PROMPT,
                 serde_json::Value::String("A".into()),
             ),
-            (
-                keys::CONFIG_LLM_TEMPERATURE,
-                serde_json::json!(0.5_f64),
-            ),
+            (keys::CONFIG_LLM_TEMPERATURE, serde_json::json!(0.5_f64)),
         ]);
         let chunk2 = make_runtime_config_chunk(&[(
             keys::CONFIG_LLM_SYSTEM_PROMPT,

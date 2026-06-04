@@ -9,6 +9,7 @@ members = [
     "cafe-tui",
     "cafe-agent-runtime",
     "cafe-tts",
+    "cafe-comfy",
 ]
 
 # Shared dependency versions — pin once here, reference everywhere

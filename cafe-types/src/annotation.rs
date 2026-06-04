@@ -31,6 +31,10 @@ pub mod keys {
     pub const CONFIG_TTS_ENGINE: &str = "config.tts.engine";
     pub const CONFIG_TTS_ENDPOINT: &str = "config.tts.endpoint";
 
+    pub const CONFIG_COMFY_WORKFLOW_PATH: &str = "config.comfy.workflow_path";
+    pub const CONFIG_COMFY_WORKFLOW_INPUT_NODE: &str = "config.comfy.workflow_input_node";
+    pub const CONFIG_COMFY_ENDPOINT: &str = "config.comfy.endpoint";
+
     pub const CONFIG_STT_BASE_URL: &str = "config.stt.base_url";
     pub const CONFIG_STT_RESPONSE_FORMAT: &str = "config.stt.response_format";
 
