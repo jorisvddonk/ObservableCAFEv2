@@ -21,6 +21,16 @@ export function App() {
     });
   }, [hasToken]);
 
+  // Sync chunk viewer open state to URL hash
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const hash = window.location.hash.slice(1);
+    const qIdx = hash.indexOf('?');
+    const sessionId = qIdx === -1 ? hash : hash.slice(0, qIdx);
+    if (!sessionId) return;
+    window.location.hash = chunkViewerOpen ? `${sessionId}?chunkViewer=1` : sessionId;
+  }, [chunkViewerOpen, activeSessionId]);
+
   if (!hasToken) {
     return <TokenSetup onDone={() => setHasToken(true)} />;
   }

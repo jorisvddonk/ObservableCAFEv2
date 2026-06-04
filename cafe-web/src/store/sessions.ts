@@ -20,6 +20,7 @@ interface SessionStore {
   setStreaming: (v: boolean) => void;
   clearStreamingText: () => void;
   toggleChunkViewer: () => void;
+  setChunkViewerOpen: (v: boolean) => void;
 }
 
 export const useSessionStore = create<SessionStore>((set) => ({
@@ -73,5 +74,8 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   toggleChunkViewer: () => {
     set((s) => ({ chunkViewerOpen: !s.chunkViewerOpen }));
+  },
+  setChunkViewerOpen: (v) => {
+    set({ chunkViewerOpen: v });
   },
 }));

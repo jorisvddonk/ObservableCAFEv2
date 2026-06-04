@@ -16,7 +16,8 @@ export function useSessions() {
 
   const switchSession = useCallback(async (id: string) => {
     store.setActiveSession(id);
-    window.location.hash = id;
+    const chunkViewerOpen = useSessionStore.getState().chunkViewerOpen;
+    window.location.hash = chunkViewerOpen ? `${id}?chunkViewer=1` : id;
     try {
       const { chunks } = await getHistory(id);
       // Raw full history for the chunk viewer
@@ -58,11 +59,19 @@ export function useSessions() {
     [refresh, switchSession],
   );
 
-  // Restore session from URL hash on mount
+  // Restore session and chunk viewer from URL hash on mount
   useEffect(() => {
     const hash = window.location.hash.slice(1);
-    if (hash) {
-      switchSession(hash);
+    const qIdx = hash.indexOf('?');
+    const sessionId = qIdx === -1 ? hash : hash.slice(0, qIdx);
+    if (qIdx !== -1) {
+      const params = new URLSearchParams(hash.slice(qIdx + 1));
+      if (params.get('chunkViewer') === '1') {
+        store.setChunkViewerOpen(true);
+      }
+    }
+    if (sessionId) {
+      switchSession(sessionId);
     }
   }, []);
 
