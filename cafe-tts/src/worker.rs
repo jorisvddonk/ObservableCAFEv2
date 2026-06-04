@@ -157,7 +157,7 @@ async fn handle_tts_request(
         anyhow::bail!("tts.invoke: text param is empty");
     }
 
-    let (audio_bytes, mime_type) = voicebox.speak(text, profile, engine).await?;
+    let (audio_bytes, mime_type) = voicebox.synthesize(text, profile, engine).await?;
 
     // Publish audio BEFORE the RPC response so it's already in history when
     // cafe-agent-runtime receives the response chunk.

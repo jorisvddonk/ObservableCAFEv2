@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
 import { streamChat } from '../api/chat';
+import { openSessionStream } from '../api/stream';
 import { Message } from './Message';
 import type { Chunk } from '../types';
 
@@ -16,15 +17,72 @@ function uuid(): string {
   });
 }
 
+/** True if a chunk should appear in the chat message list. */
+function isChatMessage(chunk: Chunk): boolean {
+  if (
+    chunk.content_type === 'text' &&
+    (chunk.annotations['chat.role'] === 'user' ||
+      chunk.annotations['chat.role'] === 'assistant')
+  ) {
+    return true;
+  }
+  if (
+    chunk.content_type === 'binary' &&
+    chunk.annotations['chat.role'] === 'assistant'
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function ChatArea() {
   const store = useSessionStore();
   const { removeSession } = useSessions();
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Track which chunk IDs are already in messages to avoid duplicates from the
+  // persistent stream replaying history we already loaded.
+  const seenIds = useRef<Set<string>>(new Set());
+  const cleanupStream = useRef<(() => void) | null>(null);
 
+  // Auto-scroll when messages change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [store.messages]);
+
+  // Open a persistent SSE stream for the active session.
+  // This is the mechanism that delivers binary chunks (audio, images) that
+  // arrive after the chat SSE closes at stream_complete.
+  useEffect(() => {
+    // Clean up previous stream
+    cleanupStream.current?.();
+    cleanupStream.current = null;
+    seenIds.current = new Set(store.messages.map((c) => c.id));
+
+    const sessionId = store.activeSessionId;
+    if (!sessionId) return;
+
+    const close = openSessionStream(
+      sessionId,
+      (chunk) => {
+        // Always feed allChunks (chunk viewer)
+        // Avoid double-adding chunks we loaded from history
+        if (!seenIds.current.has(chunk.id)) {
+          seenIds.current.add(chunk.id);
+          useSessionStore.getState().appendChunk(chunk);
+        }
+      },
+      (_count) => {
+        // history replay complete — future chunks are live
+      },
+    );
+
+    cleanupStream.current = close;
+    return () => {
+      close();
+      cleanupStream.current = null;
+    };
+  }, [store.activeSessionId]);
 
   const send = async () => {
     const text = input.trim();
@@ -42,6 +100,8 @@ export function ChatArea() {
       annotations: { 'chat.role': 'user' },
       timestamp: Date.now(),
     };
+    // Add locally — also register in seenIds so the stream doesn't double-add
+    seenIds.current.add(userChunk.id);
     state.appendChunk(userChunk);
     state.setStreaming(true);
 
@@ -49,12 +109,11 @@ export function ChatArea() {
       state.activeSessionId,
       text,
       (chunk) => {
-        // Always append to allChunks for the viewer
-        useSessionStore.getState().appendChunk(chunk);
-
-        if (chunk.content_type === 'text' && chunk.annotations['chat.role'] === 'assistant') {
-          // appendChunk already added it; nothing more needed for the chat view
-          // (appendChunk feeds both messages and allChunks)
+        // Chat SSE delivers text chunks; register them in seenIds so the
+        // persistent stream doesn't duplicate them.
+        if (!seenIds.current.has(chunk.id)) {
+          seenIds.current.add(chunk.id);
+          useSessionStore.getState().appendChunk(chunk);
         }
       },
       () => {
@@ -90,6 +149,9 @@ export function ChatArea() {
       </div>
     );
   }
+
+  // Filter messages for the chat display
+  const displayMessages = store.messages.filter(isChatMessage);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -134,7 +196,7 @@ export function ChatArea() {
           flexDirection: 'column',
         }}
       >
-        {store.messages.map((chunk) => (
+        {displayMessages.map((chunk) => (
           <Message key={chunk.id} chunk={chunk} />
         ))}
         <div ref={bottomRef} />
@@ -155,7 +217,9 @@ export function ChatArea() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            store.streaming ? 'Waiting for response…' : 'Type a message… (Enter to send, Shift+Enter for newline)'
+            store.streaming
+              ? 'Waiting for response…'
+              : 'Type a message… (Enter to send, Shift+Enter for newline)'
           }
           disabled={store.streaming}
           rows={1}

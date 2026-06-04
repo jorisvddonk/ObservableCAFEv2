@@ -18,12 +18,54 @@ pub struct AuthUser {
 pub struct AdminUser(pub AuthUser);
 
 fn extract_bearer(parts: &Parts) -> Option<String> {
-    parts
+    // 1. Standard Authorization header (used by all non-EventSource clients)
+    if let Some(token) = parts
         .headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(String::from)
+    {
+        return Some(token);
+    }
+
+    // 2. ?token= query parameter — needed because EventSource cannot set headers
+    if let Some(query) = parts.uri.query() {
+        for pair in query.split('&') {
+            if let Some(value) = pair.strip_prefix("token=") {
+                // Percent-decode the value
+                let decoded = percent_decode(value);
+                if !decoded.is_empty() {
+                    return Some(decoded);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Minimal percent-decoder for the token query param (handles %xx sequences).
+fn percent_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.bytes().peekable();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            // Take next two hex digits
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(h1), Some(h2)) = (h1, h2) {
+                if let Ok(decoded) =
+                    u8::from_str_radix(&format!("{}{}", h1 as char, h2 as char), 16)
+                {
+                    out.push(decoded as char);
+                    continue;
+                }
+            }
+        }
+        out.push(b as char);
+    }
+    out
 }
 
 #[async_trait]
