@@ -128,7 +128,7 @@ processes:
     environment:
       - "RUST_BACKTRACE=1"
       - "COMFY_URL=http://127.0.0.1:8188"
-      - "COMFY_WORKFLOW_PATH=workflow.json"
+      - "COMFY_WORKFLOW_PATH=./cafe-comfy/workflow.json"
       - "COMFY_WORKFLOW_INPUT_NODE=6"
     readiness_probe:
       exec:
@@ -141,4 +141,4 @@ processes:
         condition: process_healthy
     # Optional — only meaningful when a ComfyUI server is running.
     # Set disabled: true if you don't have ComfyUI available.
-    disabled: true
+    disabled: false
