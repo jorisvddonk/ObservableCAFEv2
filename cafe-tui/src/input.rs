@@ -8,6 +8,8 @@ pub enum InputAction {
     SetSystemPrompt(String),
     SetModel(String),
     ListModels,
+    OpenModelPicker,
+    SelectModel(String),
     SwitchSession(usize),
     Quit,
     Help,
@@ -17,6 +19,7 @@ pub enum InputAction {
 pub fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction {
     match &app.mode {
         AppMode::SessionPicker => handle_session_picker(app, key),
+        AppMode::ModelPicker => handle_model_picker(app, key),
         AppMode::Confirm(action) => handle_confirm(app, key, action.clone()),
         AppMode::Normal => handle_normal(app, key),
     }
@@ -45,6 +48,14 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
                 parse_slash_command(app, cmd)
             } else {
                 InputAction::SendMessage(input)
+            }
+        }
+        KeyCode::Tab => {
+            if let Some(rest) = app.input.strip_prefix("/model ") {
+                app.model_picker_filter = rest.to_string();
+                InputAction::OpenModelPicker
+            } else {
+                InputAction::None
             }
         }
         KeyCode::Backspace => {
@@ -158,6 +169,49 @@ fn handle_session_picker(app: &mut App, key: crossterm::event::KeyEvent) -> Inpu
             let idx = app.active_session_idx;
             app.mode = AppMode::Normal;
             InputAction::SwitchSession(idx)
+        }
+        _ => InputAction::None,
+    }
+}
+
+fn handle_model_picker(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            InputAction::None
+        }
+        KeyCode::Up => {
+            if app.model_picker_idx > 0 {
+                app.model_picker_idx -= 1;
+            }
+            InputAction::None
+        }
+        KeyCode::Down => {
+            if app.model_picker_idx + 1 < app.model_picker_items.len() {
+                app.model_picker_idx += 1;
+            }
+            InputAction::None
+        }
+        KeyCode::Enter => {
+            if app.model_picker_items.is_empty() {
+                app.mode = AppMode::Normal;
+                return InputAction::None;
+            }
+            let model = app.model_picker_items[app.model_picker_idx].clone();
+            app.mode = AppMode::Normal;
+            app.input = format!("/model {}", model);
+            InputAction::SelectModel(model)
+        }
+        KeyCode::Char(c) => {
+            app.model_picker_filter.push(c);
+            app.apply_model_filter();
+            InputAction::None
+        }
+        KeyCode::Backspace => {
+            app.model_picker_filter.pop();
+            app.apply_model_filter();
+            InputAction::None
         }
         _ => InputAction::None,
     }

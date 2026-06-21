@@ -6,7 +6,7 @@ mod ui;
 
 use anyhow::Result;
 use api::ApiClient;
-use app::App;
+use app::{App, AppMode};
 use cafe_types::ContentType;
 use config::Config;
 use crossterm::{
@@ -176,6 +176,30 @@ async fn run_app(
                     }
 
                     InputAction::SetModel(model) => {
+                        if let Some(id) = app.active_session_id().map(String::from) {
+                            match client.set_model(&id, &model).await {
+                                Ok(()) => app.set_status(format!("Model set to {}", model)),
+                                Err(e) => {
+                                    app.set_status(format!("Failed to set model: {}", e))
+                                }
+                            }
+                        }
+                    }
+
+                    InputAction::OpenModelPicker => {
+                        match client.list_models().await {
+                            Ok(models) => {
+                                app.model_picker_all = models;
+                                app.apply_model_filter();
+                                app.mode = AppMode::ModelPicker;
+                            }
+                            Err(e) => {
+                                app.set_status(format!("Failed to list models: {}", e));
+                            }
+                        }
+                    }
+
+                    InputAction::SelectModel(model) => {
                         if let Some(id) = app.active_session_id().map(String::from) {
                             match client.set_model(&id, &model).await {
                                 Ok(()) => app.set_status(format!("Model set to {}", model)),

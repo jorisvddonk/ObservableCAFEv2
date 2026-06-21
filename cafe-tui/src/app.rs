@@ -4,6 +4,7 @@ use cafe_types::{Chunk, SessionInfo};
 pub enum AppMode {
     Normal,
     SessionPicker,
+    ModelPicker,
     Confirm(ConfirmAction),
 }
 
@@ -21,6 +22,10 @@ pub struct App {
     pub scroll_offset: usize,
     pub mode: AppMode,
     pub status_msg: Option<String>,
+    pub model_picker_items: Vec<String>,
+    pub model_picker_all: Vec<String>,
+    pub model_picker_idx: usize,
+    pub model_picker_filter: String,
 }
 
 impl App {
@@ -34,6 +39,10 @@ impl App {
             scroll_offset: 0,
             mode: AppMode::Normal,
             status_msg: None,
+            model_picker_items: Vec::new(),
+            model_picker_all: Vec::new(),
+            model_picker_idx: 0,
+            model_picker_filter: String::new(),
         }
     }
 
@@ -70,5 +79,16 @@ impl App {
 
     pub fn clear_status(&mut self) {
         self.status_msg = None;
+    }
+
+    pub fn apply_model_filter(&mut self) {
+        let filter = self.model_picker_filter.to_lowercase();
+        self.model_picker_items = self
+            .model_picker_all
+            .iter()
+            .filter(|m| m.to_lowercase().contains(&filter))
+            .cloned()
+            .collect();
+        self.model_picker_idx = 0;
     }
 }
