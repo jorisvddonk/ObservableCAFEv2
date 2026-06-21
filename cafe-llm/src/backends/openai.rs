@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use futures_util::StreamExt;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::json;
 
 pub struct OpenAiBackend {
@@ -95,4 +96,29 @@ impl LlmBackend for OpenAiBackend {
 
         Ok(Box::pin(token_stream))
     }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        let mut req = self
+            .client
+            .get(format!("{}/v1/models", self.base_url));
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Ok(vec![]);
+        }
+        let list: OpenAiModelList = resp.json().await?;
+        Ok(list.data.into_iter().map(|m| m.id).collect())
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenAiModel {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAiModelList {
+    data: Vec<OpenAiModel>,
 }

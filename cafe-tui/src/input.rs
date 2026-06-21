@@ -7,6 +7,7 @@ pub enum InputAction {
     RenameSession(String),
     SetSystemPrompt(String),
     SetModel(String),
+    ListModels,
     SwitchSession(usize),
     Quit,
     Help,
@@ -112,8 +113,7 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
         "model" => {
             let model = parts.get(1).unwrap_or(&"").trim().to_string();
             if model.is_empty() {
-                app.set_status("Usage: /model <model-name>");
-                InputAction::None
+                InputAction::ListModels
             } else {
                 InputAction::SetModel(model)
             }

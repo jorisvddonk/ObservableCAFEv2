@@ -33,6 +33,16 @@ struct OllamaMessage {
     content: String,
 }
 
+#[derive(Deserialize)]
+struct OllamaTagResponse {
+    models: Vec<OllamaModel>,
+}
+
+#[derive(Deserialize)]
+struct OllamaModel {
+    name: String,
+}
+
 #[async_trait]
 impl LlmBackend for OllamaBackend {
     async fn complete(
@@ -99,5 +109,18 @@ impl LlmBackend for OllamaBackend {
             });
 
         Ok(Box::pin(token_stream))
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/tags", self.base_url))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Ok(vec![]);
+        }
+        let tags: OllamaTagResponse = resp.json().await?;
+        Ok(tags.models.into_iter().map(|m| m.name).collect())
     }
 }

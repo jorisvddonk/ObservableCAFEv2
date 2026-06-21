@@ -1,12 +1,15 @@
 use crate::backends::LlmBackend;
 use crate::evaluator::run_session;
 use anyhow::Result;
+use cafe_types::Chunk;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tracing::{info, warn};
+
+const REGISTRY_SESSION_ID: &str = "_cafe_llm_registry";
 
 pub async fn run_with_reconnect(
     socket_path: String,
@@ -42,6 +45,15 @@ async fn connect_and_run(
     info!("cafe-llm: starting session poller on {}", socket_path);
 
     let mut known_sessions: HashSet<SessionKey> = HashSet::new();
+
+    if let Ok(models) = backend.list_models().await {
+        if !models.is_empty() {
+            info!("cafe-llm: discovered {} models", models.len());
+        }
+        publish_model_registry(socket_path, &models).await?;
+    }
+
+    let mut model_tick: u64 = 0;
 
     loop {
         match list_session_ids(socket_path).await {
@@ -85,8 +97,43 @@ async fn connect_and_run(
             }
         }
 
+        model_tick += 1;
+        if model_tick >= 30 {
+            model_tick = 0;
+            if let Ok(models) = backend.list_models().await {
+                publish_model_registry(socket_path, &models).await?;
+            }
+        }
+
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+}
+
+async fn publish_model_registry(socket_path: &str, models: &[String]) -> Result<()> {
+    let stream = UnixStream::connect(socket_path).await?;
+    let (reader, mut writer) = stream.into_split();
+
+    let create_msg = serde_json::to_string(&cafe_types::ClientMessage::CreateSession {
+        session_id: REGISTRY_SESSION_ID.into(),
+        agent_id: "_llm_registry".into(),
+        config: cafe_types::SessionConfig::default(),
+    })? + "\n";
+    writer.write_all(create_msg.as_bytes()).await?;
+
+    let _ = BufReader::new(reader).lines().next_line().await;
+
+    let models_json = serde_json::to_string(models)?;
+    let chunk = Chunk::new_null("com.nominal.cafe-llm")
+        .with_annotation("config.type", "runtime")
+        .with_annotation("config.available_models", models_json);
+
+    let pub_msg = serde_json::to_string(&cafe_types::ClientMessage::Publish {
+        session_id: REGISTRY_SESSION_ID.into(),
+        chunk,
+    })? + "\n";
+    writer.write_all(pub_msg.as_bytes()).await?;
+
+    Ok(())
 }
 
 async fn list_session_ids(socket_path: &str) -> Result<Vec<cafe_types::SessionInfo>> {

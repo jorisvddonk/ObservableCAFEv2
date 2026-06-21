@@ -24,4 +24,7 @@ pub trait LlmBackend: Send + Sync {
         messages: Vec<LlmMessage>,
         params: &LlmParams,
     ) -> Result<BoxStream<'static, Result<String>>>;
+
+    /// List available models from the backend.
+    async fn list_models(&self) -> Result<Vec<String>>;
 }

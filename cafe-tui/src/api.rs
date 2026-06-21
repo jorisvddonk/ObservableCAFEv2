@@ -160,6 +160,27 @@ impl ApiClient {
             .error_for_status()?;
         Ok(())
     }
+
+    pub async fn list_models(&self) -> Result<Vec<String>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/models", self.base_url))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<serde_json::Value>()
+            .await?;
+        let models = resp["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(models)
+    }
 }
 
 fn try_parse_sse_chunk(buffer: &mut String) -> Option<Chunk> {

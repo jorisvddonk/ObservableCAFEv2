@@ -186,9 +186,25 @@ async fn run_app(
                         }
                     }
 
-                    InputAction::RenameSession(_name) => {
-                        // Would publish a session.name annotation chunk
-                        app.set_status("Rename not yet implemented.");
+                    InputAction::ListModels => {
+                        match client.list_models().await {
+                            Ok(models) => {
+                                let text = if models.is_empty() {
+                                    "Usage: /model <name> — no models listed by server".to_string()
+                                } else {
+                                    format!(
+                                        "Usage: /model <name>\nAvailable models:\n{}",
+                                        models.join("\n")
+                                    )
+                                };
+                                let chunk = cafe_types::Chunk::new_text(text, "com.nominal.cafe-tui")
+                                    .with_annotation("chat.role", "system");
+                                app.push_message(chunk);
+                            }
+                            Err(e) => {
+                                app.set_status(format!("Usage: /model <name> (failed to list: {})", e))
+                            }
+                        }
                     }
 
                     InputAction::Help => {
@@ -196,6 +212,10 @@ async fn run_app(
                         let help_chunk = cafe_types::Chunk::new_text(help_text, "com.nominal.cafe-tui")
                             .with_annotation("chat.role", "system");
                         app.push_message(help_chunk);
+                    }
+
+                    InputAction::RenameSession(_name) => {
+                        app.set_status("Rename not yet implemented.");
                     }
 
                     InputAction::None => {}
