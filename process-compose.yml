@@ -32,8 +32,9 @@ processes:
       - "RUST_BACKTRACE=1"
       - "LLM_BACKEND=openai"
       - "OPENAI_URL=http://localhost:11434"
+      - "OPENAI_MODEL=gemma3:1b"
       - "OLLAMA_URL=http://localhost:11434"
-      - "OLLAMA_MODEL=Gemma-3-4b-it-GGUF:latest"
+      - "OLLAMA_MODEL=gemma3:1b"
     readiness_probe:
       exec:
         command: "true"

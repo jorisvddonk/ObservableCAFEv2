@@ -6,8 +6,10 @@ pub enum InputAction {
     DeleteSession,
     RenameSession(String),
     SetSystemPrompt(String),
+    SetModel(String),
     SwitchSession(usize),
     Quit,
+    Help,
     None,
 }
 
@@ -107,10 +109,20 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
                 InputAction::SetSystemPrompt(prompt)
             }
         }
+        "model" => {
+            let model = parts.get(1).unwrap_or(&"").trim().to_string();
+            if model.is_empty() {
+                app.set_status("Usage: /model <model-name>");
+                InputAction::None
+            } else {
+                InputAction::SetModel(model)
+            }
+        }
         "clear" => {
             app.messages.clear();
             InputAction::None
         }
+        "help" => InputAction::Help,
         "quit" | "exit" => InputAction::Quit,
         "/" => {
             // "//" prefix — send as literal message

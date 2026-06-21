@@ -175,9 +175,27 @@ async fn run_app(
                         }
                     }
 
+                    InputAction::SetModel(model) => {
+                        if let Some(id) = app.active_session_id().map(String::from) {
+                            match client.set_model(&id, &model).await {
+                                Ok(()) => app.set_status(format!("Model set to {}", model)),
+                                Err(e) => {
+                                    app.set_status(format!("Failed to set model: {}", e))
+                                }
+                            }
+                        }
+                    }
+
                     InputAction::RenameSession(_name) => {
                         // Would publish a session.name annotation chunk
                         app.set_status("Rename not yet implemented.");
+                    }
+
+                    InputAction::Help => {
+                        let help_text = "Commands:\n  /sessions  - Browse sessions\n  /new       - Create new session\n  /delete    - Delete current session\n  /rename    - Rename current session\n  /system    - Set system prompt\n  /model     - Set LLM model\n  /clear     - Clear messages\n  /help      - Show this help\n  /quit      - Exit";
+                        let help_chunk = cafe_types::Chunk::new_text(help_text, "com.nominal.cafe-tui")
+                            .with_annotation("chat.role", "system");
+                        app.push_message(help_chunk);
                     }
 
                     InputAction::None => {}

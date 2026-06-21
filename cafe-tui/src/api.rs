@@ -140,6 +140,26 @@ impl ApiClient {
             .error_for_status()?;
         Ok(())
     }
+
+    pub async fn set_model(&self, session_id: &str, model: &str) -> Result<()> {
+        self.client
+            .post(format!(
+                "{}/api/sessions/{}/chunks",
+                self.base_url, session_id
+            ))
+            .bearer_auth(&self.token)
+            .json(&json!({
+                "content_type": "null",
+                "annotations": {
+                    "config.type": "runtime",
+                    "config.model": model
+                }
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
 }
 
 fn try_parse_sse_chunk(buffer: &mut String) -> Option<Chunk> {
