@@ -86,6 +86,14 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
             }
             InputAction::None
         }
+        KeyCode::End => {
+            app.scroll_to_bottom();
+            InputAction::None
+        }
+        KeyCode::Home => {
+            app.scroll_to_top();
+            InputAction::None
+        }
         _ => InputAction::None,
     }
 }

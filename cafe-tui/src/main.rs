@@ -66,7 +66,7 @@ async fn run_app(
     let (chunk_tx, mut chunk_rx) = mpsc::channel::<cafe_types::Chunk>(256);
 
     loop {
-        terminal.draw(|f| ui::draw(f, &app))?;
+        terminal.draw(|f| ui::draw(f, &mut app))?;
 
         // Drain incoming chunks from background streaming task
         while let Ok(chunk) = chunk_rx.try_recv() {
@@ -124,12 +124,13 @@ async fn run_app(
                                 if let Ok(sessions) = client.list_sessions().await {
                                     app.sessions = sessions;
                                     // Switch to new session
-                                    if let Some(idx) =
-                                        app.sessions.iter().position(|s| s.session_id == id)
-                                    {
-                                        app.active_session_idx = idx;
-                                        app.messages.clear();
-                                    }
+                                if let Some(idx) =
+                                    app.sessions.iter().position(|s| s.session_id == id)
+                                {
+                                    app.active_session_idx = idx;
+                                    app.messages.clear();
+                                    app.scroll_to_bottom();
+                                }
                                 }
                                 app.set_status(format!("Created session {}", id));
                             }
@@ -148,6 +149,7 @@ async fn run_app(
                                         if !app.sessions.is_empty() {
                                             load_history(&mut app, &client).await;
                                         }
+                                        app.scroll_to_bottom();
                                     }
                                     app.set_status("Session deleted.");
                                 }
@@ -162,6 +164,7 @@ async fn run_app(
                         app.active_session_idx = idx;
                         app.messages.clear();
                         load_history(&mut app, &client).await;
+                        app.scroll_to_bottom();
                     }
 
                     InputAction::SetSystemPrompt(prompt) => {
@@ -262,6 +265,7 @@ async fn load_history(app: &mut App, client: &ApiClient) {
                             && (c.role() == Some("user") || c.role() == Some("assistant"))
                     })
                     .collect();
+                app.scroll_to_bottom();
             }
             Err(e) => app.set_status(format!("Failed to load history: {}", e)),
         }

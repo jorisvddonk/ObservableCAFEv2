@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -54,7 +54,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(header, area);
 }
 
-fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
+fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for chunk in &app.messages {
@@ -68,7 +68,6 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
                     _ => ("System", Color::Yellow),
                 };
 
-                // Role label line
                 lines.push(Line::from(Span::styled(
                     format!("{}:", label),
                     Style::default()
@@ -76,7 +75,6 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 )));
 
-                // Content lines (word-wrap by splitting on newlines)
                 for text_line in content.lines() {
                     lines.push(Line::from(Span::raw(format!("  {}", text_line))));
                 }
@@ -91,7 +89,6 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(""));
             }
             ContentType::Null => {
-                // Show streaming indicator
                 if chunk
                     .get_annotation::<bool>("chat.is_streaming")
                     .unwrap_or(false)
@@ -116,14 +113,15 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    // Apply scroll: count from bottom
     let total = lines.len();
-    let visible = area.height.saturating_sub(2) as usize; // subtract borders
-    let skip = if total > visible + app.scroll_offset {
-        total - visible - app.scroll_offset
-    } else {
-        0
-    };
+    let visible = area.height.saturating_sub(2) as usize;
+
+    let max_scroll = total.saturating_sub(visible);
+    if app.scroll_offset > max_scroll {
+        app.scroll_offset = max_scroll;
+    }
+
+    let skip = total.saturating_sub(visible).saturating_sub(app.scroll_offset);
     let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
 
     let messages = Paragraph::new(visible_lines)
