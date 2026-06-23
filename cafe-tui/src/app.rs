@@ -67,7 +67,7 @@ impl App {
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.scroll_offset = usize::MAX;
+        self.scroll_offset = 1_000_000;
     }
 
     pub fn push_message(&mut self, chunk: Chunk) {
