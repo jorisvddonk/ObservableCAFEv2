@@ -116,6 +116,10 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let total = lines.len();
     let visible = area.height.saturating_sub(2) as usize;
 
+    if visible == 0 {
+        return;
+    }
+
     let max_scroll = total.saturating_sub(visible);
     if app.scroll_offset > max_scroll {
         app.scroll_offset = max_scroll;
