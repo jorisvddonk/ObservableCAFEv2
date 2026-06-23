@@ -42,11 +42,10 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Check if cafe-tui is available
-if [[ ! -f ./target/debug/cafe-tui ]]; then
-  echo "Error: cafe-tui not found in ./target/debug/" >&2
-  echo "Please run: cd cafe-tui && cargo build" >&2
-  exit 1
+# Build cafe-tui if the binary is missing or outdated
+if [[ ! -f ./target/debug/cafe-tui ]] || [[ ./cafe-tui/src/main.rs -nt ./target/debug/cafe-tui ]]; then
+  echo "Building cafe-tui..."
+  cargo build -p cafe-tui
 fi
 
 # Build if needed (optional - the binary should already exist)
