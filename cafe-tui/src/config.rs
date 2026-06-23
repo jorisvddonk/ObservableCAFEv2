@@ -10,6 +10,18 @@ pub struct Config {
     /// API token
     #[arg(long, env = "CAFE_TOKEN", default_value = "")]
     pub token: String,
+
+    /// Create a new session on startup
+    #[arg(long)]
+    pub new: bool,
+
+    /// Preset model for the new session
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// Preset system prompt for the new session
+    #[arg(long)]
+    pub system_prompt: Option<String>,
 }
 
 impl Config {

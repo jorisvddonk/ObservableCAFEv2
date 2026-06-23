@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, client).await;
+    let result = run_app(&mut terminal, client, &config).await;
 
     // Always restore terminal
     disable_raw_mode()?;
@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     client: Arc<ApiClient>,
+    config: &Config,
 ) -> Result<()> {
     let mut app = App::new();
 
@@ -53,13 +54,51 @@ async fn run_app(
     match client.list_sessions().await {
         Ok(sessions) => {
             app.sessions = sessions;
-            if !app.sessions.is_empty() {
-                load_history(&mut app, &client).await;
-            }
         }
         Err(e) => {
             app.set_status(format!("Failed to connect: {}", e));
         }
+    }
+
+    // Handle --new flag: create session and apply preset config
+    if config.new {
+        if let Some(new_id) = client.create_session("default").await.ok() {
+            if let Ok(sessions) = client.list_sessions().await {
+                app.sessions = sessions;
+                if let Some(idx) = app.sessions.iter().position(|s| s.session_id == new_id) {
+                    app.active_session_idx = idx;
+                    app.messages.clear();
+                    app.scroll_to_bottom();
+                }
+            }
+            app.set_status(format!("Created session {}", new_id));
+
+            // Apply preset system prompt
+            if let Some(ref prompt) = config.system_prompt {
+                if let Some(id) = app.active_session_id().map(String::from) {
+                    if let Err(e) = client.set_system_prompt(&id, prompt).await {
+                        app.set_status(format!("Failed to set prompt: {}", e));
+                    } else {
+                        app.set_status(format!("Session created with system prompt"));
+                    }
+                }
+            }
+
+            // Apply preset model
+            if let Some(ref model) = config.model {
+                if let Some(id) = app.active_session_id().map(String::from) {
+                    if let Err(e) = client.set_model(&id, model).await {
+                        app.set_status(format!("Failed to set model: {}", e));
+                    } else {
+                        app.set_status(format!("Session created with model {}", model));
+                    }
+                }
+            }
+        } else {
+            app.set_status("Failed to create session");
+        }
+    } else if !app.sessions.is_empty() {
+        load_history(&mut app, &client).await;
     }
 
     // Channel for incoming chunks from streaming
