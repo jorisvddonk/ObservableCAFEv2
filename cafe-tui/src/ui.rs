@@ -120,13 +120,28 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let max_scroll = total.saturating_sub(visible);
+    let max_scroll = total.saturating_sub(visible) as i32;
     if app.scroll_offset > max_scroll {
         app.scroll_offset = max_scroll;
     }
 
-    let skip = total.saturating_sub(visible).saturating_sub(app.scroll_offset);
-    let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
+    let overscroll = if app.scroll_offset < 0 {
+        (-app.scroll_offset) as usize
+    } else {
+        0
+    };
+
+    let content_lines_to_show = visible.saturating_sub(overscroll);
+    let content_skip = total.saturating_sub(content_lines_to_show);
+
+    let mut visible_lines: Vec<Line> = lines.into_iter().skip(content_skip).collect();
+    for _ in 0..overscroll {
+        visible_lines.push(Line::from(""));
+    }
+
+    while visible_lines.len() > visible {
+        visible_lines.remove(0);
+    }
 
     let messages = Paragraph::new(visible_lines)
         .block(Block::default().borders(Borders::ALL).title(" Messages "))
