@@ -112,7 +112,8 @@ async fn run_app(
             let is_complete = chunk
                 .get_annotation::<bool>("chat.stream_complete")
                 .unwrap_or(false);
-            if chunk.content_type != ContentType::Null || is_complete {
+            let has_error = chunk.get_annotation::<String>("error.message").is_some();
+            if chunk.content_type != ContentType::Null || is_complete || has_error {
                 app.push_message(chunk);
             }
             if is_complete {
@@ -280,6 +281,14 @@ async fn run_app(
                         app.push_message(help_chunk);
                     }
 
+                    InputAction::ToggleRaw => {
+                        app.raw_mode = !app.raw_mode;
+                        app.set_status(format!(
+                            "Raw mode: {}",
+                            if app.raw_mode { "ON" } else { "OFF" }
+                        ));
+                    }
+
                     InputAction::RenameSession(_name) => {
                         app.set_status("Rename not yet implemented.");
                     }
@@ -297,13 +306,18 @@ async fn load_history(app: &mut App, client: &ApiClient) {
     if let Some(id) = app.active_session_id().map(String::from) {
         match client.get_history(&id).await {
             Ok(chunks) => {
-                app.messages = chunks
-                    .into_iter()
-                    .filter(|c| {
-                        c.content_type == ContentType::Text
-                            && (c.role() == Some("user") || c.role() == Some("assistant"))
-                    })
-                    .collect();
+                if app.raw_mode {
+                    app.messages = chunks;
+                } else {
+                    app.messages = chunks
+                        .into_iter()
+                        .filter(|c| {
+                            c.content_type == ContentType::Text
+                                && (c.role() == Some("user") || c.role() == Some("assistant"))
+                                || c.get_annotation::<String>("error.message").is_some()
+                        })
+                        .collect();
+                }
                 app.scroll_to_bottom();
             }
             Err(e) => app.set_status(format!("Failed to load history: {}", e)),

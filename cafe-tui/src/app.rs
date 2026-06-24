@@ -26,6 +26,7 @@ pub struct App {
     pub model_picker_all: Vec<String>,
     pub model_picker_idx: usize,
     pub model_picker_filter: String,
+    pub raw_mode: bool,
 }
 
 impl App {
@@ -43,6 +44,7 @@ impl App {
             model_picker_all: Vec::new(),
             model_picker_idx: 0,
             model_picker_filter: String::new(),
+            raw_mode: false,
         }
     }
 

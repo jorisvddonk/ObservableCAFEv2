@@ -11,6 +11,7 @@ pub enum InputAction {
     OpenModelPicker,
     SelectModel(String),
     SwitchSession(usize),
+    ToggleRaw,
     Quit,
     Help,
     None,
@@ -31,6 +32,9 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
     match key.code {
         KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
             InputAction::Quit
+        }
+        KeyCode::Char('r') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+            InputAction::ToggleRaw
         }
         KeyCode::Enter => {
             if app.streaming {

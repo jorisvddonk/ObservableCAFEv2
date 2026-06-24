@@ -45,7 +45,11 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .map(|s| s.agent_id.as_str())
         .unwrap_or("—");
 
-    let title = format!(" ObservableCAFE  │  {}  [{}] ", session_name, agent);
+    let raw_indicator = if app.raw_mode { " [RAW]" } else { "" };
+    let title = format!(
+        " ObservableCAFE  │  {}  [{}]{} ",
+        session_name, agent, raw_indicator
+    );
     let status = app.status_msg.as_deref().unwrap_or("");
 
     let header = Paragraph::new(format!("{}{}", title, status))
@@ -57,48 +61,129 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    for chunk in &app.messages {
-        match chunk.content_type {
-            ContentType::Text => {
-                let role = chunk.role().unwrap_or("system");
-                let content = chunk.content.as_deref().unwrap_or("");
-                let (label, color) = match role {
-                    "user" => ("You", Color::Green),
-                    "assistant" => ("Assistant", Color::Blue),
-                    _ => ("System", Color::Yellow),
-                };
-
-                lines.push(Line::from(Span::styled(
-                    format!("{}:", label),
-                    Style::default()
-                        .fg(color)
-                        .add_modifier(Modifier::BOLD),
-                )));
-
-                for text_line in content.lines() {
-                    lines.push(Line::from(Span::raw(format!("  {}", text_line))));
+    if app.raw_mode {
+        for chunk in &app.messages {
+            lines.push(Line::from(Span::styled(
+                "[RAW]",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::raw(format!("  id: {}", chunk.id))));
+            lines.push(Line::from(Span::raw(format!(
+                "  content_type: {:?}",
+                chunk.content_type
+            ))));
+            lines.push(Line::from(Span::raw(format!(
+                "  producer: {}",
+                chunk.producer
+            ))));
+            if let Some(ref content) = chunk.content {
+                for line in content.lines() {
+                    lines.push(Line::from(Span::raw(format!("  content: {}", line))));
                 }
-                lines.push(Line::from(""));
             }
-            ContentType::Binary => {
-                let mime = chunk.mime_type.as_deref().unwrap_or("binary");
-                lines.push(Line::from(Span::styled(
-                    format!("[Binary: {}]", mime),
-                    Style::default().fg(Color::Magenta),
-                )));
-                lines.push(Line::from(""));
+            if !chunk.annotations.is_empty() {
+                lines.push(Line::from(Span::raw("  annotations:")));
+                let mut sorted_keys: Vec<&String> = chunk.annotations.keys().collect();
+                sorted_keys.sort();
+                for k in sorted_keys {
+                    if let Some(v) = chunk.annotations.get(k) {
+                        lines.push(Line::from(Span::raw(format!("    {}: {}", k, v))));
+                    }
+                }
             }
-            ContentType::Null => {
-                if chunk
-                    .get_annotation::<bool>("chat.is_streaming")
-                    .unwrap_or(false)
-                {
+            lines.push(Line::from(""));
+        }
+    } else {
+        for chunk in &app.messages {
+            let has_error = chunk.get_annotation::<String>("error.message").is_some();
+
+            match chunk.content_type {
+                ContentType::Text => {
+                    let role = chunk.role().unwrap_or("system");
+                    let content = chunk.content.as_deref().unwrap_or("");
+                    let error_text: Option<String> =
+                        chunk.get_annotation("error.message");
+
+                    let (label, color) = if has_error {
+                        ("Error", Color::Red)
+                    } else {
+                        match role {
+                            "user" => ("You", Color::Green),
+                            "assistant" => ("Assistant", Color::Blue),
+                            _ => ("System", Color::Yellow),
+                        }
+                    };
+
                     lines.push(Line::from(Span::styled(
-                        "  ▋",
+                        format!("{}:", label),
                         Style::default()
-                            .fg(Color::Blue)
-                            .add_modifier(Modifier::SLOW_BLINK),
+                            .fg(color)
+                            .add_modifier(Modifier::BOLD),
                     )));
+
+                    if let Some(ref err) = error_text {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", err),
+                            Style::default().fg(Color::Red),
+                        )));
+                    }
+
+                    for text_line in content.lines() {
+                        lines.push(Line::from(Span::raw(format!("  {}", text_line))));
+                    }
+                    lines.push(Line::from(""));
+                }
+                ContentType::Binary => {
+                    let mime = chunk.mime_type.as_deref().unwrap_or("binary");
+                    if has_error {
+                        let error_text: Option<String> =
+                            chunk.get_annotation("error.message");
+                        lines.push(Line::from(Span::styled(
+                            format!("[Binary Error: {}]", mime),
+                            Style::default().fg(Color::Red),
+                        )));
+                        if let Some(ref err) = error_text {
+                            lines.push(Line::from(Span::styled(
+                                format!("  {}", err),
+                                Style::default().fg(Color::Red),
+                            )));
+                        }
+                    } else {
+                        lines.push(Line::from(Span::styled(
+                            format!("[Binary: {}]", mime),
+                            Style::default().fg(Color::Magenta),
+                        )));
+                    }
+                    lines.push(Line::from(""));
+                }
+                ContentType::Null => {
+                    if has_error {
+                        let error_text: Option<String> =
+                            chunk.get_annotation("error.message");
+                        lines.push(Line::from(Span::styled(
+                            "Error:",
+                            Style::default()
+                                .fg(Color::Red)
+                                .add_modifier(Modifier::BOLD),
+                        )));
+                        if let Some(ref err) = error_text {
+                            lines.push(Line::from(Span::styled(
+                                format!("  {}", err),
+                                Style::default().fg(Color::Red),
+                            )));
+                        }
+                        lines.push(Line::from(""));
+                    } else if chunk
+                        .get_annotation::<bool>("chat.is_streaming")
+                        .unwrap_or(false)
+                    {
+                        lines.push(Line::from(Span::styled(
+                            "  ▋",
+                            Style::default()
+                                .fg(Color::Blue)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        )));
+                    }
                 }
             }
         }
