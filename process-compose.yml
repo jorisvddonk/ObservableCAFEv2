@@ -144,3 +144,22 @@ processes:
     # Optional — only meaningful when a ComfyUI server is running.
     # Set disabled: true if you don't have ComfyUI available.
     disabled: false
+
+  cafe-sheetbot:
+    command: ./target/debug/cafe-sheetbot
+    environment:
+      - "RUST_BACKTRACE=1"
+      - "SHEETBOT_URL=http://127.0.0.1:3000"
+      - "SHEETBOT_API_KEY="
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    # Optional — only meaningful when a SheetBot server is running.
+    # Set disabled: true if you don't have SheetBot available.
+    disabled: false

@@ -51,6 +51,10 @@ pub struct SessionConfig {
     pub comfy_workflow_input_node: Option<String>,
     pub comfy_endpoint: Option<String>,
 
+    // SheetBot integration
+    pub sheetbot_url: Option<String>,
+    pub sheetbot_api_key: Option<String>,
+
     // STT evaluator
     pub stt_base_url: Option<String>,
     pub stt_response_format: Option<String>,
@@ -143,6 +147,12 @@ fn apply_config_key(cfg: &mut SessionConfig, key: &str, value: &serde_json::Valu
         }
         keys::CONFIG_COMFY_ENDPOINT => {
             cfg.comfy_endpoint = value.as_str().map(String::from);
+        }
+        keys::CONFIG_SHEETBOT_URL => {
+            cfg.sheetbot_url = value.as_str().map(String::from);
+        }
+        keys::CONFIG_SHEETBOT_API_KEY => {
+            cfg.sheetbot_api_key = value.as_str().map(String::from);
         }
         keys::CONFIG_STT_BASE_URL => {
             cfg.stt_base_url = value.as_str().map(String::from);
@@ -247,6 +257,8 @@ mod tests {
         assert!(cfg.comfy_workflow_path.is_none());
         assert!(cfg.comfy_workflow_input_node.is_none());
         assert!(cfg.comfy_endpoint.is_none());
+        assert!(cfg.sheetbot_url.is_none());
+        assert!(cfg.sheetbot_api_key.is_none());
         assert!(cfg.stt_base_url.is_none());
         assert!(cfg.stt_response_format.is_none());
         assert!(cfg.rss_url.is_none());

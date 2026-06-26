@@ -1,0 +1,15 @@
+name = "sheetbot"
+description = "SheetBot integration — create and manage SheetBot tasks, sheets, and artefacts via RPC"
+background = true
+allows_reload = true
+persists_state = true
+
+pipeline = ["trust-filter", "llm"]
+
+[initial_chunk]
+type = "null"
+
+[initial_chunk.annotations]
+"config.type"                        = "runtime"
+"config.llm.system_prompt"           = "You are a helpful assistant with access to the SheetBot task and sheet management system. You can create tasks, manage sheets, upload artefacts, and query the script library by making RPC calls to the sheetbot bridge."
+"config.sheetbot.url"                = "http://localhost:3000"

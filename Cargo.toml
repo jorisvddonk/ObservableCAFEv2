@@ -10,6 +10,7 @@ members = [
     "cafe-agent-runtime",
     "cafe-tts",
     "cafe-comfy",
+    "cafe-sheetbot",
 ]
 
 # Shared dependency versions — pin once here, reference everywhere

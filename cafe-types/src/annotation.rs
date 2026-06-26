@@ -35,6 +35,9 @@ pub mod keys {
     pub const CONFIG_COMFY_WORKFLOW_INPUT_NODE: &str = "config.comfy.workflow_input_node";
     pub const CONFIG_COMFY_ENDPOINT: &str = "config.comfy.endpoint";
 
+    pub const CONFIG_SHEETBOT_URL: &str = "config.sheetbot.url";
+    pub const CONFIG_SHEETBOT_API_KEY: &str = "config.sheetbot.api_key";
+
     pub const CONFIG_STT_BASE_URL: &str = "config.stt.base_url";
     pub const CONFIG_STT_RESPONSE_FORMAT: &str = "config.stt.response_format";
 
