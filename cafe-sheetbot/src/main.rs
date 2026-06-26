@@ -13,7 +13,14 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = Config::from_env();
-    let sheetbot = Arc::new(SheetbotClient::new(&config.sheetbot_url, &config.sheetbot_api_key));
+    let mut sheetbot = SheetbotClient::new(&config.sheetbot_url, &config.sheetbot_api_key);
+
+    // Exchange API key for JWT if needed
+    if let Err(e) = sheetbot.login().await {
+        tracing::warn!("cafe-sheetbot: login failed (will try unauthenticated): {}", e);
+    }
+
+    let sheetbot = Arc::new(sheetbot);
 
     info!(
         "cafe-sheetbot: starting — bus={} sheetbot={}",

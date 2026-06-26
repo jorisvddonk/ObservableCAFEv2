@@ -9,9 +9,9 @@ impl Config {
         Self {
             socket_path: std::env::var("CAFE_BUS_SOCKET")
                 .unwrap_or_else(|_| "/tmp/cafe-bus.sock".into()),
-            sheetbot_url: std::env::var("SHEETBOT_URL")
+            sheetbot_url: std::env::var("SHEETBOT_BASEURL")
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
-            sheetbot_api_key: std::env::var("SHEETBOT_API_KEY")
+            sheetbot_api_key: std::env::var("SHEETBOT_AUTH_APIKEY")
                 .unwrap_or_default(),
         }
     }

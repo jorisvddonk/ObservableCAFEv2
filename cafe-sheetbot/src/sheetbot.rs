@@ -3,7 +3,8 @@ use serde_json::Value;
 
 pub struct SheetbotClient {
     pub base_url: String,
-    pub api_key: String,
+    api_key: String,
+    jwt_token: Option<String>,
     http: reqwest::Client,
 }
 
@@ -12,15 +13,48 @@ impl SheetbotClient {
         Self {
             base_url: base_url.into(),
             api_key: api_key.into(),
+            jwt_token: None,
             http: reqwest::Client::new(),
         }
     }
 
+    /// If the configured key is a SheetBot API key (uuid.secret format),
+    /// exchange it for a JWT via POST /login.
+    pub async fn login(&mut self) -> anyhow::Result<()> {
+        if self.api_key.is_empty() {
+            return Ok(());
+        }
+
+        // If it contains a dot, it's an API key that needs exchanging
+        if self.api_key.contains('.') {
+            let url = format!("{}/login", self.base_url);
+            let body = serde_json::json!({ "apiKey": self.api_key });
+            let resp = self
+                .http
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .context("POST /login failed")?
+                .error_for_status()
+                .context("POST /login returned error")?;
+            let result: Value = resp.json().await.context("failed to parse /login response")?;
+            let token = result["token"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("login response missing 'token'"))?;
+            self.jwt_token = Some(token.to_string());
+        } else {
+            // Assume it's already a JWT
+            self.jwt_token = Some(self.api_key.clone());
+        }
+
+        Ok(())
+    }
+
     fn auth_headers(&self) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
-        if !self.api_key.is_empty() {
-            let value = format!("Bearer {}", self.api_key);
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(&value) {
+        if let Some(token) = &self.jwt_token {
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)) {
                 headers.insert(reqwest::header::AUTHORIZATION, v);
             }
         }

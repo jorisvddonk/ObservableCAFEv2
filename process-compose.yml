@@ -31,9 +31,9 @@ processes:
     environment:
       - "RUST_BACKTRACE=1"
       - "LLM_BACKEND=openai"
-      - "OPENAI_URL=http://localhost:11434"
+      - "OPENAI_URL=http://localhost:8080"
       - "OPENAI_MODEL=gemma3:1b"
-      - "OLLAMA_URL=http://localhost:11434"
+      - "OLLAMA_URL=http://localhost:8080"
       - "OLLAMA_MODEL=gemma3:1b"
     readiness_probe:
       exec:
@@ -149,8 +149,6 @@ processes:
     command: ./target/debug/cafe-sheetbot
     environment:
       - "RUST_BACKTRACE=1"
-      - "SHEETBOT_URL=http://127.0.0.1:3000"
-      - "SHEETBOT_API_KEY="
     readiness_probe:
       exec:
         command: "true"
