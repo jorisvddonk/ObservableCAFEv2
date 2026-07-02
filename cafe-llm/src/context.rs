@@ -1,5 +1,5 @@
 use crate::backends::LlmMessage;
-use cafe_types::{keys, Chunk, ContentType};
+use cafe_sdk::{keys, Chunk, ContentType};
 
 /// Build an LLM message list from session history.
 pub fn build_messages(history: &[Chunk], system_prompt: Option<&str>) -> Vec<LlmMessage> {

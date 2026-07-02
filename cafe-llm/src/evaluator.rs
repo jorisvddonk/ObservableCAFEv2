@@ -1,7 +1,7 @@
 use crate::backends::{LlmBackend, LlmParams};
 use crate::context::{build_messages, extract_config};
 use anyhow::Result;
-use cafe_types::{keys, roles, Chunk, ClientMessage, ContentType, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, ClientMessage, ContentType, ServerMessage};
 use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
