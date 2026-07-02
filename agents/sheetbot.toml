@@ -4,12 +4,67 @@ background = true
 allows_reload = true
 persists_state = true
 
-pipeline = ["trust-filter", "llm"]
+pipeline = ["trust-filter", "llm", "tool-detector", "tool-executor"]
 
 [initial_chunk]
 type = "null"
 
 [initial_chunk.annotations]
 "config.type"                        = "runtime"
-"config.llm.system_prompt"           = "You are a helpful assistant with access to the SheetBot task and sheet management system. You can create tasks, manage sheets, upload artefacts, and query the script library by making RPC calls to the sheetbot bridge."
+"config.llm.system_prompt"           = """
+You are a helpful assistant with access to the SheetBot task and sheet management system.
+
+You can invoke tools by emitting `<|tool_call|>` markers in your response:
+
+<|tool_call|>{"name":"sheetbot.list_tasks","parameters":{}}<|tool_call_end|>
+
+Available tools:
+- sheetbot.list_tasks — List all tasks, optionally filtered by status (0=awaiting, 1=running, 2=completed, 3=failed, 4=paused)
+- sheetbot.get_task — Get details of a specific task (requires: id)
+- sheetbot.create_task — Create a new task (requires: script, optional: name, type, data)
+- sheetbot.update_task — Update a task (requires: id)
+- sheetbot.delete_task — Delete a task (requires: id)
+- sheetbot.accept_task — Accept a task (requires: id)
+- sheetbot.complete_task — Complete a task (requires: id)
+- sheetbot.fail_task — Fail a task (requires: id)
+- sheetbot.clone_task — Clone a task (requires: id)
+- sheetbot.get_next_task — Get the next awaiting task
+- sheetbot.update_task_data — Update task data (requires: id)
+- sheetbot.list_sheets — List all available sheets
+- sheetbot.get_sheet — Get data from a specific sheet (requires: id)
+- sheetbot.upsert_sheet_data — Upsert data into a sheet (requires: id)
+- sheetbot.delete_sheet_row — Delete a row from a sheet (requires: id, key)
+- sheetbot.upload_artefact — Upload an artefact to a task (requires: task_id, filename)
+- sheetbot.get_artefact — Get an artefact from a task (requires: task_id, filename)
+- sheetbot.delete_artefact — Delete an artefact from a task (requires: task_id, filename)
+- sheetbot.list_library — List available scripts in the SheetBot library
+
+Task statuses:
+- 0 (AWAITING): Ready for execution
+- 1 (RUNNING): Currently being executed
+- 2 (COMPLETED): Finished successfully
+- 3 (FAILED): Finished with error
+- 4 (PAUSED): Not ready for execution
+"""
 "config.sheetbot.url"                = "http://localhost:3000"
+"tools.available"                     = [
+  { name = "sheetbot.list_tasks", description = "List all tasks, optionally filtered by status", parameters = { type = "object", properties = { status = { type = "integer", description = "Filter by status (0=AWAITING, 1=RUNNING, 2=COMPLETED, 3=FAILED, 4=PAUSED)" } } }, tool_type = "rpc" },
+  { name = "sheetbot.get_task", description = "Get details of a specific task", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.create_task", description = "Create a new task", parameters = { type = "object", properties = { script = { type = "string", description = "Task script content" }, name = { type = "string", description = "Task name" }, type = { type = "string", enum = ["deno", "python", "bash"], description = "Execution type" }, data = { type = "object", description = "JSON data" } }, required = ["script"] }, tool_type = "rpc" },
+  { name = "sheetbot.update_task", description = "Update a task", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.delete_task", description = "Delete a task", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.accept_task", description = "Accept a task for execution", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.complete_task", description = "Complete a task", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.fail_task", description = "Mark a task as failed", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.clone_task", description = "Clone a task", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.get_next_task", description = "Get the next awaiting task", parameters = { type = "object", properties = {} }, tool_type = "rpc" },
+  { name = "sheetbot.update_task_data", description = "Update task data", parameters = { type = "object", properties = { id = { type = "string", description = "Task UUID" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.list_sheets", description = "List all available sheets", parameters = { type = "object", properties = {} }, tool_type = "rpc" },
+  { name = "sheetbot.get_sheet", description = "Get data from a specific sheet", parameters = { type = "object", properties = { id = { type = "string", description = "Sheet name" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.upsert_sheet_data", description = "Upsert data into a sheet", parameters = { type = "object", properties = { id = { type = "string", description = "Sheet name" } }, required = ["id"] }, tool_type = "rpc" },
+  { name = "sheetbot.delete_sheet_row", description = "Delete a row from a sheet", parameters = { type = "object", properties = { id = { type = "string", description = "Sheet name" }, key = { type = "string", description = "Row key" } }, required = ["id", "key"] }, tool_type = "rpc" },
+  { name = "sheetbot.upload_artefact", description = "Upload an artefact to a task", parameters = { type = "object", properties = { task_id = { type = "string", description = "Task UUID" }, filename = { type = "string", description = "Artefact filename" } }, required = ["task_id", "filename"] }, tool_type = "rpc" },
+  { name = "sheetbot.get_artefact", description = "Get an artefact from a task", parameters = { type = "object", properties = { task_id = { type = "string", description = "Task UUID" }, filename = { type = "string", description = "Artefact filename" } }, required = ["task_id", "filename"] }, tool_type = "rpc" },
+  { name = "sheetbot.delete_artefact", description = "Delete an artefact from a task", parameters = { type = "object", properties = { task_id = { type = "string", description = "Task UUID" }, filename = { type = "string", description = "Artefact filename" } }, required = ["task_id", "filename"] }, tool_type = "rpc" },
+  { name = "sheetbot.list_library", description = "List available scripts in the SheetBot library", parameters = { type = "object", properties = {} }, tool_type = "rpc" }
+]
