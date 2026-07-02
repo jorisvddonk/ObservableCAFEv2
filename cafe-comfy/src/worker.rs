@@ -1,14 +1,11 @@
 use crate::comfyui::ComfyUIClient;
-use anyhow::Result;
-use cafe_types::{
-    keys, roles, rpc_errors, Chunk, ClientMessage, JsonRpcRequest, JsonRpcResponse, ServerMessage,
-    SessionInfo,
+use cafe_sdk::bus::BusClient;
+use cafe_sdk::{
+    keys, roles, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use tracing::{error, info, warn};
 
 pub async fn run_with_reconnect(
@@ -17,37 +14,34 @@ pub async fn run_with_reconnect(
     workflow: serde_json::Value,
     input_node: String,
 ) {
-    loop {
-        match poll_sessions(&socket_path, comfy.clone(), workflow.clone(), input_node.clone()).await {
-            Ok(()) => {
-                info!("cafe-comfy: clean shutdown");
-                break;
-            }
-            Err(e) => {
-                warn!("cafe-comfy: session poller error: {}. Retrying in 2s", e);
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        }
-    }
+    cafe_sdk::bus::run_with_reconnect("cafe-comfy", move || {
+        let socket = socket_path.clone();
+        let comfy = comfy.clone();
+        let wf = workflow.clone();
+        let inp = input_node.clone();
+        async move { poll_sessions(&socket, comfy, &wf, &inp).await }
+    })
+    .await;
 }
 
 async fn poll_sessions(
     socket_path: &str,
     comfy: Arc<ComfyUIClient>,
-    workflow: serde_json::Value,
-    input_node: String,
-) -> Result<()> {
+    workflow: &serde_json::Value,
+    input_node: &str,
+) -> anyhow::Result<()> {
     info!("cafe-comfy: starting session poller on {}", socket_path);
 
+    let client = BusClient::new(socket_path);
     let mut known: HashSet<String> = HashSet::new();
 
     loop {
-        match list_sessions(socket_path).await {
+        match client.list_sessions().await {
             Ok(sessions) => {
                 let current_ids: HashSet<String> =
                     sessions.iter().map(|s| s.session_id.clone()).collect();
 
-                for session in sessions {
+                for session in &sessions {
                     if known.contains(&session.session_id) {
                         continue;
                     }
@@ -55,13 +49,13 @@ async fn poll_sessions(
                     known.insert(session.session_id.clone());
 
                     let sid = session.session_id.clone();
-                    let sp = socket_path.to_string();
+                    let client = client.clone();
                     let vb = comfy.clone();
                     let wf = workflow.clone();
-                    let inp = input_node.clone();
+                    let inp = input_node.to_string();
                     tokio::spawn(async move {
-                        if let Err(e) = run_session_handler(sid.clone(), sp, vb, wf, inp).await {
-                            warn!("cafe-comfy: session {} handler error: {}", sid, e);
+                        if let Err(e) = run_session_handler(sid, client, vb, wf, inp).await {
+                            warn!("cafe-comfy: session handler error: {}", e);
                         }
                     });
                 }
@@ -77,32 +71,16 @@ async fn poll_sessions(
 
 async fn run_session_handler(
     session_id: String,
-    socket_path: String,
+    client: BusClient,
     comfy: Arc<ComfyUIClient>,
     workflow: serde_json::Value,
     input_node: String,
-) -> Result<()> {
-    let stream = UnixStream::connect(&socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
+) -> anyhow::Result<()> {
+    let mut rx = client.subscribe(&session_id).await?;
 
-    let sub_msg = serde_json::to_string(&ClientMessage::Subscribe {
-        session_id: session_id.clone(),
-    })? + "\n";
-    writer.write_all(sub_msg.as_bytes()).await?;
-
-    let mut lines = BufReader::new(reader).lines();
-
-    while let Some(line) = lines.next_line().await? {
-        let msg: ServerMessage = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("cafe-comfy: invalid bus message: {}", e);
-                continue;
-            }
-        };
-
+    while let Some(msg) = rx.recv().await {
         let chunk = match msg {
-            ServerMessage::Chunk { session_id: sid, chunk } if sid == session_id => chunk,
+            ServerMessage::Chunk { chunk, .. } => chunk,
             _ => continue,
         };
 
@@ -115,7 +93,7 @@ async fn run_session_handler(
         );
 
         let call_id = request.id.clone();
-        let result = handle_comfy_request(&comfy, &request, &workflow, &input_node, &session_id, &mut writer).await;
+        let result = handle_comfy_request(&comfy, &request, &workflow, &input_node, &client, &session_id).await;
 
         let response = match result {
             Ok(image_chunk_id) => JsonRpcResponse::ok(
@@ -130,7 +108,7 @@ async fn run_session_handler(
 
         let resp_chunk = Chunk::new_null("com.nominal.cafe-comfy")
             .with_annotation(keys::JSONRPC_RESPONSE, &response);
-        publish_chunk(&mut writer, &session_id, resp_chunk).await;
+        let _ = client.publish(&session_id, resp_chunk).await;
     }
     Ok(())
 }
@@ -140,9 +118,9 @@ async fn handle_comfy_request(
     request: &JsonRpcRequest,
     workflow: &serde_json::Value,
     input_node: &str,
+    client: &BusClient,
     session_id: &str,
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-) -> Result<String> {
+) -> anyhow::Result<String> {
     let text = request.params["text"].as_str().unwrap_or_default();
 
     if text.is_empty() {
@@ -155,40 +133,8 @@ async fn handle_comfy_request(
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
 
     let image_chunk_id = image_chunk.id.clone();
-    publish_chunk(writer, session_id, image_chunk).await;
+    let _ = client.publish(session_id, image_chunk).await;
 
     info!("cafe-comfy: published image chunk {} for session {}", image_chunk_id, session_id);
     Ok(image_chunk_id)
-}
-
-async fn publish_chunk(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    session_id: &str,
-    chunk: Chunk,
-) {
-    let msg = ClientMessage::Publish { session_id: session_id.to_string(), chunk };
-    match serde_json::to_string(&msg) {
-        Ok(mut json) => {
-            json.push('\n');
-            if let Err(e) = writer.write_all(json.as_bytes()).await {
-                error!("cafe-comfy: write error: {}", e);
-            }
-        }
-        Err(e) => error!("cafe-comfy: failed to serialize chunk: {}", e),
-    }
-}
-
-async fn list_sessions(socket_path: &str) -> Result<Vec<SessionInfo>> {
-    let stream = UnixStream::connect(socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
-    let msg = serde_json::to_string(&ClientMessage::ListSessions)? + "\n";
-    writer.write_all(msg.as_bytes()).await?;
-
-    let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-        if let Ok(ServerMessage::SessionsList { sessions }) = serde_json::from_str(&line) {
-            return Ok(sessions);
-        }
-    }
-    Ok(vec![])
 }
