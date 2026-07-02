@@ -27,6 +27,8 @@ logs/
 *.egg-info/
 build/
 
+.pi/
+
 # Editor
 .vscode/
 .idea/
