@@ -7,7 +7,7 @@ use axum::{
     },
     Json,
 };
-use cafe_types::{keys, roles, Chunk, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, ServerMessage};
 use serde::Deserialize;
 use std::convert::Infallible;
 use tokio::sync::mpsc;

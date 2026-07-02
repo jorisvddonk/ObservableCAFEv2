@@ -1,6 +1,5 @@
 mod auth;
 mod binary_ref;
-mod bus_client;
 mod config;
 mod db;
 mod handlers;
@@ -8,7 +7,7 @@ mod router;
 mod sse;
 
 use anyhow::Result;
-use bus_client::BusClient;
+use cafe_sdk::bus::BusClient;
 use config::Config;
 use db::Db;
 use std::sync::Arc;

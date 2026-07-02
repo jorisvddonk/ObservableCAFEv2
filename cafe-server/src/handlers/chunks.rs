@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use cafe_types::{keys, Chunk, ContentType};
+use cafe_sdk::{keys, Chunk, ContentType};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;

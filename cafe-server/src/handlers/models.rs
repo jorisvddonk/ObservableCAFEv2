@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use cafe_types::ContentType;
+use cafe_sdk::ContentType;
 use serde_json::json;
 
 pub async fn list_models(State(state): State<AppState>) -> impl IntoResponse {

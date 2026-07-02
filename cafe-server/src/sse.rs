@@ -1,6 +1,6 @@
 use crate::binary_ref::serialize_chunk;
 use axum::response::sse::Event;
-use cafe_types::{Chunk, ServerMessage};
+use cafe_sdk::{Chunk, ServerMessage};
 use std::convert::Infallible;
 
 /// Convert a ServerMessage into an SSE Event (full binary, no substitution).

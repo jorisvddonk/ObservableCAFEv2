@@ -1,4 +1,4 @@
-use cafe_types::{Chunk, ContentType};
+use cafe_sdk::{Chunk, ContentType};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -57,7 +57,7 @@ pub fn serialize_chunk(chunk: &Chunk, binary_refs: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cafe_types::Chunk;
+    use cafe_sdk::Chunk;
 
     fn binary_chunk() -> Chunk {
         Chunk::new_binary(

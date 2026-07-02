@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use cafe_types::SessionConfig;
+use cafe_sdk::SessionConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
