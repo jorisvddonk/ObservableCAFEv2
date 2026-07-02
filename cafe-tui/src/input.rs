@@ -55,9 +55,23 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
             }
         }
         KeyCode::Tab => {
+            // Tab on "/model <text>" opens model picker with filter
             if let Some(rest) = app.input.strip_prefix("/model ") {
                 app.model_picker_filter = rest.to_string();
                 InputAction::OpenModelPicker
+            } else if let Some(partial) = app.input.strip_prefix('/') {
+                // Tab-complete slash command name (before any space)
+                if !partial.contains(' ') {
+                    let commands = [
+                        "sessions", "new", "delete", "rename",
+                        "system", "model", "clear", "help", "quit",
+                    ];
+                    let matches: Vec<&&str> = commands.iter().filter(|c| c.starts_with(partial)).collect();
+                    if matches.len() == 1 {
+                        app.input = format!("/{} ", matches[0]);
+                    }
+                }
+                InputAction::None
             } else {
                 InputAction::None
             }
@@ -105,17 +119,17 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
 fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
     let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
     match parts[0] {
-        "sessions" => {
+        "sessions" | "s" => {
             app.mode = AppMode::SessionPicker;
             InputAction::None
         }
-        "new" => InputAction::CreateSession,
-        "delete" => {
+        "new" | "n" => InputAction::CreateSession,
+        "delete" | "d" => {
             app.mode = AppMode::Confirm(ConfirmAction::DeleteSession);
             app.set_status("Delete current session? (y/n)");
             InputAction::None
         }
-        "rename" => {
+        "rename" | "rn" => {
             let name = parts.get(1).unwrap_or(&"").trim().to_string();
             if name.is_empty() {
                 app.set_status("Usage: /rename <name>");
@@ -124,7 +138,7 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
                 InputAction::RenameSession(name)
             }
         }
-        "system" => {
+        "system" | "sy" => {
             let prompt = parts.get(1).unwrap_or(&"").trim().to_string();
             if prompt.is_empty() {
                 app.set_status("Usage: /system <prompt>");
@@ -133,7 +147,7 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
                 InputAction::SetSystemPrompt(prompt)
             }
         }
-        "model" => {
+        "model" | "m" => {
             let model = parts.get(1).unwrap_or(&"").trim().to_string();
             if model.is_empty() {
                 InputAction::ListModels
@@ -141,12 +155,12 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
                 InputAction::SetModel(model)
             }
         }
-        "clear" => {
+        "clear" | "c" => {
             app.messages.clear();
             InputAction::None
         }
-        "help" => InputAction::Help,
-        "quit" | "exit" => InputAction::Quit,
+        "help" | "h" => InputAction::Help,
+        "quit" | "q" | "exit" => InputAction::Quit,
         "/" => {
             // "//" prefix — send as literal message
             InputAction::SendMessage(format!("/{}", parts.get(1).unwrap_or(&"")))

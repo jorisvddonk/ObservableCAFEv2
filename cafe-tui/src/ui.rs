@@ -9,12 +9,19 @@ use ratatui::{
 };
 
 pub fn draw(f: &mut Frame, app: &mut App) {
+    // Compute dynamic input height based on wrapped line count
+    let prompt = if app.streaming { "  (streaming…)" } else { "> " };
+    let input_text = format!("{}{}", prompt, app.input);
+    let inner_w = (f.size().width.saturating_sub(2)).max(1) as usize;
+    let input_lines = (input_text.len() + inner_w - 1) / inner_w;
+    let input_height = (input_lines as u16 + 2).clamp(3, 10);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(0),    // messages
-            Constraint::Length(3), // input
+            Constraint::Length(3),          // header
+            Constraint::Min(0),             // messages
+            Constraint::Length(input_height), // input (grows with text)
         ])
         .split(f.size());
 
@@ -210,22 +217,23 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         app.scroll_offset = max_scroll;
     }
 
-    let overscroll = if app.scroll_offset < 0 {
-        (-app.scroll_offset) as usize
+    let (content_skip, overscroll) = if app.scroll_offset >= 0 {
+        let scroll_up = app.scroll_offset as usize;
+        (total.saturating_sub(visible + scroll_up), 0)
     } else {
-        0
+        (total.saturating_sub(visible), (-app.scroll_offset) as usize)
     };
 
-    let content_lines_to_show = visible.saturating_sub(overscroll);
-    let content_skip = total.saturating_sub(content_lines_to_show);
-
     let mut visible_lines: Vec<Line> = lines.into_iter().skip(content_skip).collect();
-    for _ in 0..overscroll {
-        visible_lines.push(Line::from(""));
-    }
-
-    while visible_lines.len() > visible {
-        visible_lines.remove(0);
+    if overscroll > 0 {
+        for _ in 0..overscroll {
+            visible_lines.push(Line::from(""));
+        }
+        while visible_lines.len() > visible {
+            visible_lines.remove(0);
+        }
+    } else if visible_lines.len() > visible {
+        visible_lines.truncate(visible);
     }
 
     let messages = Paragraph::new(visible_lines)
@@ -239,7 +247,8 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let input_text = format!("{}{}", prompt, app.input);
     let input = Paragraph::new(input_text)
         .block(Block::default().borders(Borders::ALL).title(" Input "))
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::White))
+        .wrap(Wrap { trim: false });
     f.render_widget(input, area);
 }
 

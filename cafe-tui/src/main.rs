@@ -283,14 +283,27 @@ async fn run_app(
 
                     InputAction::ToggleRaw => {
                         app.raw_mode = !app.raw_mode;
+                        app.scroll_to_bottom();
                         app.set_status(format!(
                             "Raw mode: {}",
                             if app.raw_mode { "ON" } else { "OFF" }
                         ));
                     }
 
-                    InputAction::RenameSession(_name) => {
-                        app.set_status("Rename not yet implemented.");
+                    InputAction::RenameSession(name) => {
+                        if let Some(id) = app.active_session_id().map(String::from) {
+                            if let Err(e) = client.rename_session(&id, &name).await {
+                                app.set_status(format!("Failed to rename: {}", e));
+                            } else {
+                                // Update local display name immediately
+                                if let Some(session) =
+                                    app.sessions.get_mut(app.active_session_idx)
+                                {
+                                    session.display_name = Some(name.clone());
+                                }
+                                app.set_status(format!("Renamed to '{}'", name));
+                            }
+                        }
                     }
 
                     InputAction::None => {}

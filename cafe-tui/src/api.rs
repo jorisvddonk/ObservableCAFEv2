@@ -141,6 +141,25 @@ impl ApiClient {
         Ok(())
     }
 
+    pub async fn rename_session(&self, session_id: &str, name: &str) -> Result<()> {
+        self.client
+            .post(format!(
+                "{}/api/sessions/{}/chunks",
+                self.base_url, session_id
+            ))
+            .bearer_auth(&self.token)
+            .json(&json!({
+                "content_type": "null",
+                "annotations": {
+                    "config.session.name": name
+                }
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     pub async fn set_model(&self, session_id: &str, model: &str) -> Result<()> {
         self.client
             .post(format!(
