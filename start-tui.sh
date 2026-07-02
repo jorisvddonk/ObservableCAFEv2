@@ -43,13 +43,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Build cafe-tui if the binary is missing or outdated
-if [[ ! -f ./target/debug/cafe-tui ]] || [[ ./cafe-tui/src/main.rs -nt ./target/debug/cafe-tui ]]; then
-  echo "Building cafe-tui..."
-  cargo build -p cafe-tui
+if [[ ! -f ./target/release/cafe-tui ]] || [[ ./cafe-tui/src/main.rs -nt ./target/release/cafe-tui ]]; then
+  echo "Building cafe-tui (release)..."
+  cargo build --release -p cafe-tui
 fi
 
-# Build if needed (optional - the binary should already exist)
-# cargo build --release &>/dev/null && echo "Built cafe-tui" &>/dev/null
-
 # Run the app
-exec ./target/debug/cafe-tui --url "$URL" --token "$TOKEN" $NEW ${MODEL:+--model "$MODEL"} ${SYSTEM_PROMPT:+--system-prompt "$SYSTEM_PROMPT"}
+exec ./target/release/cafe-tui --url "$URL" --token "$TOKEN" $NEW ${MODEL:+--model "$MODEL"} ${SYSTEM_PROMPT:+--system-prompt "$SYSTEM_PROMPT"}

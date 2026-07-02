@@ -20,6 +20,8 @@ cafe-web/dist/
 *.pem
 *.key
 cafe.db
+*.db
+logs/
 
 # Editor
 .vscode/
