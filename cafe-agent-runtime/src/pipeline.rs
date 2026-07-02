@@ -5,6 +5,9 @@
 //! on the session bus and await a matching response.
 
 use crate::config::{resolve_session_config, SessionConfig};
+use crate::tool_detector;
+use crate::tool_executor;
+use cafe_types::ToolCall;
 use anyhow::Result;
 use cafe_types::{
     keys, roles, Chunk, ClientMessage, ContentType, JsonRpcRequest, JsonRpcResponse,
@@ -35,6 +38,10 @@ pub enum BuiltInStep {
     RoleAnnotator,
     /// Filters chunks based on `security.trust-level`.
     TrustFilter,
+    /// Scans LLM output for `<|tool_call|>` markers and publishes tool.call chunks.
+    ToolDetector,
+    /// Reads tool.call chunks, dispatches tool RPC calls, publishes tool.result chunks.
+    ToolExecutor,
 }
 
 impl PipelineStep {
@@ -43,6 +50,8 @@ impl PipelineStep {
         match name {
             "role-annotator" => PipelineStep::BuiltIn(BuiltInStep::RoleAnnotator),
             "trust-filter" => PipelineStep::BuiltIn(BuiltInStep::TrustFilter),
+            "tool-detector" => PipelineStep::BuiltIn(BuiltInStep::ToolDetector),
+            "tool-executor" => PipelineStep::BuiltIn(BuiltInStep::ToolExecutor),
             other => PipelineStep::Rpc(other.to_string()),
         }
     }
@@ -121,16 +130,46 @@ impl PipelineExecutor {
         }
 
         let config = resolve_session_config(history);
+        let mut pending_tool_calls: Option<Vec<ToolCall>> = None;
 
         for step in &self.steps {
             match step {
+                PipelineStep::BuiltIn(BuiltInStep::ToolDetector) => {
+                    let (_, calls) = tool_detector::detect(&assembled_text);
+                    if !calls.is_empty() {
+                        info!(
+                            "pipeline: detected {} tool call(s) in session {}",
+                            calls.len(),
+                            session_id
+                        );
+                        pending_tool_calls = Some(calls);
+                    }
+                }
+
+                PipelineStep::BuiltIn(BuiltInStep::ToolExecutor) => {
+                    if let Some(calls) = pending_tool_calls.take() {
+                        for call in &calls {
+                            info!(
+                                "pipeline: executing tool '{}' for session {}",
+                                call.name, session_id
+                            );
+                            tool_executor::execute(
+                                call,
+                                session_id,
+                                socket_path,
+                                self.rpc_timeout,
+                            )
+                            .await
+                            .map_err(|e| PipelineError::Io(e))?;
+                        }
+                    }
+                }
+
                 PipelineStep::BuiltIn(_) => {
-                    // Built-in steps in the post-LLM phase are no-ops for now;
-                    // they run implicitly on user input before the LLM fires.
+                    // Other built-in steps are no-ops in post-LLM phase
                 }
 
                 PipelineStep::Rpc(namespace) => {
-                    // Only run post-LLM RPC steps; (stt, llm) are handled elsewhere.
                     if namespace != "tts" && namespace != "comfy" {
                         continue;
                     }

@@ -154,6 +154,16 @@ impl Chunk {
             .map(|r| r.id == call_id)
             .unwrap_or(false)
     }
+
+    /// If this chunk carries a tool.call annotation, return the ToolCall.
+    pub fn as_tool_call(&self) -> Option<crate::tools::ToolCall> {
+        self.get_annotation(crate::annotation::keys::TOOL_CALL)
+    }
+
+    /// If this chunk carries a tool.result annotation, return the ToolResult.
+    pub fn as_tool_result(&self) -> Option<crate::tools::ToolResult> {
+        self.get_annotation(crate::annotation::keys::TOOL_RESULT)
+    }
 }
 
 #[cfg(test)]

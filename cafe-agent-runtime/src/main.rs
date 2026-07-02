@@ -4,6 +4,8 @@ mod loader;
 mod pipeline;
 mod registry;
 mod scheduler;
+mod tool_detector;
+mod tool_executor;
 mod watcher;
 
 use anyhow::Result;
