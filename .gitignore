@@ -22,6 +22,10 @@ cafe-web/dist/
 cafe.db
 *.db
 logs/
+**/__pycache__/
+*.pyc
+*.egg-info/
+build/
 
 # Editor
 .vscode/

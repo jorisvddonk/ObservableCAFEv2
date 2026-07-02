@@ -1,0 +1,5 @@
+[project]
+name = "session-inspect"
+version = "0.1.0"
+description = "Inspect cafe-server sessions"
+requires-python = ">=3.9"
