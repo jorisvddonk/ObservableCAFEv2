@@ -161,3 +161,20 @@ processes:
     # Optional — only meaningful when a SheetBot server is running.
     # Set disabled: true if you don't have SheetBot available.
     disabled: false
+
+  cafe-demo:
+    command: ./target/debug/cafe-demo
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    # One-shot demo: publishes demo chunks (text, audio, image, error) to a "demo" session.
+    # Set disabled: false to run on startup.
+    disabled: true

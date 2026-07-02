@@ -11,6 +11,7 @@ members = [
     "cafe-tts",
     "cafe-comfy",
     "cafe-sheetbot",
+    "cafe-demo",
 ]
 
 # Shared dependency versions — pin once here, reference everywhere
