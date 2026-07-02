@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     let db2 = db.clone();
     let socket = config.socket_path.clone();
     tokio::spawn(async move {
-        bus_client::run_with_reconnect(socket, db2).await;
+        bus_client::run(socket, db2).await;
     });
 
     // Wait for shutdown signal

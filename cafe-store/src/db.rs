@@ -1,5 +1,5 @@
 use anyhow::Result;
-use cafe_types::{Chunk, ContentType, SessionInfo};
+use cafe_sdk::{Chunk, ContentType, SessionInfo};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
 use std::str::FromStr;
