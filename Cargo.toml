@@ -12,6 +12,7 @@ members = [
     "cafe-comfy",
     "cafe-sheetbot",
     "cafe-demo",
+    "cafe-sdk",
 ]
 
 # Shared dependency versions — pin once here, reference everywhere
@@ -22,3 +23,6 @@ tokio       = { version = "1", features = ["full"] }
 tracing     = "0.1"
 tracing-subscriber = "0.3"
 anyhow      = "1"
+reqwest     = "0.12"
+futures-util = "0.3"
+thiserror   = "1"

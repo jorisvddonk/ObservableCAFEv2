@@ -1,8 +1,7 @@
 use anyhow::Result;
-use cafe_types::{keys, Chunk, ClientMessage};
+use cafe_sdk::bus::BusClient;
+use cafe_sdk::Chunk;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
-use tokio::net::UnixStream;
 
 const SOCKET_PATH: &str = "/tmp/cafe-bus.sock";
 const PRODUCER: &str = "com.nominal.cafe-demo";
@@ -13,89 +12,48 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("cafe-demo: starting");
 
-    wait_for_bus().await;
+    cafe_sdk::bus::wait_for_bus(SOCKET_PATH, Duration::from_millis(500), 60).await?;
 
-    // Connect to bus
-    let stream = UnixStream::connect(SOCKET_PATH).await?;
-    let (_, mut writer) = stream.into_split();
+    let bus = BusClient::new(SOCKET_PATH);
 
-    send_msg(&mut writer, &ClientMessage::CreateSession {
-        session_id: SESSION_ID.to_string(),
-        agent_id: SESSION_ID.to_string(),
-        config: cafe_types::SessionConfig::default(),
-    })
+    bus.create_session(
+        SESSION_ID,
+        SESSION_ID,
+        cafe_sdk::SessionConfig::default(),
+    )
     .await?;
 
-    // Give the bus a moment to register the session
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // 1. Text chunk
     tracing::info!("cafe-demo: publishing text chunk");
     let text_chunk = Chunk::new_text(
         "Hello! This is a demo session demonstrating all chunk types.",
         PRODUCER,
     )
-    .with_annotation(keys::CHAT_ROLE, "assistant");
-    send_msg(&mut writer, &ClientMessage::Publish {
-        session_id: SESSION_ID.to_string(),
-        chunk: text_chunk,
-    })
-    .await?;
+    .with_annotation(cafe_sdk::keys::CHAT_ROLE, "assistant");
+    bus.publish(SESSION_ID, text_chunk).await?;
 
-    // 2. Audio binary chunk
     tracing::info!("cafe-demo: publishing audio chunk");
     let wav_data = generate_demo_wav();
     let audio_chunk = Chunk::new_binary(wav_data, "audio/wav", PRODUCER)
-        .with_annotation(keys::CHAT_ROLE, "assistant");
-    send_msg(&mut writer, &ClientMessage::Publish {
-        session_id: SESSION_ID.to_string(),
-        chunk: audio_chunk,
-    })
-    .await?;
+        .with_annotation(cafe_sdk::keys::CHAT_ROLE, "assistant");
+    bus.publish(SESSION_ID, audio_chunk).await?;
 
-    // 3. Image binary chunk
     tracing::info!("cafe-demo: publishing image chunk");
     let png_data = generate_demo_png();
     let image_chunk = Chunk::new_binary(png_data, "image/png", PRODUCER)
-        .with_annotation(keys::CHAT_ROLE, "assistant");
-    send_msg(&mut writer, &ClientMessage::Publish {
-        session_id: SESSION_ID.to_string(),
-        chunk: image_chunk,
-    })
-    .await?;
+        .with_annotation(cafe_sdk::keys::CHAT_ROLE, "assistant");
+    bus.publish(SESSION_ID, image_chunk).await?;
 
-    // 4. Error chunk
     tracing::info!("cafe-demo: publishing error chunk");
     let error_chunk = Chunk::new_null(PRODUCER)
-        .with_annotation(keys::ERROR_MESSAGE, "This is a demo error — not a real problem")
-        .with_annotation(keys::ERROR_CODE, "DEMO_ERROR")
-        .with_annotation(keys::CHAT_ROLE, "assistant");
-    send_msg(&mut writer, &ClientMessage::Publish {
-        session_id: SESSION_ID.to_string(),
-        chunk: error_chunk,
-    })
-    .await?;
+        .with_annotation(cafe_sdk::keys::ERROR_MESSAGE, "This is a demo error — not a real problem")
+        .with_annotation(cafe_sdk::keys::ERROR_CODE, "DEMO_ERROR")
+        .with_annotation(cafe_sdk::keys::CHAT_ROLE, "assistant");
+    bus.publish(SESSION_ID, error_chunk).await?;
 
     tracing::info!("cafe-demo: done — published 4 chunks to session '{}'", SESSION_ID);
     Ok(())
-}
-
-async fn send_msg(writer: &mut (impl AsyncWriteExt + Unpin), msg: &ClientMessage) -> Result<()> {
-    let mut json = serde_json::to_string(msg)?;
-    json.push('\n');
-    writer.write_all(json.as_bytes()).await?;
-    Ok(())
-}
-
-async fn wait_for_bus() {
-    let path = std::path::Path::new(SOCKET_PATH);
-    for _ in 0..60 {
-        if path.exists() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    tracing::warn!("cafe-demo: bus not ready after 30s, continuing anyway");
 }
 
 fn generate_demo_wav() -> Vec<u8> {

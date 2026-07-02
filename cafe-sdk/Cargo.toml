@@ -1,0 +1,21 @@
+[package]
+name = "cafe-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cafe-types   = { path = "../cafe-types" }
+tokio        = { workspace = true, features = ["net", "io-util", "sync"] }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+thiserror    = { workspace = true }
+
+reqwest      = { workspace = true, features = ["json", "stream"], optional = true }
+futures-util = { workspace = true, optional = true }
+
+[features]
+default     = []
+bus-client  = []
+http-client = ["dep:reqwest", "dep:futures-util"]

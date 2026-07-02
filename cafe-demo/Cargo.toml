@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cafe-types = { path = "../cafe-types" }
-serde      = { workspace = true }
-serde_json = { workspace = true }
-tokio      = { workspace = true }
-tracing    = { workspace = true }
+cafe-sdk      = { path = "../cafe-sdk", features = ["bus-client"] }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
 tracing-subscriber = { workspace = true }
-anyhow     = { workspace = true }
+anyhow        = { workspace = true }
