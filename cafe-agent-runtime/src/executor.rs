@@ -300,7 +300,8 @@ impl PipelineExecutor {
             })?;
 
         let req_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-            .with_annotation(keys::JSONRPC_REQUEST, &request);
+            .with_annotation(keys::JSONRPC_REQUEST, &request)
+            .as_transient();
         bus.publish(&context.session_id, req_chunk)
             .await
             .map_err(|e| PipelineError::Bus {

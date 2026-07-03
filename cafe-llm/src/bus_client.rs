@@ -1,8 +1,7 @@
 use crate::backends::LlmBackend;
 use crate::evaluator::run_session;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{Chunk, SessionConfig};
-use std::collections::HashSet;
+use cafe_sdk::{Chunk, ServerMessage, SessionConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -23,22 +22,14 @@ pub async fn run_with_reconnect(
     .await;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct SessionKey {
-    session_id: String,
-    model: Option<String>,
-    system_prompt: Option<String>,
-}
-
 async fn connect_and_run(
     socket_path: &str,
     backend: Arc<dyn LlmBackend>,
     default_model: &str,
 ) -> anyhow::Result<()> {
-    info!("cafe-llm: starting session poller on {}", socket_path);
+    info!("cafe-llm: starting (subscribe-all mode) on {}", socket_path);
 
     let client = BusClient::new(socket_path);
-    let mut known_sessions: HashSet<SessionKey> = HashSet::new();
 
     if let Ok(models) = backend.list_models().await {
         if !models.is_empty() {
@@ -47,60 +38,69 @@ async fn connect_and_run(
         publish_model_registry(&client, &models).await?;
     }
 
+    // Subscribe to all sessions — get immediate notification of new sessions
+    let mut rx = client.subscribe_all().await?;
+
+    // One-shot discovery of existing sessions (no more polling)
+    if let Ok(sessions) = client.list_sessions().await {
+        for info in &sessions {
+            info!("cafe-llm: discovered existing session {}", info.session_id);
+            spawn_session(
+                info.session_id.clone(),
+                socket_path,
+                &backend,
+                default_model,
+            );
+        }
+    }
+
     let mut model_tick: u64 = 0;
 
     loop {
-        match client.list_sessions().await {
-            Ok(sessions) => {
-                let mut current_keys: HashSet<SessionKey> = HashSet::new();
-
-                for info in &sessions {
-                    let key = SessionKey {
-                        session_id: info.session_id.clone(),
-                        model: None,
-                        system_prompt: None,
-                    };
-
-                    current_keys.insert(key.clone());
-
-                    if !known_sessions.contains(&key) {
-                        info!("cafe-llm: discovered session {}", info.session_id);
-                        known_sessions.insert(key);
-
-                        let sid = info.session_id.clone();
-                        let sp = socket_path.to_string();
-                        let b = backend.clone();
-                        let m = default_model.to_string();
-                        tokio::spawn(async move {
-                            if let Err(e) = run_session(sid.clone(), sp, b, m).await {
-                                warn!("cafe-llm: session {} evaluator error: {}", sid, e);
-                            }
-                        });
+        tokio::select! {
+            msg = rx.recv() => {
+                match msg {
+                    Some(ServerMessage::SessionCreated { session_id, .. }) => {
+                        info!("cafe-llm: new session via SubscribeAll: {}", session_id);
+                        spawn_session(session_id, socket_path, &backend, default_model);
                     }
-                }
-
-                for key in known_sessions.clone() {
-                    if !current_keys.contains(&key) {
-                        info!("cafe-llm: session removed {}", key.session_id);
-                        known_sessions.remove(&key);
+                    Some(_) => {}
+                    None => {
+                        info!("cafe-llm: SubscribeAll stream ended, will reconnect");
+                        break;
                     }
                 }
             }
-            Err(e) => {
-                warn!("cafe-llm: list_sessions error: {}", e);
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                model_tick += 1;
+                if model_tick >= 30 {
+                    model_tick = 0;
+                    if let Ok(models) = backend.list_models().await {
+                        publish_model_registry(&client, &models).await?;
+                    }
+                }
             }
         }
-
-        model_tick += 1;
-        if model_tick >= 30 {
-            model_tick = 0;
-            if let Ok(models) = backend.list_models().await {
-                publish_model_registry(&client, &models).await?;
-            }
-        }
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
     }
+
+    Ok(())
+}
+
+fn spawn_session(
+    session_id: String,
+    socket_path: &str,
+    backend: &Arc<dyn LlmBackend>,
+    default_model: &str,
+) {
+    let sid = session_id;
+    let sp = socket_path.to_string();
+    let b = backend.clone();
+    let m = default_model.to_string();
+    tokio::spawn(async move {
+        if let Err(e) = run_session(sid.clone(), sp, b, m).await {
+            warn!("cafe-llm: session {} evaluator error: {}", sid, e);
+        }
+    });
 }
 
 async fn publish_model_registry(client: &BusClient, models: &[String]) -> anyhow::Result<()> {

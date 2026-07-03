@@ -218,60 +218,97 @@ async fn client_loop(
 
             ClientMessage::SubscribeAll => {
                 // Subscribe to all current sessions and future ones.
-                // For v0.1: snapshot all current sessions and subscribe to each.
-                // New sessions created after this point won't be auto-subscribed —
-                // cafe-store reconnects on bus restart which handles this.
-                let sessions_snapshot: Vec<(String, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = {
+                let (event_rx, sessions_snapshot) = {
                     let reg = registry.read().await;
-                    reg.list()
+                    let snap: Vec<(String, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = reg
+                        .list()
                         .iter()
                         .filter_map(|info| {
                             reg.get(&info.session_id).map(|s| {
                                 (s.session_id.clone(), s.history.clone(), s.subscribe())
                             })
                         })
-                        .collect()
+                        .collect();
+                    (reg.event_tx().subscribe(), snap)
                 };
 
-                for (sid, history, mut rx) in sessions_snapshot {
-                    // Replay history
-                    for chunk in history {
-                        send_msg(
-                            &writer,
-                            &ServerMessage::Chunk {
-                                session_id: sid.clone(),
-                                chunk,
-                            },
-                        )
-                        .await;
-                    }
+                for (sid, history, rx) in sessions_snapshot {
+                    replay_and_forward(&writer, sid, history, rx).await;
+                }
 
-                    // Forward live chunks
-                    let writer2 = writer.clone();
-                    let sid2 = sid.clone();
-                    tokio::spawn(async move {
-                        loop {
-                            match rx.recv().await {
-                                Ok(chunk) => {
-                                    send_msg(
-                                        &writer2,
-                                        &ServerMessage::Chunk {
-                                            session_id: sid2.clone(),
-                                            chunk,
-                                        },
+                // Listen for new sessions via registry events
+                let writer3 = writer.clone();
+                let reg3 = registry.clone();
+                tokio::spawn(async move {
+                    let mut event_rx = event_rx;
+                    while let Ok(event) = event_rx.recv().await {
+                        match &event {
+                            ServerMessage::SessionCreated { session_id, .. } => {
+                                let maybe = {
+                                    let reg = reg3.read().await;
+                                    reg.get(session_id)
+                                        .map(|s| (s.history.clone(), s.subscribe()))
+                                };
+                                if let Some((history, rx)) = maybe {
+                                    replay_and_forward(
+                                        &writer3,
+                                        session_id.clone(),
+                                        history,
+                                        rx,
                                     )
                                     .await;
                                 }
-                                Err(_) => break,
+                            }
+                            _ => {
+                                // Forward SessionDeleted etc.
+                                send_msg(&writer3, &event).await;
                             }
                         }
-                    });
-                }
+                    }
+                });
             }
         }
     }
 
     Ok(())
+}
+
+async fn replay_and_forward(
+    writer: &Arc<Mutex<OwnedWriteHalf>>,
+    session_id: String,
+    history: Vec<Chunk>,
+    mut rx: tokio::sync::broadcast::Receiver<Chunk>,
+) {
+    for chunk in history {
+        send_msg(
+            writer,
+            &ServerMessage::Chunk {
+                session_id: session_id.clone(),
+                chunk,
+            },
+        )
+        .await;
+    }
+
+    let writer2 = writer.clone();
+    let sid2 = session_id.clone();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(chunk) => {
+                    send_msg(
+                        &writer2,
+                        &ServerMessage::Chunk {
+                            session_id: sid2.clone(),
+                            chunk,
+                        },
+                    )
+                    .await;
+                }
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 async fn send_msg(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMessage) {
