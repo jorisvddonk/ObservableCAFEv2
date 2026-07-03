@@ -29,6 +29,9 @@ build/
 
 .pi/
 
+# Planning / scratch analysis
+docs/planning/
+
 # Editor
 .vscode/
 .idea/
