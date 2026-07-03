@@ -1,0 +1,22 @@
+[package]
+name = "cafe-binary-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cafe-sdk = { path = "../cafe-sdk", features = ["bus-client"] }
+
+axum = { version = "0.7", features = ["macros"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+clap = { version = "4", features = ["derive"] }
+jsonwebtoken = "9"
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"

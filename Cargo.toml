@@ -13,6 +13,7 @@ members = [
     "cafe-sheetbot",
     "cafe-demo",
     "cafe-sdk",
+    "cafe-binary-store",
 ]
 
 # Shared dependency versions — pin once here, reference everywhere
