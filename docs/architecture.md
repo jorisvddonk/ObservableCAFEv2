@@ -136,39 +136,7 @@ Key endpoints:
 
 ## Repository layout
 
-```
-observablecafe/
-├── Cargo.toml              # Rust workspace (all crates)
-├── Justfile                # just build / just dev / just test / just clean
-├── process-compose.yml     # local process orchestration
-├── docs/
-│   ├── AGENT.md            # AI agent context (start here)
-│   ├── architecture.md     # this file
-│   ├── spec-cafe.md        # CAFE data model specification
-│   ├── spec-bus-protocol.md # bus wire protocol
-│   ├── spec-http-api.md    # HTTP API reference
-│   ├── cafe-types.md       # build guide
-│   ├── cafe-bus.md         # build guide
-│   ├── cafe-store.md       # build guide
-│   ├── cafe-llm.md         # build guide
-│   ├── cafe-server.md      # build guide
-│   ├── cafe-agent-runtime.md # build guide
-│   ├── cafe-tui.md         # build guide
-│   ├── cafe-telegram.md    # build guide (Go)
-│   ├── cafe-comfy.md       # build guide
-│   └── cafe-web.md         # build guide (TypeScript)
-├── cafe-types/             # shared Rust library
-├── cafe-bus/               # bus binary
-├── cafe-tts/               # Voicebox TTS synthesis via cafe-bus
-├── cafe-comfy/             # ComfyUI image generation via cafe-bus
-├── cafe-store/             # persistence binary
-├── cafe-llm/               # LLM bridge binary
-├── cafe-server/            # HTTP server binary
-├── cafe-tui/               # TUI binary
-├── cafe-agent-runtime/     # agent host binary
-├── cafe-telegram/          # Telegram bridge (Go)
-└── cafe-web/               # React frontend (TypeScript)
-```
+See the [README](../README.md#projects) for the current list of projects with descriptions and languages.
 
 ---
 
