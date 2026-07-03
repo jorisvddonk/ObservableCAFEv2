@@ -125,6 +125,17 @@ async fn run_app(
                 app.messages.retain(|m| !ids.contains(&m.id));
                 continue;
             }
+            // Handle mutation: overlay annotations onto the target chunk
+            if let Some(target_id) = chunk.is_mutation() {
+                if let Some(target) = app.messages.iter_mut().find(|m| m.id == target_id) {
+                    for (k, v) in chunk.annotations {
+                        if k != "mutates.target_id" {
+                            target.annotations.insert(k, v);
+                        }
+                    }
+                }
+                continue;
+            }
             let is_streaming = chunk
                 .get_annotation::<bool>("chat.is_streaming")
                 .unwrap_or(false);

@@ -195,6 +195,17 @@ impl Chunk {
     pub fn with_retain(self, secs: u64) -> Self {
         self.with_annotation(crate::annotation::keys::TRANSIENT_RETAIN_SECS, secs)
     }
+
+    /// Returns the target chunk ID if this chunk is a mutation.
+    pub fn is_mutation(&self) -> Option<String> {
+        self.get_annotation(crate::annotation::keys::MUTATES_TARGET_ID)
+    }
+
+    /// Create a null chunk that mutates (adds annotations to) the given target.
+    pub fn mutation(target_id: &str, producer: &str) -> Self {
+        Chunk::new_null(producer)
+            .with_annotation(crate::annotation::keys::MUTATES_TARGET_ID, target_id)
+    }
 }
 
 #[cfg(test)]

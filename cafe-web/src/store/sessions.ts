@@ -48,6 +48,22 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set({ allChunks: chunks });
   },
   appendChunk: (chunk) => {
+    // Handle mutation: merge annotations into target chunk
+    if (chunk.annotations['mutates.target_id']) {
+      const targetId = chunk.annotations['mutates.target_id'];
+      set((s) => {
+        const target = s.allChunks.find((c) => c.id === targetId);
+        if (target) {
+          for (const k in chunk.annotations) {
+            if (k !== 'mutates.target_id') {
+              target.annotations[k] = chunk.annotations[k];
+            }
+          }
+        }
+        return s;
+      });
+      return;
+    }
     console.log('[store] appendChunk id=', chunk.id, 'role=', chunk.annotations['chat.role']);
     set((s) => {
       if (s.allChunks.some((c) => c.id === chunk.id)) return s;
@@ -59,6 +75,22 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set((s) => ({ streamingText: s.streamingText + text }));
   },
   finaliseStream: (chunk) => {
+    // Handle mutation: merge annotations into target chunk
+    if (chunk.annotations['mutates.target_id']) {
+      const targetId = chunk.annotations['mutates.target_id'];
+      set((s) => {
+        const target = s.allChunks.find((c) => c.id === targetId);
+        if (target) {
+          for (const k in chunk.annotations) {
+            if (k !== 'mutates.target_id') {
+              target.annotations[k] = chunk.annotations[k];
+            }
+          }
+        }
+        return { ...s, streamingText: '', streaming: false };
+      });
+      return;
+    }
     console.log('[store] finaliseStream contentLen=', typeof chunk.content === 'string' ? chunk.content.length : 0);
     set((s) => ({
       messages: [...s.messages, chunk],
