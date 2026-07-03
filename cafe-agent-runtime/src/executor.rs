@@ -70,10 +70,8 @@ pub enum BuiltInEvaluator {
 #[derive(Debug, Clone)]
 pub struct PipelineContext {
     pub session_id: String,
-    pub trigger_chunk: Chunk,
     pub config: SessionConfig,
     pub assembled_llm_text: Option<String>,
-    pub last_rpc_result: Option<serde_json::Value>,
     /// Current recursion depth (for step_complete chaining limit).
     pub depth: u32,
 }
@@ -103,9 +101,6 @@ pub enum PipelineError {
         #[source]
         source: anyhow::Error,
     },
-
-    #[error("Pipeline depth limit ({max}) reached for step '{step_id}'")]
-    DepthLimit { step_id: String, max: u32 },
 
     #[error("SDK error: {0}")]
     Sdk(#[from] SdkError),
@@ -367,7 +362,6 @@ impl PipelineExecutor {
         // Return StepComplete follow-up for the work queue
         let follow_up = (TriggerType::StepComplete(step.id.clone()), PipelineContext {
             depth: context.depth + 1,
-            last_rpc_result: response.result,
             ..context.clone()
         });
 

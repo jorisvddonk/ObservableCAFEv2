@@ -10,11 +10,11 @@ use serde_json::json;
 
 #[derive(Debug, Clone)]
 pub struct AuthUser {
-    pub token_id: String,
     pub is_admin: bool,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AdminUser(pub AuthUser);
 
 fn extract_bearer(parts: &Parts) -> Option<String> {
@@ -104,7 +104,6 @@ impl FromRequestParts<AppState> for AuthUser {
             })?;
 
         Ok(AuthUser {
-            token_id: row.id,
             is_admin: row.is_admin,
         })
     }

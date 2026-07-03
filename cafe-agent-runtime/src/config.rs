@@ -175,55 +175,6 @@ fn apply_config_key(cfg: &mut SessionConfig, key: &str, value: &serde_json::Valu
 }
 
 // ---------------------------------------------------------------------------
-// get_evaluator_config
-// ---------------------------------------------------------------------------
-
-/// Convenience for individual evaluators. Calls `resolve_session_config` and
-/// returns only the keys whose annotation name starts with
-/// `"config.<namespace>."`, stripped of that prefix.
-///
-/// Example: `get_evaluator_config(history, "tts")` on a history containing
-/// `"config.tts.profile": "Volition"` returns `{ "profile": "Volition" }`.
-pub fn get_evaluator_config(
-    history: &[Chunk],
-    namespace: &str,
-) -> HashMap<String, serde_json::Value> {
-    let cfg = resolve_session_config(history);
-    let prefix = format!("config.{}.", namespace);
-
-    // Collect known typed fields back into the map via extra + direct fields.
-    // The simplest approach: re-scan history for only this namespace's keys.
-    let mut result = HashMap::new();
-
-    for chunk in history {
-        if chunk.content_type != ContentType::Null {
-            continue;
-        }
-        if chunk
-            .annotations
-            .get(keys::CONFIG_TYPE)
-            .and_then(|v| v.as_str())
-            != Some("runtime")
-        {
-            continue;
-        }
-        for (key, value) in &chunk.annotations {
-            if let Some(suffix) = key.strip_prefix(&prefix) {
-                result.insert(suffix.to_string(), value.clone());
-            }
-        }
-    }
-
-    // Also include anything that landed in `cfg.extra` for this namespace.
-    for (key, value) in &cfg.extra {
-        if let Some(suffix) = key.strip_prefix(&prefix) {
-            result.insert(suffix.to_string(), value.clone());
-        }
-    }
-
-    result
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -334,35 +285,5 @@ mod tests {
         );
     }
 
-    // 6. get_evaluator_config strips the namespace prefix.
-    #[test]
-    fn get_evaluator_config_strips_prefix() {
-        let chunk = make_runtime_config_chunk(&[
-            (
-                keys::CONFIG_TTS_PROFILE,
-                serde_json::Value::String("Volition".into()),
-            ),
-            (
-                keys::CONFIG_TTS_ENGINE,
-                serde_json::Value::String("qwen".into()),
-            ),
-            (
-                keys::CONFIG_LLM_MODEL,
-                serde_json::Value::String("gemma3:1b".into()),
-            ),
-        ]);
 
-        let tts = get_evaluator_config(&[chunk], "tts");
-        assert_eq!(
-            tts.get("profile"),
-            Some(&serde_json::Value::String("Volition".into()))
-        );
-        assert_eq!(
-            tts.get("engine"),
-            Some(&serde_json::Value::String("qwen".into()))
-        );
-        // LLM key must not appear in TTS map
-        assert!(!tts.contains_key("model"));
-        assert!(!tts.contains_key("config.llm.model"));
-    }
 }

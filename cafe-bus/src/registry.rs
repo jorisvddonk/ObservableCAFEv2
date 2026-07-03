@@ -21,6 +21,7 @@ impl SessionRegistry {
         self.event_tx.clone()
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, session_id: &str) -> Option<&SessionState> {
         self.sessions.get(session_id)
     }

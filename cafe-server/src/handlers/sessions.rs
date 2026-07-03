@@ -14,7 +14,6 @@ use uuid::Uuid;
 pub struct CreateSessionRequest {
     pub agent_id: Option<String>,
     pub config: Option<SessionConfig>,
-    pub ui_mode: Option<String>,
 }
 
 #[derive(Serialize)]

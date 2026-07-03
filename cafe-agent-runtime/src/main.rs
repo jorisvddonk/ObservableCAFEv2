@@ -15,7 +15,7 @@ use config::Config;
 use executor::PipelineExecutor;
 use registry::{AgentEntry, AgentRegistry};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tracing::{error, info, warn};
 
@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
             });
         }
 
-        registry.lock().unwrap().insert(AgentEntry {
+        registry.lock().unwrap_or_else(PoisonError::into_inner).insert(AgentEntry {
             def: def.clone(),
             path: path.clone(),
             file_hash: hash,

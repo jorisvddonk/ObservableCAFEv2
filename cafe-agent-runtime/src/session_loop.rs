@@ -93,10 +93,8 @@ pub async fn run_session_loop(
 
             let ctx = PipelineContext {
                 session_id: session_id.clone(),
-                trigger_chunk: chunk.clone(),
                 config,
                 assembled_llm_text,
-                last_rpc_result: None,
                 depth: 0,
             };
 

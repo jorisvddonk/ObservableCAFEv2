@@ -5,6 +5,7 @@ use std::time::Duration;
 use tracing::{error, info};
 
 /// Execute a tool call by dispatching a JSON-RPC request on the bus.
+#[allow(dead_code)]
 pub async fn execute(
     call: &ToolCall,
     session_id: &str,
