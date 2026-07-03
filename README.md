@@ -68,11 +68,16 @@ cafe-cli subscribe <session> --timeout-secs 5
 
 ## E2E tests
 
-Python (uv) based. Tests the full stack: bus → store → agent runtime → RPC service → binary-store.
+Python (uv) based.
 
 ```sh
 cargo build --release
+
+# Binary-store HTTP API (write/read/range/delete)
 uv run tests/binary-store-e2e.py
+
+# Tool calling pipeline (user message → detector RPC → tool execution)
+uv run tests/tool-calling-e2e.py
 ```
 
 ## License
