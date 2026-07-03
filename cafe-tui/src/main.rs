@@ -125,12 +125,18 @@ async fn run_app(
                 app.messages.retain(|m| !ids.contains(&m.id));
                 continue;
             }
+            let is_streaming = chunk
+                .get_annotation::<bool>("chat.is_streaming")
+                .unwrap_or(false);
             let is_complete = chunk
                 .get_annotation::<bool>("chat.stream_complete")
                 .unwrap_or(false);
             let has_error = chunk.get_annotation::<String>("error.message").is_some();
             if chunk.content_type != ContentType::Null || is_complete || has_error {
                 app.push_message(chunk);
+            }
+            if is_streaming && !is_complete {
+                app.streaming = true;
             }
             if is_complete {
                 app.streaming = false;
@@ -161,7 +167,6 @@ async fn run_app(
                             cafe_sdk::Chunk::new_text(msg.clone(), "com.nominal.cafe-tui")
                                 .with_annotation("chat.role", "user");
                         app.push_message(user_chunk);
-                        app.streaming = true;
                         app.clear_status();
 
                         let client2 = client.clone();
