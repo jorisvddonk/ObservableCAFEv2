@@ -327,4 +327,37 @@ mod tests {
         let chunk = Chunk::new_text("hello", "com.test").as_transient();
         assert!(chunk.is_transient());
     }
+
+    #[test]
+    fn retain_secs_none_for_non_transient() {
+        let chunk = Chunk::new_text("hello", "com.test").with_retain(60);
+        assert!(chunk.retain_secs().is_none());
+    }
+
+    #[test]
+    fn retain_secs_for_transient() {
+        let chunk = Chunk::new_text("hello", "com.test").as_transient().with_retain(60);
+        assert_eq!(chunk.retain_secs(), Some(60));
+    }
+
+    #[test]
+    fn is_mutation_false_when_not_present() {
+        let chunk = Chunk::new_text("hello", "com.test");
+        assert!(chunk.is_mutation().is_none());
+    }
+
+    #[test]
+    fn is_mutation_true_when_present() {
+        use crate::annotation::keys;
+        let chunk = Chunk::new_null("test").with_annotation(keys::MUTATES_TARGET_ID, "target-123");
+        assert_eq!(chunk.is_mutation(), Some("target-123".into()));
+    }
+
+    #[test]
+    fn mutation_constructor_sets_target_id() {
+        use crate::annotation::keys;
+        let chunk = Chunk::mutation("target-456", "test");
+        assert_eq!(chunk.is_mutation(), Some("target-456".into()));
+        assert_eq!(chunk.content_type, ContentType::Null);
+    }
 }

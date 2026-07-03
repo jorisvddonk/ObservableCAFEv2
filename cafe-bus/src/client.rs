@@ -533,6 +533,115 @@ async fn send_error(
     .await;
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cafe_types::ContentType;
+
+    fn test_chunk() -> Chunk {
+        Chunk::new_null("test").with_annotation("key1", "value1")
+    }
+
+    fn test_session(id: &str, agent: &str) -> SessionState {
+        SessionState::new(id.into(), agent.into())
+    }
+
+    #[test]
+    fn chunk_filter_no_filter() {
+        let f = SubscribeFilter::default();
+        assert!(chunk_matches_filter(&test_chunk(), &f));
+    }
+
+    #[test]
+    fn chunk_filter_by_content_type() {
+        let f = SubscribeFilter {
+            content_types: Some(vec![ContentType::Text]),
+            ..Default::default()
+        };
+        let text = Chunk::new_text("hello", "test");
+        let bin = Chunk::new_binary(vec![1, 2], "test", "test");
+        assert!(chunk_matches_filter(&text, &f));
+        assert!(!chunk_matches_filter(&bin, &f));
+        assert!(!chunk_matches_filter(&Chunk::new_null("test"), &f));
+    }
+
+    #[test]
+    fn chunk_filter_by_annotation() {
+        let f = SubscribeFilter {
+            annotations: Some(HashMap::from([(
+                "key1".into(),
+                serde_json::Value::String("value1".into()),
+            )])),
+            ..Default::default()
+        };
+        let matching = test_chunk();
+        let non_matching = Chunk::new_null("test").with_annotation("key1", "wrong");
+        assert!(chunk_matches_filter(&matching, &f));
+        assert!(!chunk_matches_filter(&non_matching, &f));
+    }
+
+    #[test]
+    fn chunk_filter_both_type_and_annotation() {
+        let f = SubscribeFilter {
+            content_types: Some(vec![ContentType::Text]),
+            annotations: Some(HashMap::from([(
+                "key1".into(),
+                serde_json::Value::String("value1".into()),
+            )])),
+            ..Default::default()
+        };
+        let chunk = Chunk::new_text("hello", "test").with_annotation("key1", "value1");
+        assert!(chunk_matches_filter(&chunk, &f));
+
+        // Wrong type
+        let wrong_type = Chunk::new_binary(vec![1], "test", "test").with_annotation("key1", "value1");
+        assert!(!chunk_matches_filter(&wrong_type, &f));
+
+        // Wrong annotation
+        let wrong_ann = Chunk::new_text("hello", "test").with_annotation("key1", "wrong");
+        assert!(!chunk_matches_filter(&wrong_ann, &f));
+    }
+
+    #[test]
+    fn session_filter_empty() {
+        let s = test_session("s1", "agent1");
+        let f = SubscribeFilter::default();
+        assert!(session_matches_filter(&s, &f));
+    }
+
+    #[test]
+    fn session_filter_by_id() {
+        let s = test_session("s1", "agent1");
+        let f = SubscribeFilter {
+            sessions: Some(vec!["s1".into(), "s2".into()]),
+            ..Default::default()
+        };
+        assert!(session_matches_filter(&s, &f));
+
+        let f2 = SubscribeFilter {
+            sessions: Some(vec!["s3".into()]),
+            ..Default::default()
+        };
+        assert!(!session_matches_filter(&s, &f2));
+    }
+
+    #[test]
+    fn session_filter_by_agent() {
+        let s = test_session("s1", "agent1");
+        let f = SubscribeFilter {
+            agents: Some(vec!["agent1".into()]),
+            ..Default::default()
+        };
+        assert!(session_matches_filter(&s, &f));
+
+        let f2 = SubscribeFilter {
+            agents: Some(vec!["agent2".into()]),
+            ..Default::default()
+        };
+        assert!(!session_matches_filter(&s, &f2));
+    }
+}
+
 fn make_config_chunk(config: &SessionConfig) -> Chunk {
     let mut chunk = Chunk::new_null("com.nominal.cafe-bus")
         .with_annotation(keys::CONFIG_TYPE, "runtime");
