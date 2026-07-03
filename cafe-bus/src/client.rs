@@ -2,7 +2,7 @@ use crate::registry::SessionRegistry;
 use crate::session::SessionState;
 use anyhow::Result;
 use cafe_types::{
-    keys, Chunk, ClientMessage, ServerMessage, SessionConfig,
+    keys, Chunk, ClientMessage, ServerMessage, SessionConfig, SubscribeFilter,
 };
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -257,7 +257,7 @@ async fn client_loop(
                         },
                     )
                     .await;
-                    replay_and_forward(&writer, sid, history, retained, rx).await;
+                    replay_and_forward(&writer, sid, history, retained, rx, None).await;
                 }
 
                 // Listen for new sessions via registry events
@@ -282,9 +282,83 @@ async fn client_loop(
                                     history,
                                     retained,
                                     rx,
+                                    None,
                                 )
                                 .await;
                             }
+                        }
+                    }
+                });
+            }
+
+            ClientMessage::SubscribeFiltered { filter } => {
+                let filter = Arc::new(filter);
+
+                // Snapshot matching sessions
+                let (event_rx, sessions_snapshot) = {
+                    let mut reg = registry.write().await;
+                    let snap: Vec<(String, String, Vec<Chunk>, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = reg
+                        .list()
+                        .iter()
+                        .filter_map(|info| {
+                            reg.get_mut(&info.session_id).and_then(|s| {
+                                if !session_matches_filter(s, &filter) {
+                                    return None;
+                                }
+                                let retained = s.drain_retained();
+                                Some((s.session_id.clone(), s.agent_id.clone(), s.history.clone(), retained, s.subscribe()))
+                            })
+                        })
+                        .collect();
+                    (reg.event_tx().subscribe(), snap)
+                };
+
+                // Announce + replay for existing sessions
+                for (sid, agent_id, history, retained, rx) in sessions_snapshot {
+                    send_msg(
+                        &writer,
+                        &ServerMessage::SessionCreated {
+                            session_id: sid.clone(),
+                            agent_id,
+                        },
+                    )
+                    .await;
+                    replay_and_forward(&writer, sid, history, retained, rx, Some(filter.clone())).await;
+                }
+
+                // Listen for new sessions via registry events
+                let writer3 = writer.clone();
+                let reg3 = registry.clone();
+                let filter3 = filter.clone();
+                tokio::spawn(async move {
+                    let mut event_rx = event_rx;
+                    while let Ok(event) = event_rx.recv().await {
+                        if let ServerMessage::SessionCreated { session_id, .. } = &event {
+                            let maybe = {
+                                let mut reg = reg3.write().await;
+                                reg.get_mut(session_id).and_then(|s| {
+                                    if !session_matches_filter(s, &filter3) {
+                                        return None;
+                                    }
+                                    Some((s.history.clone(), s.drain_retained(), s.subscribe()))
+                                })
+                            };
+                            if let Some((history, retained, rx)) = maybe {
+                                // Forward SessionCreated before replay
+                                send_msg(&writer3, &event).await;
+                                replay_and_forward(
+                                    &writer3,
+                                    session_id.clone(),
+                                    history,
+                                    retained,
+                                    rx,
+                                    Some(filter3.clone()),
+                                )
+                                .await;
+                            }
+                        } else {
+                            // Forward SessionDeleted etc.
+                            send_msg(&writer3, &event).await;
                         }
                     }
                 });
@@ -295,49 +369,89 @@ async fn client_loop(
     Ok(())
 }
 
+/// Returns true if a chunk matches the chunk-level filters (content_types, annotations).
+fn chunk_matches_filter(chunk: &Chunk, filter: &SubscribeFilter) -> bool {
+    if let Some(ref types) = filter.content_types {
+        if !types.contains(&chunk.content_type) {
+            return false;
+        }
+    }
+    if let Some(ref annotations) = filter.annotations {
+        for (key, value) in annotations {
+            match chunk.annotations.get(key) {
+                Some(v) if v == value => {}
+                _ => return false,
+            }
+        }
+    }
+    true
+}
+
+/// Returns true if a session-level filter matches (sessions, agents).
+fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) -> bool {
+    if let Some(ref sessions) = filter.sessions {
+        if !sessions.contains(&session.session_id) {
+            return false;
+        }
+    }
+    if let Some(ref agents) = filter.agents {
+        if !agents.contains(&session.agent_id) {
+            return false;
+        }
+    }
+    true
+}
+
 async fn replay_and_forward(
     writer: &Arc<Mutex<OwnedWriteHalf>>,
     session_id: String,
     history: Vec<Chunk>,
     retained: Vec<Chunk>,
     mut rx: tokio::sync::broadcast::Receiver<Chunk>,
+    filter: Option<Arc<SubscribeFilter>>,
 ) {
     for chunk in history {
-        send_msg(
-            writer,
-            &ServerMessage::Chunk {
-                session_id: session_id.clone(),
-                chunk,
-            },
-        )
-        .await;
+        if filter.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
+            send_msg(
+                writer,
+                &ServerMessage::Chunk {
+                    session_id: session_id.clone(),
+                    chunk,
+                },
+            )
+            .await;
+        }
     }
-    // Retained transient chunks follow history chronologically
     for chunk in retained {
-        send_msg(
-            writer,
-            &ServerMessage::Chunk {
-                session_id: session_id.clone(),
-                chunk,
-            },
-        )
-        .await;
+        if filter.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
+            send_msg(
+                writer,
+                &ServerMessage::Chunk {
+                    session_id: session_id.clone(),
+                    chunk,
+                },
+            )
+            .await;
+        }
     }
 
     let writer2 = writer.clone();
     let sid2 = session_id.clone();
+    let filter2 = filter.clone();
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(chunk) => {
-                    send_msg(
-                        &writer2,
-                        &ServerMessage::Chunk {
-                            session_id: sid2.clone(),
-                            chunk,
-                        },
-                    )
-                    .await;
+                    if filter2.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
+                        send_msg(
+                            &writer2,
+                            &ServerMessage::Chunk {
+                                session_id: sid2.clone(),
+                                chunk,
+                            },
+                        )
+                        .await;
+                    }
                 }
                 Err(_) => break,
             }

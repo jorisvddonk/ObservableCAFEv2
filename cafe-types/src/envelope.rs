@@ -1,6 +1,7 @@
-use crate::chunk::Chunk;
+use crate::chunk::{Chunk, ContentType};
 use crate::session::SessionInfo;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration passed when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -12,6 +13,19 @@ pub struct SessionConfig {
     pub max_tokens: Option<u32>,
 }
 
+/// Filter for chunk subscriptions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SubscribeFilter {
+    /// Only forward chunks from sessions with these IDs. None = all sessions.
+    pub sessions: Option<Vec<String>>,
+    /// Only forward chunks from sessions with these agent_ids. None = all agents.
+    pub agents: Option<Vec<String>>,
+    /// Only forward chunks matching these content types. None = all types.
+    pub content_types: Option<Vec<ContentType>>,
+    /// Only forward chunks whose annotations contain ALL specified key/value pairs.
+    pub annotations: Option<HashMap<String, serde_json::Value>>,
+}
+
 /// Messages sent from a client to the bus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -20,6 +34,9 @@ pub enum ClientMessage {
         session_id: String,
     },
     SubscribeAll,
+    SubscribeFiltered {
+        filter: SubscribeFilter,
+    },
     Publish {
         session_id: String,
         chunk: Chunk,

@@ -1,6 +1,7 @@
 use crate::db::Db;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{ServerMessage, SessionConfig};
+use cafe_sdk::{ServerMessage, SessionConfig, SubscribeFilter};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -16,7 +17,16 @@ pub async fn run(socket_path: String, db: Arc<Db>) {
 
 async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> {
     let client = BusClient::new(socket_path);
-    let mut rx = client.subscribe_all().await?;
+    let filter = SubscribeFilter {
+        sessions: None,
+        agents: None,
+        content_types: None,
+        annotations: Some(std::collections::HashMap::from([(
+            "transient".to_string(),
+            serde_json::Value::Bool(false),
+        )])),
+    };
+    let mut rx = client.subscribe_filtered(filter).await?;
     info!("cafe-store: connected to bus at {}", socket_path);
 
     // Check if bus is fresh (no sessions) while DB has data — restore if so.
@@ -39,10 +49,6 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
                 }
             }
             ServerMessage::Chunk { session_id, chunk } => {
-                // Transient chunks are never persisted
-                if chunk.is_transient() {
-                    continue;
-                }
                 let _ = db.upsert_session(&session_id, "unknown", false).await;
                 if let Err(e) = db.insert_chunk(&session_id, &chunk).await {
                     error!(

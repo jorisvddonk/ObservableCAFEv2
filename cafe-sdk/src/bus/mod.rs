@@ -175,6 +175,36 @@ impl BusClient {
         Ok(rx)
     }
 
+    /// Subscribe to all sessions matching a filter.
+    pub async fn subscribe_filtered(
+        &self,
+        filter: cafe_types::SubscribeFilter,
+    ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
+        let (writer, mut lines) = self
+            .send(&ClientMessage::SubscribeFiltered { filter })
+            .await?;
+
+        let (tx, rx) = mpsc::channel::<ServerMessage>(1024);
+
+        tokio::spawn(async move {
+            let _writer = writer;
+            while let Ok(Some(line)) = lines.next_line().await {
+                match serde_json::from_str::<ServerMessage>(&line) {
+                    Ok(msg) => {
+                        if tx.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("cafe-sdk: invalid message from bus: {}", e);
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
     /// Subscribe to all sessions.
     pub async fn subscribe_all(&self) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
         let (writer, mut lines) = self.send(&ClientMessage::SubscribeAll).await?;

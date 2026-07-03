@@ -12,7 +12,7 @@ pub mod tools;
 
 pub use annotation::{keys, roles};
 pub use chunk::{Chunk, ContentType};
-pub use envelope::{ClientMessage, ServerMessage, SessionConfig};
+pub use envelope::{ClientMessage, ServerMessage, SessionConfig, SubscribeFilter};
 pub use error::CafeError;
 pub use jsonrpc::{rpc_errors, JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub use session::{AgentDefinition, SessionInfo};
