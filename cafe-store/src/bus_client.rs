@@ -1,8 +1,9 @@
 use crate::db::Db;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::ServerMessage;
+use cafe_sdk::{ServerMessage, SessionConfig};
 use std::sync::Arc;
-use tracing::{error, info};
+use std::time::Duration;
+use tracing::{error, info, warn};
 
 pub async fn run(socket_path: String, db: Arc<Db>) {
     cafe_sdk::bus::run_with_reconnect("cafe-store", move || {
@@ -17,6 +18,10 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
     let client = BusClient::new(socket_path);
     let mut rx = client.subscribe_all().await?;
     info!("cafe-store: connected to bus at {}", socket_path);
+
+    // Check if bus is fresh (no sessions) while DB has data — restore if so.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    restore_from_db(&client, db).await;
 
     while let Some(msg) = rx.recv().await {
         match msg {
@@ -57,4 +62,67 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
     }
 
     Ok(())
+}
+
+/// If the bus has no sessions but the local DB does, the bus was restarted.
+/// Recreate each session and replay its non-transient chunks so the bus
+/// registry is rehydrated.
+async fn restore_from_db(client: &BusClient, db: &Arc<Db>) {
+    let db_sessions = match db.list_sessions().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("cafe-store: failed to list DB sessions for restore: {}", e);
+            return;
+        }
+    };
+    if db_sessions.is_empty() {
+        return;
+    }
+
+    let bus_sessions = match client.list_sessions().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("cafe-store: failed to list bus sessions for restore: {}", e);
+            return;
+        }
+    };
+    if !bus_sessions.is_empty() {
+        // Bus already has sessions — no restore needed.
+        return;
+    }
+
+    info!(
+        "cafe-store: bus has no sessions — restoring {} sessions from database",
+        db_sessions.len()
+    );
+
+    for s in &db_sessions {
+        if let Err(e) = client
+            .create_session(&s.session_id, &s.agent_id, SessionConfig::default())
+            .await
+        {
+            // SESSION_EXISTS is fine — another store instance already did it.
+            warn!("cafe-store: create_session for {}: {}", s.session_id, e);
+            continue;
+        }
+        info!("cafe-store: restored session {}", s.session_id);
+
+        // Replay non-transient chunks into the bus.
+        if let Ok(chunks) = db.load_history(&s.session_id).await {
+            for chunk in &chunks {
+                if let Err(e) = client.publish(&s.session_id, chunk.clone()).await {
+                    warn!(
+                        "cafe-store: failed to replay chunk {} for session {}: {}",
+                        chunk.id, s.session_id, e
+                    );
+                    break;
+                }
+            }
+            info!(
+                "cafe-store: replayed {} chunks for session {}",
+                chunks.len(),
+                s.session_id
+            );
+        }
+    }
 }
