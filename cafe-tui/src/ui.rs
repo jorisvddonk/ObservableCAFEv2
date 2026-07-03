@@ -1,5 +1,5 @@
 use crate::app::{App, AppMode};
-use cafe_types::ContentType;
+use cafe_sdk::ContentType;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},

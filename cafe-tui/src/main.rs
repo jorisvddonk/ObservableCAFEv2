@@ -1,13 +1,12 @@
-mod api;
 mod app;
 mod config;
 mod input;
 mod ui;
 
 use anyhow::Result;
-use api::ApiClient;
 use app::{App, AppMode};
-use cafe_types::ContentType;
+use cafe_sdk::http::HttpClient;
+use cafe_sdk::ContentType;
 use config::Config;
 use crossterm::{
     event::{self, Event, KeyEventKind},
@@ -24,7 +23,7 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::from_args();
-    let client = Arc::new(ApiClient::new(config.url.clone(), config.token.clone()));
+    let client = Arc::new(HttpClient::new(config.url.clone(), config.token.clone()));
 
     // Setup terminal
     enable_raw_mode()?;
@@ -45,7 +44,7 @@ async fn main() -> Result<()> {
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    client: Arc<ApiClient>,
+    client: Arc<HttpClient>,
     config: &Config,
 ) -> Result<()> {
     let mut app = App::new();
@@ -102,7 +101,7 @@ async fn run_app(
     }
 
     // Channel for incoming chunks from streaming
-    let (chunk_tx, mut chunk_rx) = mpsc::channel::<cafe_types::Chunk>(256);
+    let (chunk_tx, mut chunk_rx) = mpsc::channel::<cafe_sdk::Chunk>(256);
 
     loop {
         terminal.draw(|f| ui::draw(f, &mut app))?;
@@ -142,7 +141,7 @@ async fn run_app(
 
                         // Add user message to display immediately
                         let user_chunk =
-                            cafe_types::Chunk::new_text(msg.clone(), "com.nominal.cafe-tui")
+                            cafe_sdk::Chunk::new_text(msg.clone(), "com.nominal.cafe-tui")
                                 .with_annotation("chat.role", "user");
                         app.push_message(user_chunk);
                         app.streaming = true;
@@ -264,7 +263,7 @@ async fn run_app(
                                         models.join("\n")
                                     )
                                 };
-                                let chunk = cafe_types::Chunk::new_text(text, "com.nominal.cafe-tui")
+                                let chunk = cafe_sdk::Chunk::new_text(text, "com.nominal.cafe-tui")
                                     .with_annotation("chat.role", "system");
                                 app.push_message(chunk);
                             }
@@ -276,7 +275,7 @@ async fn run_app(
 
                     InputAction::Help => {
                         let help_text = "Commands:\n  /sessions  - Browse sessions\n  /new       - Create new session\n  /delete    - Delete current session\n  /rename    - Rename current session\n  /system    - Set system prompt\n  /model     - Set LLM model\n  /clear     - Clear messages\n  /help      - Show this help\n  /quit      - Exit";
-                        let help_chunk = cafe_types::Chunk::new_text(help_text, "com.nominal.cafe-tui")
+                        let help_chunk = cafe_sdk::Chunk::new_text(help_text, "com.nominal.cafe-tui")
                             .with_annotation("chat.role", "system");
                         app.push_message(help_chunk);
                     }
@@ -315,7 +314,7 @@ async fn run_app(
     Ok(())
 }
 
-async fn load_history(app: &mut App, client: &ApiClient) {
+async fn load_history(app: &mut App, client: &HttpClient) {
     if let Some(id) = app.active_session_id().map(String::from) {
         match client.get_history(&id).await {
             Ok(chunks) => {

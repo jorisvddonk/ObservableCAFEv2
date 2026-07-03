@@ -1,4 +1,4 @@
-use cafe_types::{Chunk, SessionInfo};
+use cafe_sdk::{Chunk, SessionInfo};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
