@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
     )?;
 
     let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+    let connections = client::ConnectionRegistry::default();
 
     info!("cafe-bus listening on {}", config.socket_path);
 
@@ -45,7 +46,8 @@ async fn main() -> Result<()> {
                 match result {
                     Ok((stream, _)) => {
                         let reg = registry.clone();
-                        tokio::spawn(client::handle_client(stream, reg));
+                        let conns = connections.clone();
+                        tokio::spawn(client::handle_client(stream, reg, conns));
                     }
                     Err(e) => {
                         tracing::error!("accept error: {}", e);

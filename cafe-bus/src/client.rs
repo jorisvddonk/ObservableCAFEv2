@@ -4,6 +4,8 @@ use anyhow::Result;
 use cafe_types::{
     keys, Chunk, ClientMessage, ServerMessage, SessionConfig, SubscribeFilter,
 };
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -12,22 +14,37 @@ use tracing::{debug, error, warn};
 
 const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024; // 16 MB
 
+static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Shared registry of active connections, keyed by connection ID.
+pub type ConnectionRegistry = Arc<RwLock<HashMap<String, Arc<Mutex<OwnedWriteHalf>>>>>;
+
 pub async fn handle_client(
     stream: tokio::net::UnixStream,
     registry: Arc<RwLock<SessionRegistry>>,
+    connections: ConnectionRegistry,
 ) {
     let (reader, writer) = stream.into_split();
     let writer = Arc::new(Mutex::new(writer));
 
-    if let Err(e) = client_loop(reader, writer, registry).await {
-        debug!("client disconnected: {}", e);
+    let conn_id = format!("c-{}", NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed));
+    connections.write().await.insert(conn_id.clone(), writer.clone());
+    send_msg(&writer, &ServerMessage::Connected { connection_id: conn_id.clone() }).await;
+
+    let conns = connections.clone();
+    if let Err(e) = client_loop(reader, writer, registry, conns, conn_id.clone()).await {
+        debug!("client {} disconnected: {}", conn_id, e);
     }
+
+    connections.write().await.remove(&conn_id);
 }
 
 async fn client_loop(
     reader: OwnedReadHalf,
     writer: Arc<Mutex<OwnedWriteHalf>>,
     registry: Arc<RwLock<SessionRegistry>>,
+    connections: ConnectionRegistry,
+    conn_id: String,
 ) -> Result<()> {
     let mut lines = BufReader::new(reader).lines();
 
@@ -124,7 +141,9 @@ async fn client_loop(
                 }
             }
 
-            ClientMessage::Publish { session_id, chunk } => {
+            ClientMessage::Publish { session_id, mut chunk } => {
+                // Tag with source connection for direct-to replies
+                chunk = chunk.with_annotation(keys::SOURCE_CONNECTION, &conn_id);
                 let mut reg = registry.write().await;
                 if let Some(session) = reg.get_mut(&session_id) {
                     session.publish(chunk);

@@ -58,6 +58,9 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ServerMessage {
+    Connected {
+        connection_id: String,
+    },
     Chunk {
         session_id: String,
         chunk: Chunk,

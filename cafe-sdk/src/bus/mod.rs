@@ -35,7 +35,7 @@ impl BusClient {
         &self.socket_path
     }
 
-    /// Open a fresh connection to the bus.
+    /// Open a fresh connection to the bus and skip the initial Connected message.
     async fn connect(
         &self,
     ) -> Result<
@@ -46,7 +46,11 @@ impl BusClient {
             .await
             .map_err(|e| SdkError::BusConnect(e.into()))?;
         let (reader, writer) = stream.into_split();
-        let lines = BufReader::new(reader).lines();
+        let mut lines = BufReader::new(reader).lines();
+        // Skip the initial Connected message
+        if let Ok(Some(line)) = lines.next_line().await {
+            let _ = serde_json::from_str::<ServerMessage>(&line);
+        }
         Ok((writer, lines))
     }
 
