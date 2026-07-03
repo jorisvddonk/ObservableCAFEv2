@@ -1,0 +1,10 @@
+name = "dice"
+description = "Dice-rolling test agent — responds to !roll N d M"
+background = false
+allows_reload = true
+persists_state = true
+
+[[steps]]
+id = "dice"
+type = "dice"
+trigger = "user_message"

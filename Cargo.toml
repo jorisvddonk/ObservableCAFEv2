@@ -12,6 +12,7 @@ members = [
     "cafe-comfy",
     "cafe-sheetbot",
     "cafe-demo",
+    "cafe-dice",
     "cafe-sdk",
     "cafe-cli",
     "cafe-binary-store",
