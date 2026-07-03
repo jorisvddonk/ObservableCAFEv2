@@ -38,6 +38,10 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
                 if chunk.is_transient() {
                     continue;
                 }
+                // RPC protocol chunks are internal — never persisted
+                if chunk.as_rpc_request().is_some() {
+                    continue;
+                }
                 let _ = db.upsert_session(&session_id, "unknown", false).await;
                 if let Err(e) = db.insert_chunk(&session_id, &chunk).await {
                     error!(
