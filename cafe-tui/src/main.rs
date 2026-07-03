@@ -120,6 +120,11 @@ async fn run_app(
 
         // Drain incoming chunks from background streaming task
         while let Ok(chunk) = chunk_rx.try_recv() {
+            // Handle tombstone: remove tombstoned transient chunks from messages
+            if let Some(ids) = chunk.get_annotation::<Vec<String>>("flow.tombstone") {
+                app.messages.retain(|m| !ids.contains(&m.id));
+                continue;
+            }
             let is_complete = chunk
                 .get_annotation::<bool>("chat.stream_complete")
                 .unwrap_or(false);

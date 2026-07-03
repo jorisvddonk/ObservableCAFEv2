@@ -176,6 +176,7 @@ async fn handle_llm_response(
     let mut finish_reason = "stop".to_string();
     let (_abort_tx, mut abort_rx) = watch::channel(false);
     let mut full_response = String::new();
+    let mut token_ids: Vec<String> = Vec::new();
 
     loop {
         tokio::select! {
@@ -187,6 +188,7 @@ async fn handle_llm_response(
                             .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
                             .with_annotation(keys::CHAT_IS_STREAMING, true)
                             .as_transient();
+                        token_ids.push(token_chunk.id.clone());
                         publish_chunk(writer, &session_id, token_chunk).await;
                     }
                     Some(Err(e)) => {
@@ -220,6 +222,12 @@ async fn handle_llm_response(
         .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
         .with_annotation(keys::CHAT_FINISH_REASON, &finish_reason);
     publish_chunk(writer, &session_id, done_chunk).await;
+
+    // Publish tombstone for all transient token chunks
+    let tombstone = Chunk::new_null("com.nominal.cafe-llm")
+        .with_annotation(keys::FLOW_TOMBSTONE, &token_ids)
+        .as_transient();
+    publish_chunk(writer, &session_id, tombstone).await;
 
     // Publish RPC response so the pipeline's dispatch_rpc completes
     let rpc_resp = JsonRpcResponse::ok(call_id, serde_json::json!({"status": "ok"}));

@@ -55,6 +55,7 @@ pub mod keys {
 
     pub const FLOW_SIGNAL: &str = "flow.signal";
     pub const FLOW_AGENT_ID: &str = "flow.agent_id";
+    pub const FLOW_TOMBSTONE: &str = "flow.tombstone";
 
     pub const ERROR_MESSAGE: &str = "error.message";
     pub const ERROR_CODE: &str = "error.code";
