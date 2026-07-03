@@ -1,21 +1,13 @@
-//! Pipeline executor for cafe-agent-runtime.
-//!
-//! The executor walks the pipeline steps defined in the agent TOML. Built-in
-//! steps run in-process; RPC steps publish a JSON-RPC request as a null chunk
-//! on the session bus and await a matching response.
-
 use crate::config::{resolve_session_config, SessionConfig};
 use crate::tool_detector;
 use crate::tool_executor;
-use cafe_types::ToolCall;
+use cafe_sdk::bus::BusClient;
+use cafe_sdk::ToolCall;
 use anyhow::Result;
-use cafe_types::{
-    keys, roles, Chunk, ClientMessage, ContentType, JsonRpcRequest, JsonRpcResponse,
-    ServerMessage,
+use cafe_sdk::{
+    keys, roles, Chunk, ContentType, JsonRpcRequest, JsonRpcResponse, SdkError, ServerMessage,
 };
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
@@ -28,24 +20,10 @@ pub enum PipelineStep {
     /// Executed in-process by cafe-agent-runtime (no external deps).
     BuiltIn(BuiltInStep),
     /// Dispatched via JSON-RPC to an external service binary.
-    Rpc(String), // namespace, e.g. "tts", "stt"
-}
-
-/// Built-in step variants.
-#[derive(Debug, Clone)]
-pub enum BuiltInStep {
-    /// Annotates chunks with `chat.role` if not already set.
-    RoleAnnotator,
-    /// Filters chunks based on `security.trust-level`.
-    TrustFilter,
-    /// Scans LLM output for `<|tool_call|>` markers and publishes tool.call chunks.
-    ToolDetector,
-    /// Reads tool.call chunks, dispatches tool RPC calls, publishes tool.result chunks.
-    ToolExecutor,
+    Rpc(String),
 }
 
 impl PipelineStep {
-    /// Parse a step name from agent TOML into a `PipelineStep`.
     pub fn from_name(name: &str) -> Self {
         match name {
             "role-annotator" => PipelineStep::BuiltIn(BuiltInStep::RoleAnnotator),
@@ -57,95 +35,109 @@ impl PipelineStep {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline errors
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, thiserror::Error)]
-pub enum PipelineError {
-    #[error("RPC step '{step}' timed out waiting for response to call {call_id}")]
-    Timeout { step: String, call_id: String },
-
-    #[error("RPC step '{step}' returned error: [{code}] {message}")]
-    RpcError {
-        step: String,
-        code: i32,
-        message: String,
-    },
-
-    #[error("pipeline I/O error: {0}")]
-    Io(#[from] anyhow::Error),
+#[derive(Debug, Clone)]
+pub enum BuiltInStep {
+    RoleAnnotator,
+    TrustFilter,
+    ToolDetector,
+    ToolExecutor,
 }
 
 // ---------------------------------------------------------------------------
 // Pipeline executor
 // ---------------------------------------------------------------------------
 
-/// Runs one pipeline for a session.
+/// Holds the ordered list of pipeline steps and RPC timeout.
+#[derive(Clone)]
 pub struct PipelineExecutor {
-    pub steps: Vec<PipelineStep>,
-    /// How long to wait for an RPC response before timing out.
-    pub rpc_timeout: Duration,
-}
-
-impl Default for PipelineExecutor {
-    fn default() -> Self {
-        Self {
-            steps: Vec::new(),
-            rpc_timeout: Duration::from_secs(30),
-        }
-    }
+    steps: Vec<PipelineStep>,
+    rpc_timeout: Duration,
 }
 
 impl PipelineExecutor {
-    /// Build an executor from a list of step names (as stored in `AgentDefinition.pipeline`).
     pub fn from_step_names(names: &[String], rpc_timeout: Duration) -> Self {
         Self {
             steps: names.iter().map(|n| PipelineStep::from_name(n)).collect(),
             rpc_timeout,
         }
     }
+}
 
-    /// Walk the pipeline steps after the LLM has completed its response for
-    /// the given session. The `history` slice must include all chunks up to
-    /// and including the `chat.stream_complete` marker.
-    ///
-    /// `socket_path` is used to open a fresh connection for publishing and
-    /// awaiting chunks on the bus.
-    pub async fn run_post_llm(
+// ---------------------------------------------------------------------------
+// RPC dispatch (per-step)
+// ---------------------------------------------------------------------------
+
+/// Build the JSON-RPC params map from the assembled text and session config.
+fn build_rpc_params(
+    namespace: &str,
+    text: &str,
+    config: &SessionConfig,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "text": text,
+    });
+
+    // Merge extra config keys prefixed with the namespace (e.g. config.tts.*)
+    // so the RPC handler gets the session-level settings.
+    let prefix = format!("config.{}.", namespace);
+    let mut extra = serde_json::Map::new();
+    for (k, v) in &config.extra {
+        if let Some(suffix) = k.strip_prefix(&prefix) {
+            extra.insert(suffix.to_string(), v.clone());
+        }
+    }
+    if !extra.is_empty() {
+        params["config"] = serde_json::Value::Object(extra);
+    }
+
+    params
+}
+
+fn assemble_chunks(chunks: &[Chunk]) -> String {
+    let mut text = String::new();
+    for c in chunks {
+        if c.content_type == ContentType::Text {
+            if let Some(content) = &c.content {
+                text.push_str(content);
+                text.push('\n');
+            }
+        }
+    }
+    text.trim().to_string()
+}
+
+impl PipelineExecutor {
+    /// Run the full pipeline for a session by dispatching each step that
+    /// hasn't been handled yet. Called when a new assistant text chunk arrives.
+    async fn run(
         &self,
         session_id: &str,
-        history: &[Chunk],
-        socket_path: &str,
+        client: &BusClient,
+        assembled_text: &str,
+        pending_tool_calls: &mut Option<Vec<ToolCall>>,
     ) -> Result<(), PipelineError> {
-        // Collect the assistant text assembled from streaming chunks
-        let assembled_text = assemble_assistant_text(history);
-
-        if assembled_text.is_empty() {
-            debug!(
-                "pipeline: no assistant text in session {}, skipping post-LLM steps",
-                session_id
-            );
-            return Ok(());
-        }
-
-        let config = resolve_session_config(history);
-        let mut pending_tool_calls: Option<Vec<ToolCall>> = None;
+        let history = client.get_history(session_id).await?;
+        let config = resolve_session_config(&history);
 
         for step in &self.steps {
             match step {
+                PipelineStep::BuiltIn(BuiltInStep::RoleAnnotator) => {
+                    // Roles are already annotated by the producer; no-op for now.
+                }
+                PipelineStep::BuiltIn(BuiltInStep::TrustFilter) => {
+                    // Security trust-level filtering TBD; no-op for now.
+                }
                 PipelineStep::BuiltIn(BuiltInStep::ToolDetector) => {
-                    let (_, calls) = tool_detector::detect(&assembled_text);
+                    let (_, calls) = tool_detector::detect(assembled_text);
                     if !calls.is_empty() {
                         info!(
                             "pipeline: detected {} tool call(s) in session {}",
                             calls.len(),
                             session_id
                         );
-                        pending_tool_calls = Some(calls);
+                        *pending_tool_calls = Some(calls);
                     }
                 }
-
                 PipelineStep::BuiltIn(BuiltInStep::ToolExecutor) => {
                     if let Some(calls) = pending_tool_calls.take() {
                         for call in &calls {
@@ -153,156 +145,77 @@ impl PipelineExecutor {
                                 "pipeline: executing tool '{}' for session {}",
                                 call.name, session_id
                             );
-                            tool_executor::execute(
-                                call,
-                                session_id,
-                                socket_path,
-                                self.rpc_timeout,
-                            )
-                            .await
-                            .map_err(|e| PipelineError::Io(e))?;
+                            tool_executor::execute(call, session_id, client)
+                                .await
+                                .map_err(|e| PipelineError::Io(e.into()))?;
                         }
                     }
                 }
-
-                PipelineStep::BuiltIn(_) => {
-                    // Other built-in steps are no-ops in post-LLM phase
-                }
-
                 PipelineStep::Rpc(namespace) => {
                     if namespace != "tts" && namespace != "comfy" {
                         continue;
                     }
+                    let params = build_rpc_params(namespace, assembled_text, &config);
+                    let method = format!("{}.invoke", namespace);
 
-                    self.dispatch_rpc(
-                        session_id,
-                        namespace,
-                        &assembled_text,
-                        &config,
-                        socket_path,
-                    )
-                    .await?;
-                }
-            }
-        }
+                    let request = JsonRpcRequest::new(&method, params);
+                    let call_id = request.id.clone();
 
-        Ok(())
-    }
+                    info!(
+                        "pipeline: dispatching RPC {method} call_id={call_id} session={session_id}"
+                    );
 
-    /// Publish a JSON-RPC request for `namespace` and wait for the matching
-    /// response on the session stream.
-    async fn dispatch_rpc(
-        &self,
-        session_id: &str,
-        namespace: &str,
-        assembled_text: &str,
-        config: &SessionConfig,
-        socket_path: &str,
-    ) -> Result<(), PipelineError> {
-        let params = build_rpc_params(namespace, assembled_text, config);
-        let method = format!("{}.invoke", namespace);
+                    // Drain history first, then subscribe for live response
+                    client.get_history(session_id).await?;
 
-        let request = JsonRpcRequest::new(&method, params);
-        let call_id = request.id.clone();
+                    let req_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
+                        .with_annotation(keys::JSONRPC_REQUEST, &request);
+                    client.publish(session_id, req_chunk).await?;
 
-        info!(
-            "pipeline: dispatching RPC {method} call_id={call_id} session={session_id}"
-        );
+                    let mut rx = client.subscribe(session_id).await?;
 
-        // Open a dedicated connection for this dispatch
-        let stream = UnixStream::connect(socket_path)
-            .await
-            .map_err(|e| PipelineError::Io(e.into()))?;
-        let (reader, mut writer) = stream.into_split();
+                    let response: JsonRpcResponse =
+                        tokio::time::timeout(self.rpc_timeout, async {
+                            loop {
+                                match rx.recv().await {
+                                    Some(ServerMessage::Chunk { chunk, .. }) => {
+                                        if chunk.is_rpc_response_for(&call_id) {
+                                            return chunk.as_rpc_response().ok_or_else(|| {
+                                                anyhow::anyhow!(
+                                                    "failed to deserialize RPC response"
+                                                )
+                                            });
+                                        }
+                                    }
+                                    Some(_) => continue,
+                                    None => {
+                                        anyhow::bail!("bus disconnected while waiting for RPC response");
+                                    }
+                                }
+                            }
+                        })
+                        .await
+                        .map_err(|_| PipelineError::Timeout {
+                            step: namespace.to_string(),
+                            call_id: call_id.clone(),
+                        })?
+                        .map_err(PipelineError::Io)?;
 
-        // Subscribe to the session so we can see response chunks
-        let sub_msg = serde_json::to_string(&ClientMessage::Subscribe {
-            session_id: session_id.to_string(),
-        })
-        .unwrap()
-            + "\n";
-        writer
-            .write_all(sub_msg.as_bytes())
-            .await
-            .map_err(|e| PipelineError::Io(e.into()))?;
-
-        // Drain history replay (HistoryComplete marker) before publishing request
-        let mut lines = BufReader::new(reader).lines();
-        loop {
-            let line = lines
-                .next_line()
-                .await
-                .map_err(|e| PipelineError::Io(e.into()))?
-                .ok_or_else(|| PipelineError::Io(anyhow::anyhow!("bus disconnected")))?;
-
-            let msg: ServerMessage = match serde_json::from_str(&line) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-
-            if matches!(msg, ServerMessage::HistoryComplete { .. }) {
-                break;
-            }
-        }
-
-        // Publish the RPC request as a null chunk
-        let req_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-            .with_annotation(keys::JSONRPC_REQUEST, &request);
-        let pub_msg = ClientMessage::Publish {
-            session_id: session_id.to_string(),
-            chunk: req_chunk,
-        };
-        let mut pub_json = serde_json::to_string(&pub_msg).unwrap();
-        pub_json.push('\n');
-        writer
-            .write_all(pub_json.as_bytes())
-            .await
-            .map_err(|e| PipelineError::Io(e.into()))?;
-
-        // Await matching response with timeout
-        let timeout = self.rpc_timeout;
-        let response: JsonRpcResponse = tokio::time::timeout(timeout, async {
-            loop {
-                let line = lines
-                    .next_line()
-                    .await
-                    .map_err(|e: std::io::Error| anyhow::anyhow!(e))?
-                    .ok_or_else(|| anyhow::anyhow!("bus disconnected while waiting for RPC response"))?;
-
-                let msg: ServerMessage = match serde_json::from_str(&line) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-
-                if let ServerMessage::Chunk { chunk, .. } = msg {
-                    if chunk.is_rpc_response_for(&call_id) {
-                        return chunk
-                            .as_rpc_response()
-                            .ok_or_else(|| anyhow::anyhow!("failed to deserialize RPC response"));
+                    if response.is_ok() {
+                        info!(
+                            "pipeline: RPC {method} succeeded call_id={call_id} session={session_id}"
+                        );
+                    } else {
+                        let err = response.error.unwrap();
+                        return Err(PipelineError::RpcError {
+                            step: namespace.to_string(),
+                            code: err.code,
+                            message: err.message,
+                        });
                     }
                 }
             }
-        })
-        .await
-        .map_err(|_| PipelineError::Timeout {
-            step: namespace.to_string(),
-            call_id: call_id.clone(),
-        })?
-        .map_err(PipelineError::Io)?;
-
-        if !response.is_ok() {
-            let err = response.error.unwrap();
-            return Err(PipelineError::RpcError {
-                step: namespace.to_string(),
-                code: err.code,
-                message: err.message,
-            });
         }
-
-        info!(
-            "pipeline: RPC {method} succeeded call_id={call_id} session={session_id}"
-        );
-
         Ok(())
     }
 }
@@ -318,87 +231,64 @@ pub async fn run_session_pipeline(
     socket_path: String,
     executor: PipelineExecutor,
 ) -> Result<()> {
-    let stream = UnixStream::connect(&socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
+    let client = BusClient::new(&socket_path);
+    let mut rx = client.subscribe(&session_id).await?;
 
-    let sub_msg = serde_json::to_string(&ClientMessage::Subscribe {
-        session_id: session_id.clone(),
-    })? + "\n";
-    writer.write_all(sub_msg.as_bytes()).await?;
-
-    let mut lines = BufReader::new(reader).lines();
     let mut history: Vec<Chunk> = Vec::new();
     let mut history_complete = false;
-    let mut last_user_idx: Option<usize> = None;
+    let mut _last_user_idx: Option<usize> = None;
     let mut llm_active = false;
 
-    while let Some(line) = lines.next_line().await? {
-        let msg: ServerMessage = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("pipeline: invalid bus message: {}", e);
-                continue;
-            }
-        };
-
+    while let Some(msg) = rx.recv().await {
         match msg {
             ServerMessage::HistoryComplete { .. } => {
                 history_complete = true;
-                // Track the last user chunk in replayed history
                 for (i, c) in history.iter().enumerate() {
                     if c.content_type == ContentType::Text && c.role() == Some(roles::USER) {
-                        last_user_idx = Some(i);
+                        _last_user_idx = Some(i);
                     }
                 }
-                debug!(
-                    "pipeline: history replay complete for {} ({} chunks)",
-                    session_id,
-                    history.len()
-                );
             }
+            ServerMessage::Chunk { chunk, .. } => {
+                if !history_complete {
+                    history.push(chunk);
+                    continue;
+                }
 
-            ServerMessage::Chunk { session_id: sid, chunk } if sid == session_id => {
-                // Track user turns
-                if history_complete
+                // Track chat turns
+                if chunk.role() == Some(roles::USER)
                     && chunk.content_type == ContentType::Text
-                    && chunk.role() == Some(roles::USER)
                 {
-                    last_user_idx = Some(history.len());
                     llm_active = true;
                 }
 
-                // Detect LLM stream completion
-                let is_stream_complete = chunk
-                    .get_annotation::<bool>(keys::CHAT_STREAM_COMPLETE)
-                    .unwrap_or(false);
-
-                history.push(chunk);
-
-                if history_complete && llm_active && is_stream_complete {
+                // When the LLM finishes a response turn, run the pipeline
+                if llm_active
+                    && chunk
+                        .get_annotation::<bool>("chat.stream_complete")
+                        .unwrap_or(false)
+                {
                     llm_active = false;
 
-                    // Only run pipeline if there was a user turn before this completion
-                    if last_user_idx.is_some() {
-                        info!(
-                            "pipeline: LLM complete for session {}, running post-LLM steps",
-                            session_id
-                        );
-                        let history_snapshot = history.clone();
-                        let sid = session_id.clone();
-                        let sp = socket_path.clone();
-                        let exec = PipelineExecutor {
-                            steps: executor.steps.clone(),
-                            rpc_timeout: executor.rpc_timeout,
-                        };
-                        tokio::spawn(async move {
-                            if let Err(e) = exec.run_post_llm(&sid, &history_snapshot, &sp).await {
-                                warn!("pipeline: post-LLM error for session {}: {}", sid, e);
-                            }
-                        });
+                    // Re-fetch assembled text for this turn
+                    let fresh_history = client.get_history(&session_id).await?;
+                    let text = assemble_chunks(&fresh_history);
+
+                    debug!(
+                        "pipeline: running pipeline for session {} ({} chars)",
+                        session_id,
+                        text.len()
+                    );
+
+                    let mut pending_tool_calls: Option<Vec<ToolCall>> = None;
+                    if let Err(e) = executor
+                        .run(&session_id, &client, &text, &mut pending_tool_calls)
+                        .await
+                    {
+                        warn!("pipeline: step failed for session {}: {}", session_id, e);
                     }
                 }
             }
-
             _ => {}
         }
     }
@@ -407,191 +297,27 @@ pub async fn run_session_pipeline(
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Error type
 // ---------------------------------------------------------------------------
 
-/// Collect the full assistant response text from streaming history chunks.
-///
-/// Scans from the last user message forward and concatenates all text chunks
-/// with `chat.role: assistant` and `chat.is_streaming: true`.
-pub fn assemble_assistant_text(history: &[Chunk]) -> String {
-    // Find the index of the last user chunk
-    let start = history
-        .iter()
-        .rposition(|c| c.content_type == ContentType::Text && c.role() == Some(roles::USER))
-        .map(|i| i + 1)
-        .unwrap_or(0);
+#[derive(Debug, thiserror::Error)]
+pub enum PipelineError {
+    #[error("SDK error: {0}")]
+    Sdk(#[from] SdkError),
 
-    history[start..]
-        .iter()
-        .filter(|c| {
-            c.content_type == ContentType::Text
-                && c.role() == Some(roles::ASSISTANT)
-                && c.get_annotation::<bool>(keys::CHAT_IS_STREAMING)
-                    .unwrap_or(false)
-        })
-        .filter_map(|c| c.content.as_deref())
-        .collect::<Vec<_>>()
-        .join("")
-}
+    #[error("I/O error: {0}")]
+    Io(#[source] anyhow::Error),
 
-/// Build JSON-RPC params for a given namespace.
-fn build_rpc_params(
-    namespace: &str,
-    assembled_text: &str,
-    config: &SessionConfig,
-) -> serde_json::Value {
-    match namespace {
-        "tts" => serde_json::json!({
-            "text": assembled_text,
-            "profile": config.tts_profile.as_deref().unwrap_or("default"),
-            "engine": config.tts_engine,
-        }),
-        "comfy" => serde_json::json!({
-            "text": assembled_text,
-            "workflow_path": config.comfy_workflow_path,
-            "workflow_input_node": config.comfy_workflow_input_node,
-            "endpoint": config.comfy_endpoint,
-        }),
-        "stt" => serde_json::json!({
-            "base_url": config.stt_base_url,
-        }),
-        _ => serde_json::json!({}),
-    }
-}
+    #[error("RPC step '{step}' timed out waiting for call_id={call_id}")]
+    Timeout {
+        step: String,
+        call_id: String,
+    },
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cafe_types::Chunk;
-
-    fn user_chunk(text: &str) -> Chunk {
-        Chunk::new_text(text, "user").with_annotation(keys::CHAT_ROLE, roles::USER)
-    }
-
-    fn assistant_streaming_chunk(text: &str) -> Chunk {
-        Chunk::new_text(text, "com.nominal.cafe-llm")
-            .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
-            .with_annotation(keys::CHAT_IS_STREAMING, true)
-    }
-
-    fn stream_complete_chunk() -> Chunk {
-        Chunk::new_null("com.nominal.cafe-llm")
-            .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
-    }
-
-    #[test]
-    fn assemble_assistant_text_collects_streaming_chunks() {
-        let history = vec![
-            user_chunk("hello"),
-            assistant_streaming_chunk("Hi "),
-            assistant_streaming_chunk("there!"),
-            stream_complete_chunk(),
-        ];
-        assert_eq!(assemble_assistant_text(&history), "Hi there!");
-    }
-
-    #[test]
-    fn assemble_assistant_text_empty_with_no_streaming_chunks() {
-        let history = vec![user_chunk("hello"), stream_complete_chunk()];
-        assert_eq!(assemble_assistant_text(&history), "");
-    }
-
-    #[test]
-    fn assemble_assistant_text_only_uses_latest_turn() {
-        // Two user turns; only second turn's assistant text should be returned
-        let history = vec![
-            user_chunk("turn 1"),
-            assistant_streaming_chunk("Response 1"),
-            stream_complete_chunk(),
-            user_chunk("turn 2"),
-            assistant_streaming_chunk("Response 2"),
-            stream_complete_chunk(),
-        ];
-        assert_eq!(assemble_assistant_text(&history), "Response 2");
-    }
-
-    #[test]
-    fn pipeline_step_from_name() {
-        assert!(matches!(
-            PipelineStep::from_name("role-annotator"),
-            PipelineStep::BuiltIn(BuiltInStep::RoleAnnotator)
-        ));
-        assert!(matches!(
-            PipelineStep::from_name("trust-filter"),
-            PipelineStep::BuiltIn(BuiltInStep::TrustFilter)
-        ));
-        assert!(matches!(
-            PipelineStep::from_name("tts"),
-            PipelineStep::Rpc(ref s) if s == "tts"
-        ));
-        assert!(matches!(
-            PipelineStep::from_name("stt"),
-            PipelineStep::Rpc(ref s) if s == "stt"
-        ));
-        assert!(matches!(
-            PipelineStep::from_name("llm"),
-            PipelineStep::Rpc(ref s) if s == "llm"
-        ));
-    }
-
-    #[test]
-    fn executor_from_step_names() {
-        let names = vec![
-            "trust-filter".into(),
-            "llm".into(),
-            "tts".into(),
-        ];
-        let exec = PipelineExecutor::from_step_names(&names, Duration::from_secs(30));
-        assert_eq!(exec.steps.len(), 3);
-        assert_eq!(exec.rpc_timeout, Duration::from_secs(30));
-    }
-
-    #[test]
-    fn build_rpc_params_tts() {
-        let config = SessionConfig {
-            tts_profile: Some("Volition".into()),
-            tts_engine: Some("qwen".into()),
-            ..Default::default()
-        };
-        let params = build_rpc_params("tts", "Hello world", &config);
-        assert_eq!(params["text"], "Hello world");
-        assert_eq!(params["profile"], "Volition");
-        assert_eq!(params["engine"], "qwen");
-    }
-
-    #[test]
-    fn build_rpc_params_tts_defaults() {
-        let config = SessionConfig::default();
-        let params = build_rpc_params("tts", "Hi", &config);
-        assert_eq!(params["profile"], "default");
-    }
-
-    #[test]
-    fn build_rpc_params_comfy() {
-        let config = SessionConfig {
-            comfy_workflow_path: Some("my_workflow.json".into()),
-            comfy_workflow_input_node: Some("3".into()),
-            comfy_endpoint: Some("http://localhost:8188".into()),
-            ..Default::default()
-        };
-        let params = build_rpc_params("comfy", "a cat in space", &config);
-        assert_eq!(params["text"], "a cat in space");
-        assert_eq!(params["workflow_path"], "my_workflow.json");
-        assert_eq!(params["workflow_input_node"], "3");
-        assert_eq!(params["endpoint"], "http://localhost:8188");
-    }
-
-    #[test]
-    fn build_rpc_params_comfy_defaults() {
-        let config = SessionConfig::default();
-        let params = build_rpc_params("comfy", "a dog", &config);
-        assert_eq!(params["text"], "a dog");
-        assert!(params["workflow_path"].is_null());
-        assert!(params["workflow_input_node"].is_null());
-    }
+    #[error("RPC step '{step}' returned error {code}: {message}")]
+    RpcError {
+        step: String,
+        code: i32,
+        message: String,
+    },
 }

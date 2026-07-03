@@ -1,4 +1,4 @@
-use cafe_types::AgentDefinition;
+use cafe_sdk::AgentDefinition;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

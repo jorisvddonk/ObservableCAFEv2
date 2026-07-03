@@ -8,7 +8,7 @@ name = "cafe-agent-runtime"
 path = "src/main.rs"
 
 [dependencies]
-cafe-types           = { path = "../cafe-types" }
+cafe-sdk             = { path = "../cafe-sdk", features = ["bus-client"] }
 tokio                = { workspace = true }
 serde                = { workspace = true }
 serde_json           = { workspace = true }

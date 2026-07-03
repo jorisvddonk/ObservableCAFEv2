@@ -42,7 +42,9 @@ async fn main() -> Result<()> {
     }
 
     // 2. Wait for bus to be ready
-    wait_for_bus(&config.socket_path).await;
+    if let Err(e) = cafe_sdk::bus::wait_for_bus(&config.socket_path, Duration::from_millis(500), 60).await {
+        warn!("cafe-agent-runtime: bus not ready after 30s, continuing anyway: {e}");
+    }
 
     // 3. Register agents and start background sessions
     let sched = scheduler::AgentScheduler::new().await?;
@@ -131,10 +133,11 @@ async fn run_pipeline_poller(
     socket_path: String,
     agent_pipelines: Arc<HashMap<String, AgentPipelineInfo>>,
 ) {
+    let client = cafe_sdk::bus::BusClient::new(&socket_path);
     let mut known: HashSet<String> = HashSet::new();
 
     loop {
-        match list_sessions(&socket_path).await {
+        match client.list_sessions().await {
             Ok(sessions) => {
                 let current_ids: HashSet<String> =
                     sessions.iter().map(|s| s.session_id.clone()).collect();
@@ -159,20 +162,16 @@ async fn run_pipeline_poller(
                         // picks up TTS/LLM settings for user-created sessions.
                         if info.initial_chunk_type == "null" && !info.initial_chunk_annotations.is_empty() {
                             let annotations = info.initial_chunk_annotations.clone();
-                            let sp2 = socket_path.clone();
+                            let client = client.clone();
                             let sid2 = sid.clone();
                             tokio::spawn(async move {
-                                let mut chunk = cafe_types::Chunk::new_null(
+                                let mut chunk = cafe_sdk::Chunk::new_null(
                                     &format!("com.nominal.cafe-agent-runtime/{}", agent_id),
                                 );
                                 for (k, v) in annotations {
                                     chunk = chunk.with_annotation(k, v);
                                 }
-                                let msg = cafe_types::ClientMessage::Publish {
-                                    session_id: sid2.clone(),
-                                    chunk,
-                                };
-                                if let Err(e) = send_bus_message(&sp2, &msg).await {
+                                if let Err(e) = client.publish(&sid2, chunk).await {
                                     warn!(
                                         "cafe-agent-runtime: failed to publish initial chunk for session {}: {}",
                                         sid2, e
@@ -208,38 +207,6 @@ async fn run_pipeline_poller(
 
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
-}
-
-async fn send_bus_message(socket_path: &str, msg: &cafe_types::ClientMessage) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::UnixStream;
-
-    let stream = UnixStream::connect(socket_path).await?;
-    let (_, mut writer) = stream.into_split();
-    let mut json = serde_json::to_string(msg)?;
-    json.push('\n');
-    writer.write_all(json.as_bytes()).await?;
-    Ok(())
-}
-
-async fn list_sessions(socket_path: &str) -> Result<Vec<cafe_types::SessionInfo>> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
-
-    let stream = UnixStream::connect(socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
-    let msg = serde_json::to_string(&cafe_types::ClientMessage::ListSessions)? + "\n";
-    writer.write_all(msg.as_bytes()).await?;
-
-    let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-        if let Ok(cafe_types::ServerMessage::SessionsList { sessions }) =
-            serde_json::from_str(&line)
-        {
-            return Ok(sessions);
-        }
-    }
-    Ok(vec![])
 }
 
 async fn run_until_shutdown(
@@ -281,19 +248,4 @@ async fn run_until_shutdown(
     Ok(())
 }
 
-/// Poll until the bus socket exists.
-async fn wait_for_bus(socket_path: &str) {
-    let path = std::path::Path::new(socket_path);
-    let mut attempts = 0u32;
-    while !path.exists() {
-        if attempts == 0 {
-            info!("cafe-agent-runtime: waiting for bus at {}", socket_path);
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        attempts += 1;
-        if attempts > 60 {
-            warn!("cafe-agent-runtime: bus not ready after 30s, continuing anyway");
-            break;
-        }
-    }
-}
+

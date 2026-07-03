@@ -1,6 +1,6 @@
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use cafe_types::AgentDefinition;
+use cafe_sdk::AgentDefinition;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::Path;

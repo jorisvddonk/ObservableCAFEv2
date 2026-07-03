@@ -1,4 +1,4 @@
-use cafe_types::{keys, Chunk, ContentType};
+use cafe_sdk::{keys, Chunk, ContentType};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -231,7 +231,7 @@ pub fn get_evaluator_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cafe_types::Chunk;
+    use cafe_sdk::Chunk;
 
     fn make_runtime_config_chunk(annotations: &[(&str, serde_json::Value)]) -> Chunk {
         let mut chunk = Chunk::new_null("test");

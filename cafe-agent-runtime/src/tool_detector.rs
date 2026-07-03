@@ -1,4 +1,4 @@
-use cafe_types::ToolCall;
+use cafe_sdk::ToolCall;
 use regex::Regex;
 
 /// Scan `text` for `<|tool_call|>...<|tool_call_end|>` markers.
