@@ -1,10 +1,15 @@
 name = "dice"
-description = "Dice-rolling test agent — responds to !roll N d M"
+description = "Dice-rolling test agent — !roll 1d5 dispatches tool call via two-step pipeline"
 background = false
 allows_reload = true
-persists_state = true
+persists_state = false
 
 [[steps]]
-id = "dice"
-type = "dice"
+id = "dice-detector"
+type = "dice-detector"
 trigger = "user_message"
+
+[[steps]]
+id = "dice-executor"
+type = "tool-executor"
+trigger = "step_complete:dice-detector"

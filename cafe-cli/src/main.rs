@@ -1,6 +1,6 @@
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{Chunk, ContentType, ServerMessage, SubscribeFilter};
+use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SubscribeFilter};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 
@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
                 Chunk::new_binary_ref(mime, "cafe-cli")
             } else if let Some(content) = text {
                 Chunk::new_text(content, "cafe-cli")
+                    .with_annotation(cafe_sdk::keys::CHAT_ROLE, "user")
             } else if let Some(path) = file {
                 let data = tokio::fs::read(&path).await?;
                 let mime = mime.unwrap_or_else(|| "application/octet-stream".into());

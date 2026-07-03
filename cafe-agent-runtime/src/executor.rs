@@ -1,5 +1,6 @@
 use crate::config::SessionConfig;
 use crate::tool_detector;
+use crate::tool_executor;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{keys, Chunk, JsonRpcRequest, JsonRpcResponse, SdkError, ServerMessage, StepDef};
 use std::collections::VecDeque;
@@ -72,6 +73,8 @@ pub struct PipelineContext {
     pub session_id: String,
     pub config: SessionConfig,
     pub assembled_llm_text: Option<String>,
+    /// Original user message text (for user_message triggers)
+    pub user_text: Option<String>,
     /// Current recursion depth (for step_complete chaining limit).
     pub depth: u32,
 }
@@ -171,6 +174,13 @@ impl PipelineExecutor {
                         BuiltInEvaluator::ToolDetector => {
                             if let Some(ref text) = ctx.assembled_llm_text {
                                 let (_, calls) = tool_detector::detect(text);
+                                for call in &calls {
+                                    let chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
+                                        .with_annotation(keys::TOOL_CALL, call);
+                                    if let Err(e) = bus.publish(&ctx.session_id, chunk).await {
+                                        warn!("executor: failed to publish tool.call: {}", e);
+                                    }
+                                }
                                 if !calls.is_empty() {
                                     info!(
                                         "executor: detected {} tool call(s) in session {}",
@@ -179,7 +189,19 @@ impl PipelineExecutor {
                                 }
                             }
                         }
-                        BuiltInEvaluator::ToolExecutor => {}
+                        BuiltInEvaluator::ToolExecutor => {
+                            // Read tool.call chunks from history and dispatch each
+                            match bus.get_history(&ctx.session_id).await {
+                                Ok(history) => {
+                                    for call in history.iter().rev().filter_map(|c| c.as_tool_call()) {
+                                        if let Err(e) = tool_executor::execute(&call, &ctx.session_id, bus).await {
+                                            warn!("executor: tool_executor error: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => warn!("executor: failed to get history for tool execution: {}", e),
+                            }
+                        }
                     }
                 }
             }
@@ -259,8 +281,10 @@ fn build_rpc_params(namespace: &str, ctx: &PipelineContext) -> serde_json::Value
             let mut params = serde_json::json!({
                 "session_id": ctx.session_id,
             });
-            if let Some(ref text) = ctx.assembled_llm_text {
-                params["text"] = serde_json::Value::String(text.clone());
+            let text = ctx.assembled_llm_text.as_deref()
+                .or_else(|| ctx.user_text.as_deref());
+            if let Some(text) = text {
+                params["text"] = serde_json::Value::String(text.to_string());
             }
             params
         }

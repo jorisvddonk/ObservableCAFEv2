@@ -1,7 +1,8 @@
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage};
-use rand::Rng;
-use tracing::{error, info, warn};
+use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage, ToolCall};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,60 +47,79 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
         };
 
         let Some(request) = chunk.as_rpc_request() else { continue; };
-        if request.method != "dice.invoke" { continue; }
-
-        info!(
-            "cafe-dice: handling {} call_id={} session={}",
-            request.method, request.id, session_id
-        );
-
         let call_id = request.id.clone();
-        let text = request.params["text"].as_str().unwrap_or("");
 
-        let response = if let Some(result) = parse_and_roll(text) {
-            info!("cafe-dice: rolled {} for '{}'", result, text);
-            let output = serde_json::json!({ "result": result, "expression": text });
-            JsonRpcResponse::ok(&call_id, output)
-        } else {
-            warn!("cafe-dice: failed to parse '{}'", text);
-            JsonRpcResponse::err(&call_id, -1, &format!("Invalid roll expression: {}", text))
-        };
+        match request.method.as_str() {
+            "dice-detector.invoke" => {
+                let text = request.params["text"].as_str().unwrap_or("");
+                info!("cafe-dice: detecting '{}'", text);
 
-        let resp_chunk = Chunk::new_null("com.nominal.cafe-dice")
-            .with_annotation(keys::JSONRPC_RESPONSE, &response)
-            .as_transient()
-            .with_retain(60);
-        let _ = client.publish(&session_id, resp_chunk).await;
+                let response = if let Some((count, sides)) = parse_roll(text) {
+                    // Publish tool.call chunk so the pipeline's tool-executor can dispatch it
+                    let tool_call = ToolCall {
+                        name: "dice.roll".into(),
+                        parameters: serde_json::json!({ "count": count, "sides": sides }),
+                    };
+                    let tc_chunk = Chunk::new_null("com.nominal.cafe-dice")
+                        .with_annotation(keys::TOOL_CALL, &tool_call);
+                    let _ = client.publish(&session_id, tc_chunk).await;
+
+                    info!("cafe-dice: detected !roll {}d{}", count, sides);
+                    JsonRpcResponse::ok(&call_id, serde_json::json!({"detected": true, "count": count, "sides": sides}))
+                } else {
+                    JsonRpcResponse::ok(&call_id, serde_json::json!({"detected": false}))
+                };
+
+                let resp_chunk = Chunk::new_null("com.nominal.cafe-dice")
+                    .with_annotation(keys::JSONRPC_RESPONSE, &response)
+                    .as_transient()
+                    .with_retain(60);
+                let _ = client.publish(&session_id, resp_chunk).await;
+            }
+
+            "dice.roll" => {
+                let count = request.params["count"].as_u64().unwrap_or(1);
+                let sides = request.params["sides"].as_u64().unwrap_or(6);
+                let mut total: i64 = 0;
+                let mut rng = StdRng::from_entropy();
+                for _ in 0..count {
+                    total += rng.gen_range(1..=sides) as i64;
+                }
+                info!("cafe-dice: rolled {}d{} = {}", count, sides, total);
+
+                let response = JsonRpcResponse::ok(&call_id, serde_json::json!({"result": total}));
+                let resp_chunk = Chunk::new_null("com.nominal.cafe-dice")
+                    .with_annotation(keys::JSONRPC_RESPONSE, &response)
+                    .as_transient()
+                    .with_retain(60);
+                let _ = client.publish(&session_id, resp_chunk).await;
+            }
+
+            _ => continue,
+        }
     }
 
     Ok(())
 }
 
-/// Parse expressions like "!roll 1d5", "2d20", "1D6" and return the result.
-fn parse_and_roll(text: &str) -> Option<i64> {
+/// Parse "!roll 2d6" or "!r 1d20" into (count, sides). Returns None if not a roll.
+fn parse_roll(text: &str) -> Option<(u64, u64)> {
     let text = text.trim().strip_prefix("!roll ").or_else(|| text.strip_prefix("!r "))?;
     let text = text.trim();
 
-    // Support "NdM" format
+    // "d20" (single die)
     if let Some(rest) = text.strip_prefix("d").or_else(|| text.strip_prefix("D")) {
         let sides: u64 = rest.parse().ok()?;
         if sides < 1 { return None; }
-        return Some(rand::thread_rng().gen_range(1..=sides) as i64);
+        return Some((1, sides));
     }
 
-    // Support "N d M" format (e.g., "1d5", "2d20")
+    // "2d6" or "1D20" (count + die)
     let (count_str, rest) = text.split_once(|c: char| c == 'd' || c == 'D')?;
     let count: u64 = if count_str.is_empty() { 1 } else { count_str.parse().ok()? };
-    let sides_str = rest.trim();
-    let sides: u64 = sides_str.parse().ok()?;
+    let sides: u64 = rest.trim().parse().ok()?;
     if count < 1 || sides < 1 { return None; }
-
-    let mut total: i64 = 0;
-    let mut rng = rand::thread_rng();
-    for _ in 0..count {
-        total += rng.gen_range(1..=sides) as i64;
-    }
-    Some(total)
+    Some((count, sides))
 }
 
 #[cfg(test)]
@@ -108,37 +128,31 @@ mod tests {
 
     #[test]
     fn parse_simple_d5() {
-        let r = parse_and_roll("!roll d5");
-        assert!(r.is_some());
-        assert!((1..=5).contains(&r.unwrap()));
+        let r = parse_roll("!roll d5");
+        assert_eq!(r, Some((1, 5)));
     }
 
     #[test]
     fn parse_single_d20() {
-        let r = parse_and_roll("!roll 1d20");
-        assert!(r.is_some());
-        assert!((1..=20).contains(&r.unwrap()));
+        let r = parse_roll("!roll 1d20");
+        assert_eq!(r, Some((1, 20)));
     }
 
     #[test]
-    fn parse_multi_dice() {
-        let r = parse_and_roll("!roll 2d6");
-        assert!(r.is_some());
-        let v = r.unwrap();
-        assert!((2..=12).contains(&v), "2d6 should be 2..=12, got {}", v);
+    fn parse_multi_d6() {
+        let r = parse_roll("!roll 2d6");
+        assert_eq!(r, Some((2, 6)));
     }
 
     #[test]
-    fn parse_with_exclamation() {
-        let r = parse_and_roll("!r d10");
-        assert!(r.is_some());
-        assert!((1..=10).contains(&r.unwrap()));
+    fn parse_with_shorthand() {
+        let r = parse_roll("!r d10");
+        assert_eq!(r, Some((1, 10)));
     }
 
     #[test]
-    fn invalid_expression() {
-        assert!(parse_and_roll("!roll abc").is_none());
-        assert!(parse_and_roll("hello world").is_none());
-        assert!(parse_and_roll("").is_none());
+    fn invalid() {
+        assert!(parse_roll("!roll abc").is_none());
+        assert!(parse_roll("hello").is_none());
     }
 }

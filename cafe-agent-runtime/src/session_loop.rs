@@ -95,6 +95,11 @@ pub async fn run_session_loop(
                 session_id: session_id.clone(),
                 config,
                 assembled_llm_text,
+                user_text: if let TriggerType::UserMessage = trigger_type {
+                    chunk.content.clone()
+                } else {
+                    None
+                },
                 depth: 0,
             };
 

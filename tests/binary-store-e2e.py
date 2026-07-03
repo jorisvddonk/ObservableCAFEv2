@@ -83,7 +83,8 @@ def main():
         print("=== Starting cafe-agent-runtime ===", file=sys.stderr)
         agent_env = env.copy()
         agent_env["CAFE_DB_PATH"] = store_db
-        agent_proc = subprocess.Popen([AGENT_BIN], env=agent_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        agent_log = os.path.join(tmpdir, "agent.log")
+        agent_proc = subprocess.Popen([AGENT_BIN], env=agent_env, stdout=subprocess.DEVNULL, stderr=open(agent_log, "w"))
         time.sleep(2)
 
         try:
@@ -201,31 +202,64 @@ def main():
             # === Dice tool calling test ===
             print("=== Dice roll via pipeline ===", file=sys.stderr)
 
-            # Create a session with the dice agent — pipeline attaches dice step
+            # Create a session with the dice agent
             r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "dice"])
             assert r.returncode == 0
             dice_sid = r.stdout.strip()
             print(f"  dice session={dice_sid}", file=sys.stderr)
-
-            # Allow pipeline to discover and attach
             time.sleep(1)
 
-            # Publish a user message with !roll command
-            # The pipeline's dice step fires on user_message and dispatches dice.invoke RPC
+            # Publish the roll command — pipeline dispatches dice-detector.invoke → cafe-dice
+            # detects !roll → publishes tool.call → pipeline dispatches dice.roll → cafe-dice
+            # rolls → publishes jsonrpc.response (transient with 60s retain)
             r = run([CLI, "--bus", bus_socket, "publish", dice_sid, "--text", "!roll 2d6"])
             assert r.returncode == 0
+            time.sleep(1)
 
-            # Wait for cafe-dice to process and respond
-            time.sleep(2)
+            # Subscribe (after publish) — retained buffer serves the RPC response
+            sub_proc = subprocess.Popen(
+                [CLI, "--bus", bus_socket, "subscribe", dice_sid, "--timeout-secs", "6"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            )
+            try:
+                stdout, _ = sub_proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                sub_proc.kill()
+                stdout, _ = sub_proc.communicate()
 
-            # Read history — should contain the RPC response (transient, so not in history)
-            # Instead, check that cafe-dice processed the request (check its output)
-            # For now, verify the session still exists
-            r = run([CLI, "--bus", bus_socket, "list-sessions"])
-            assert r.returncode == 0
-            sessions = json.loads(r.stdout)
-            assert any(s["session_id"] == dice_sid for s in sessions)
-            print("  dice session active", file=sys.stderr)
+            # Parse chunks looking for the dice.roll RPC response
+            found_result = None
+            for line in stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    annotations = chunk.get("annotations", {})
+                    rpc_resp = annotations.get("jsonrpc.response")
+                    if rpc_resp:
+                        result = rpc_resp.get("result", {}).get("result")
+                        print(f"  [debug] found jsonrpc.response: {json.dumps(rpc_resp)[:200]}", file=sys.stderr)
+                        if result is not None:
+                            found_result = result
+                            break
+                except (json.JSONDecodeError, AttributeError) as e:
+                    print(f"  [debug] parse error: {e}", file=sys.stderr)
+                    continue
+
+            if found_result is None:
+                print(f"  [debug] subscribe output ({len(stdout)} bytes, repr): {stdout[:500]!r}", file=sys.stderr)
+                print(f"  [debug] subscribe lines: {stdout.strip().split(chr(10))[:10]}", file=sys.stderr)
+                print(f"  [debug] agent log (tail):", file=sys.stderr)
+                try:
+                    with open(agent_log) as f:
+                        for line in f.readlines()[-10:]:
+                            print(f"    {line.rstrip()[:200]}", file=sys.stderr)
+                except FileNotFoundError:
+                    print(f"    (no agent log)", file=sys.stderr)
+            assert found_result is not None, f"no dice.roll result found in {len(stdout)} bytes of subscribe output"
+            assert isinstance(found_result, int), f"result should be int, got {type(found_result)}"
+            assert 2 <= found_result <= 12, f"2d6 should be 2-12, got {found_result}"
+            print(f"  dice roll OK: {found_result}", file=sys.stderr)
 
             # Clean up
             r = run([CLI, "--bus", bus_socket, "delete-session", dice_sid])
