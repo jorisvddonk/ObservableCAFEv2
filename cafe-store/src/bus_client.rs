@@ -34,6 +34,10 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
                 }
             }
             ServerMessage::Chunk { session_id, chunk } => {
+                // Transient chunks are never persisted
+                if chunk.is_transient() {
+                    continue;
+                }
                 let _ = db.upsert_session(&session_id, "unknown", false).await;
                 if let Err(e) = db.insert_chunk(&session_id, &chunk).await {
                     error!(

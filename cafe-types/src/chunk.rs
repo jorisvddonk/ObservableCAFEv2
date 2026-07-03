@@ -164,6 +164,20 @@ impl Chunk {
     pub fn as_tool_result(&self) -> Option<crate::tools::ToolResult> {
         self.get_annotation(crate::annotation::keys::TOOL_RESULT)
     }
+
+    /// Returns true if this chunk is transient — broadcast to live subscribers
+    /// but not appended to history or persisted.
+    pub fn is_transient(&self) -> bool {
+        self.annotations
+            .get(crate::annotation::keys::TRANSIENT)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Returns a clone of self with `transient: true` set in annotations.
+    pub fn as_transient(self) -> Self {
+        self.with_annotation(crate::annotation::keys::TRANSIENT, true)
+    }
 }
 
 #[cfg(test)]
@@ -250,5 +264,39 @@ mod tests {
         // Chunk without response annotation
         let plain = Chunk::new_null("com.test");
         assert!(!plain.is_rpc_response_for("my-call-id"));
+    }
+
+    #[test]
+    fn is_transient_true_when_annotation_is_true() {
+        let chunk = Chunk::new_text("hello", "com.test")
+            .with_annotation(crate::annotation::keys::TRANSIENT, true);
+        assert!(chunk.is_transient());
+    }
+
+    #[test]
+    fn is_transient_false_when_annotation_absent() {
+        let chunk = Chunk::new_text("hello", "com.test");
+        assert!(!chunk.is_transient());
+    }
+
+    #[test]
+    fn is_transient_false_when_annotation_is_false() {
+        let chunk = Chunk::new_text("hello", "com.test")
+            .with_annotation(crate::annotation::keys::TRANSIENT, false);
+        assert!(!chunk.is_transient());
+    }
+
+    #[test]
+    fn as_transient_does_not_mutate_original() {
+        let original = Chunk::new_text("hello", "com.test");
+        let cloned = original.clone();
+        let _transient = cloned.as_transient();
+        assert!(!original.is_transient());
+    }
+
+    #[test]
+    fn as_transient_sets_transient_to_true() {
+        let chunk = Chunk::new_text("hello", "com.test").as_transient();
+        assert!(chunk.is_transient());
     }
 }

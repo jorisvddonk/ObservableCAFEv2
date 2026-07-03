@@ -62,6 +62,9 @@ pub mod keys {
     // JSON-RPC over bus
     pub const JSONRPC_REQUEST: &str = "jsonrpc.request";
     pub const JSONRPC_RESPONSE: &str = "jsonrpc.response";
+
+    // Transport properties
+    pub const TRANSIENT: &str = "transient";
 }
 
 /// Standard chat role values.

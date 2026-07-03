@@ -215,6 +215,11 @@ async fn handle_llm_response(
                 match token {
                     Some(Ok(text)) => {
                         full_response.push_str(&text);
+                        let token_chunk = Chunk::new_text(&text, "com.nominal.cafe-llm")
+                            .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+                            .with_annotation(keys::CHAT_IS_STREAMING, true)
+                            .as_transient();
+                        publish_chunk(writer, &session_id, token_chunk).await;
                     }
                     Some(Err(e)) => {
                         error!("cafe-llm: stream error: {}", e);
