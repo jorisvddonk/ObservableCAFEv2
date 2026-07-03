@@ -141,11 +141,14 @@ async fn client_loop(
             }
 
             ClientMessage::Subscribe { session_id } => {
-                // Snapshot history + get receiver while holding read lock
-                let (history, mut rx) = {
-                    let reg = registry.read().await;
-                    match reg.get(&session_id) {
-                        Some(s) => (s.history.clone(), s.subscribe()),
+                // Snapshot history + retained + get receiver while holding write lock
+                let (history, retained, mut rx) = {
+                    let mut reg = registry.write().await;
+                    match reg.get_mut(&session_id) {
+                        Some(s) => {
+                            let retained = s.drain_retained();
+                            (s.history.clone(), retained, s.subscribe())
+                        }
                         None => {
                             drop(reg);
                             send_error(
@@ -160,9 +163,20 @@ async fn client_loop(
                     }
                 };
 
-                // Replay history
-                let count = history.len();
+                // Replay history (oldest first)
+                let count = history.len() + retained.len();
                 for chunk in history {
+                    send_msg(
+                        &writer,
+                        &ServerMessage::Chunk {
+                            session_id: session_id.clone(),
+                            chunk,
+                        },
+                    )
+                    .await;
+                }
+                // Retained transient chunks, in chronological order after history
+                for chunk in retained {
                     send_msg(
                         &writer,
                         &ServerMessage::Chunk {
@@ -219,13 +233,14 @@ async fn client_loop(
             ClientMessage::SubscribeAll => {
                 // Subscribe to all current sessions and future ones.
                 let (event_rx, sessions_snapshot) = {
-                    let reg = registry.read().await;
-                    let snap: Vec<(String, String, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = reg
+                    let mut reg = registry.write().await;
+                    let snap: Vec<(String, String, Vec<Chunk>, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = reg
                         .list()
                         .iter()
                         .filter_map(|info| {
-                            reg.get(&info.session_id).map(|s| {
-                                (s.session_id.clone(), s.agent_id.clone(), s.history.clone(), s.subscribe())
+                            reg.get_mut(&info.session_id).map(|s| {
+                                let retained = s.drain_retained();
+                                (s.session_id.clone(), s.agent_id.clone(), s.history.clone(), retained, s.subscribe())
                             })
                         })
                         .collect();
@@ -233,7 +248,7 @@ async fn client_loop(
                 };
 
                 // Announce + replay for existing sessions
-                for (sid, agent_id, history, rx) in sessions_snapshot {
+                for (sid, agent_id, history, retained, rx) in sessions_snapshot {
                     send_msg(
                         &writer,
                         &ServerMessage::SessionCreated {
@@ -242,7 +257,7 @@ async fn client_loop(
                         },
                     )
                     .await;
-                    replay_and_forward(&writer, sid, history, rx).await;
+                    replay_and_forward(&writer, sid, history, retained, rx).await;
                 }
 
                 // Listen for new sessions via registry events
@@ -256,15 +271,16 @@ async fn client_loop(
                         // For new sessions, also replay history + forward live chunks
                         if let ServerMessage::SessionCreated { session_id, .. } = &event {
                             let maybe = {
-                                let reg = reg3.read().await;
-                                reg.get(session_id)
-                                    .map(|s| (s.history.clone(), s.subscribe()))
+                                let mut reg = reg3.write().await;
+                                reg.get_mut(session_id)
+                                    .map(|s| (s.history.clone(), s.drain_retained(), s.subscribe()))
                             };
-                            if let Some((history, rx)) = maybe {
+                            if let Some((history, retained, rx)) = maybe {
                                 replay_and_forward(
                                     &writer3,
                                     session_id.clone(),
                                     history,
+                                    retained,
                                     rx,
                                 )
                                 .await;
@@ -283,9 +299,21 @@ async fn replay_and_forward(
     writer: &Arc<Mutex<OwnedWriteHalf>>,
     session_id: String,
     history: Vec<Chunk>,
+    retained: Vec<Chunk>,
     mut rx: tokio::sync::broadcast::Receiver<Chunk>,
 ) {
     for chunk in history {
+        send_msg(
+            writer,
+            &ServerMessage::Chunk {
+                session_id: session_id.clone(),
+                chunk,
+            },
+        )
+        .await;
+    }
+    // Retained transient chunks follow history chronologically
+    for chunk in retained {
         send_msg(
             writer,
             &ServerMessage::Chunk {

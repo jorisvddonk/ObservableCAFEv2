@@ -178,6 +178,23 @@ impl Chunk {
     pub fn as_transient(self) -> Self {
         self.with_annotation(crate::annotation::keys::TRANSIENT, true)
     }
+
+    /// Returns the retention period in seconds for this transient chunk.
+    /// `None` means the chunk is not retained — it's fire-and-forget.
+    pub fn retain_secs(&self) -> Option<u64> {
+        if !self.is_transient() {
+            return None;
+        }
+        self.annotations
+            .get(crate::annotation::keys::TRANSIENT_RETAIN_SECS)
+            .and_then(|v| v.as_u64())
+    }
+
+    /// Mark this transient chunk as retained for the given number of seconds.
+    /// Late subscribers will still receive it within that window.
+    pub fn with_retain(self, secs: u64) -> Self {
+        self.with_annotation(crate::annotation::keys::TRANSIENT_RETAIN_SECS, secs)
+    }
 }
 
 #[cfg(test)]

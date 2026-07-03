@@ -66,6 +66,7 @@ pub mod keys {
 
     // Transport properties
     pub const TRANSIENT: &str = "transient";
+    pub const TRANSIENT_RETAIN_SECS: &str = "transient.retain_secs";
 }
 
 /// Standard chat role values.

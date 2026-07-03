@@ -167,7 +167,8 @@ async fn handle_llm_response(
             let rpc_err = JsonRpcResponse::err(call_id, -1, &e.to_string());
             let err_resp_chunk = Chunk::new_null("com.nominal.cafe-llm")
                 .with_annotation(keys::JSONRPC_RESPONSE, &rpc_err)
-                .as_transient();
+                .as_transient()
+                .with_retain(60);
             publish_chunk(writer, &session_id, err_resp_chunk).await;
             return;
         }
@@ -177,7 +178,8 @@ async fn handle_llm_response(
     let start_chunk = Chunk::new_null("com.nominal.cafe-llm")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         .with_annotation(keys::CHAT_IS_STREAMING, true)
-        .as_transient();
+        .as_transient()
+        .with_retain(5);
     publish_chunk(writer, &session_id, start_chunk).await;
 
     let mut finish_reason = "stop".to_string();
@@ -241,7 +243,8 @@ async fn handle_llm_response(
     let rpc_resp = JsonRpcResponse::ok(call_id, serde_json::json!({"status": "ok"}));
     let rpc_chunk = Chunk::new_null("com.nominal.cafe-llm")
         .with_annotation(keys::JSONRPC_RESPONSE, &rpc_resp)
-        .as_transient();
+        .as_transient()
+        .with_retain(60);
     publish_chunk(writer, &session_id, rpc_chunk).await;
 }
 

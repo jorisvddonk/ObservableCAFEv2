@@ -1,4 +1,5 @@
 use cafe_types::Chunk;
+use std::time::Instant;
 use tokio::sync::broadcast;
 
 pub struct SessionState {
@@ -6,6 +7,7 @@ pub struct SessionState {
     pub agent_id: String,
     pub history: Vec<Chunk>,
     pub tx: broadcast::Sender<Chunk>,
+    retained: Vec<(Chunk, Instant)>,
 }
 
 impl SessionState {
@@ -16,17 +18,38 @@ impl SessionState {
             agent_id,
             history: Vec::new(),
             tx,
+            retained: Vec::new(),
         }
     }
 
     pub fn publish(&mut self, chunk: Chunk) {
-        // Transient chunks are broadcast to live subscribers but never
-        // appended to history — they are ephemeral (e.g. streaming tokens).
         if !chunk.is_transient() {
             self.history.push(chunk.clone());
+        } else if let Some(secs) = chunk.retain_secs() {
+            // Retained transient chunk — keep in buffer for N seconds
+            self.retained.push((chunk.clone(), Instant::now() + std::time::Duration::from_secs(secs)));
         }
         // Ignore send errors — no active subscribers is fine
         let _ = self.tx.send(chunk);
+    }
+
+    /// Return all non-expired retained transient chunks (oldest first),
+    /// pruning expired entries in the process.
+    pub fn drain_retained(&mut self) -> Vec<Chunk> {
+        let now = Instant::now();
+        let mut expired = 0;
+        let mut valid = Vec::new();
+        for (chunk, deadline) in &self.retained {
+            if *deadline > now {
+                valid.push(chunk.clone());
+            } else {
+                expired += 1;
+            }
+        }
+        if expired > 0 {
+            self.retained.retain(|(_, deadline)| *deadline > now);
+        }
+        valid
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Chunk> {
