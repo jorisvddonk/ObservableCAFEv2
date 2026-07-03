@@ -38,21 +38,9 @@ async fn connect_and_run(
         publish_model_registry(&client, &models).await?;
     }
 
-    // Subscribe to all sessions — get immediate notification of new sessions
+    // Subscribe to all sessions — snapshot replays history + sends SessionCreated for existing sessions,
+    // and the event listener forwards SessionCreated for new sessions created later.
     let mut rx = client.subscribe_all().await?;
-
-    // One-shot discovery of existing sessions (no more polling)
-    if let Ok(sessions) = client.list_sessions().await {
-        for info in &sessions {
-            info!("cafe-llm: discovered existing session {}", info.session_id);
-            spawn_session(
-                info.session_id.clone(),
-                socket_path,
-                &backend,
-                default_model,
-            );
-        }
-    }
 
     let mut model_tick: u64 = 0;
 

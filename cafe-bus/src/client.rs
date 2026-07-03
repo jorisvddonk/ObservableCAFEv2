@@ -220,19 +220,28 @@ async fn client_loop(
                 // Subscribe to all current sessions and future ones.
                 let (event_rx, sessions_snapshot) = {
                     let reg = registry.read().await;
-                    let snap: Vec<(String, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = reg
+                    let snap: Vec<(String, String, Vec<Chunk>, tokio::sync::broadcast::Receiver<Chunk>)> = reg
                         .list()
                         .iter()
                         .filter_map(|info| {
                             reg.get(&info.session_id).map(|s| {
-                                (s.session_id.clone(), s.history.clone(), s.subscribe())
+                                (s.session_id.clone(), s.agent_id.clone(), s.history.clone(), s.subscribe())
                             })
                         })
                         .collect();
                     (reg.event_tx().subscribe(), snap)
                 };
 
-                for (sid, history, rx) in sessions_snapshot {
+                // Announce + replay for existing sessions
+                for (sid, agent_id, history, rx) in sessions_snapshot {
+                    send_msg(
+                        &writer,
+                        &ServerMessage::SessionCreated {
+                            session_id: sid.clone(),
+                            agent_id,
+                        },
+                    )
+                    .await;
                     replay_and_forward(&writer, sid, history, rx).await;
                 }
 
@@ -242,26 +251,23 @@ async fn client_loop(
                 tokio::spawn(async move {
                     let mut event_rx = event_rx;
                     while let Ok(event) = event_rx.recv().await {
-                        match &event {
-                            ServerMessage::SessionCreated { session_id, .. } => {
-                                let maybe = {
-                                    let reg = reg3.read().await;
-                                    reg.get(session_id)
-                                        .map(|s| (s.history.clone(), s.subscribe()))
-                                };
-                                if let Some((history, rx)) = maybe {
-                                    replay_and_forward(
-                                        &writer3,
-                                        session_id.clone(),
-                                        history,
-                                        rx,
-                                    )
-                                    .await;
-                                }
-                            }
-                            _ => {
-                                // Forward SessionDeleted etc.
-                                send_msg(&writer3, &event).await;
+                        // Forward registry event (SessionCreated / SessionDeleted)
+                        send_msg(&writer3, &event).await;
+                        // For new sessions, also replay history + forward live chunks
+                        if let ServerMessage::SessionCreated { session_id, .. } = &event {
+                            let maybe = {
+                                let reg = reg3.read().await;
+                                reg.get(session_id)
+                                    .map(|s| (s.history.clone(), s.subscribe()))
+                            };
+                            if let Some((history, rx)) = maybe {
+                                replay_and_forward(
+                                    &writer3,
+                                    session_id.clone(),
+                                    history,
+                                    rx,
+                                )
+                                .await;
                             }
                         }
                     }
