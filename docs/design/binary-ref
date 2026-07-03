@@ -1,0 +1,326 @@
+# Binary streaming via binary-ref chunks
+
+**Status: not yet implemented**
+
+All prerequisites are now implemented:
+- [`SubscribeFiltered`](./subscribe-filters) — `abe6eea`
+- [`Connection IDs`](./connection-ids) — `66b6f41`
+- [`Direct-to`](./direct-to) — `2826eae`
+- [`Mutations`](./mutations) — `e4d5a9d`
+
+Binary-store connects via `subscribe_filtered` for `BinaryRef` chunks only — no `SubscribeAll`.
+
+## ContentType::BinaryRef
+
+New variant on `Chunk`:
+
+```rust
+pub enum ContentType {
+    Text,
+    Binary,
+    BinaryRef,
+    Null,
+}
+```
+
+A `BinaryRef` chunk announces a binary asset with metadata but no data:
+
+```rust
+Chunk {
+    id: "uuid",
+    content_type: BinaryRef,
+    content: None,
+    data: None,
+    mime_type: Some("audio/wav"),
+    annotations: { ... },
+    producer: "com.nominal.cafe-tts",
+    timestamp: ...,
+}
+```
+
+## SSE unification
+
+`serialize_chunk` in `cafe-server/src/binary_ref.rs` produces the same JSON shape from three paths:
+
+```rust
+pub fn serialize_chunk(chunk: &Chunk, binary_refs: bool) -> Value {
+    let use_ref = (binary_refs && chunk.content_type == ContentType::Binary)
+               || chunk.content_type == ContentType::BinaryRef;
+
+    if use_ref {
+        json!({
+            "id":           chunk.id,
+            "content_type": "binary-ref",
+            "content": {
+                "chunk_id":  chunk.id,
+                "mime_type": chunk.mime_type,   // asset mime (inside content)
+            },
+            "data":         null,                // never inline base64 in ref mode
+            "mime_type":    null,                // top-level always null; use content.mime_type
+            "producer":     chunk.producer,
+            "annotations":  chunk.annotations,
+            "timestamp":    chunk.timestamp,
+        })
+    } else {
+        serde_json::to_value(chunk).unwrap_or(Value::Null)
+    }
+}
+```
+
+`byte_size` is optional — included in `content` as a separate annotation key when known (see below).
+
+## byte_size
+
+Optional annotation on `BinaryRef` chunks (`binary.byte_size: u64`). Include it if known (e.g., TTS knows duration × bitrate). Omit for streaming scenarios where total size isn't known upfront.
+
+For old-style `Binary` chunks serialized with `?binaryRefs=1`, `byte_size` is inferred from `data.len()` and included in the SSE output as `content.byte_size`. No data loss.
+
+## Chunk annotations
+
+```rust
+pub const BINARY_WRITE_URL: &str = "binary.write_url";
+pub const BINARY_WRITE_TOKEN: &str = "binary.write_token";
+pub const BINARY_READ_URL: &str = "binary.read_url";
+pub const BINARY_READ_TOKEN: &str = "binary.read_token";
+pub const BINARY_BYTE_SIZE: &str = "binary.byte_size";
+```
+
+## Persistence
+
+The `transient` annotation is the sole criterion for persistence. No exceptions. A `BinaryRef` chunk follows the same rule — transient = live only, non-transient = history + persist.
+
+The binary-store's GC tracking DB mirrors the chunk's transient flag directly: `is_transient = chunk.is_transient()` (NOT inverted).
+
+## Publishing flow
+
+```
+  1. Producer connects                              ──►  Connected { id: "conn-A" }
+  2. Producer publishes BinaryRef chunk              ──►  broadcast (public)
+  3. Binary-store (subscribe_filtered) receives it    ◄──  sees source.connection
+  4. Binary-store INSERTs asset tracking row          ──►  is_transient = chunk.is_transient()
+  5. Binary-store publishes Mutation chunk            ──►  direct_to: "conn-A"
+     mutates.target_id = original id                        only conn-A sees it
+     binary.write_url, binary.write_token
+  6. Producer receives mutation, merges              ◄──  BinaryRef chunk has write creds
+  7. Producer POST /api/binary/{chunk_id}            ──►  binary-store
+     ?token=<write_jwt>[&offset=N]
+     [streaming body]
+  8. Binary-store receives first byte                ──►  creates file + .writing marker
+  9. Binary-store publishes Mutation chunk           ──►  broadcast (public) — IMMEDIATELY
+     mutates.target_id = original id
+     binary.read_url, binary.read_token
+ 10. Producer continues streaming                    ──►  binary-store appends to file
+ 11. Producer closes connection (EOF)                ──►  binary-store removes .writing marker
+ 12. Binary-store UPDATEs asset row: file_size = len
+```
+
+Steps 5 and 9 use the same mutation mechanism. Step 5 adds `direct_to` for private delivery; step 9 broadcasts.
+
+Read credentials are published on **first byte**, not after write completes. Consumers can start streaming immediately. GET keeps the connection open and reads available bytes while `.writing` exists.
+
+## Consuming flow
+
+```
+  1. Subscribe receives BinaryRef chunk               ◄──  meta: id, mime_type
+  2. Mutation chunk (read creds) arrives via stream    ◄──  merged into BinaryRef chunk
+  3. Client merges mutation annotations
+  4. <audio src="binary-store:4001/api/binary/{id}
+       ?token=<read_jwt>" controls>                  ──►  browser streams from binary-store
+```
+
+Mutation ordering: the client's mutation merge code handles both orderings. If the mutation arrives before the BinaryRef chunk, it's buffered by `target_id` and applied when the target arrives. If the BinaryRef arrives first, the mutation is applied immediately.
+
+## Binary-store
+
+New standalone binary `cafe-binary-store`. Separate port (e.g. `--port 4001`).
+
+### HTTP API
+
+| Method | Path | Auth | Params | Description |
+|---|---|---|---|---|
+| `POST` | `/api/binary/{chunk_id}` | `?token=` query | `?offset=N` (optional) | Stream write. Chunked body. See "Write & resume" below. |
+| `GET` | `/api/binary/{chunk_id}` | `?token=` query | `Range` header | Stream read. Supports partial content. Returns available bytes while `.writing` exists. |
+| `DELETE` | `/api/binary/{chunk_id}` | `?token=` query | — | Remove file + `.writing` marker + asset row. |
+
+### Write & resume
+
+A single POST writes a complete binary. No explicit close call — EOF is the close.
+
+**Without `?offset`**: starts a fresh write. If a partial file or `.writing` marker already exists, the request is rejected with `409 Conflict`. The producer must either wait for the existing write to finish or DELETE first.
+
+**With `?offset=N`**: resumes writing at byte N. The server seeks to byte N in the file and writes incoming bytes from that position, replacing any existing content beyond N (partial overwrite). `?offset=0` is equivalent to a fresh write (rejects if `.writing` exists).
+
+- File must already exist and be at least N bytes (validated).
+- If the incoming body is shorter than `file_len - N`, the trailing original bytes beyond the new content are preserved (partial overwrite, not truncation).
+- Non-contiguous offsets (e.g., `?offset=100` after writing 50 bytes) are rejected.
+
+**Multi-GB support**: The producer decides on chunked encoding:
+- Small files (<100MB): one POST, no offset. If connection drops, retry from scratch.
+- Large files: track bytes written locally. On resume, `POST ?offset=<bytes_written>` with remaining bytes. Write JWT is reusable until expiry so no token refreshing needed.
+
+### .writing sidecar
+
+Binary-store uses a sibling file to track in-progress writes and prevent concurrent writers:
+
+```
+data/binary/ab/abcd1234...       ← file content (partial or complete)
+data/binary/ab/abcd1234....writing  ← exists while write in progress
+```
+
+- POST without `?offset`: if `.writing` exists → `409 Conflict`. If not → create file (or truncate existing), create `.writing`.
+- POST with `?offset`: if `.writing` doesn't exist → error (nothing to resume). If exists → append at offset.
+- POST finishes → remove `.writing`.
+- GET: if `.writing` exists → read available bytes, wait for more (poll every 500ms). If no `.writing` → read all bytes, close.
+- Startup scan → delete stale `.writing` + partial files.
+- DELETE → removes content file, `.writing`, and asset row.
+
+### Auth — all JWT
+
+No token table, no admin endpoint. Auth is entirely JWT-based.
+
+The binary-store has a JWT signing key stored in `--data-dir/cafe-binary-store.key`. Generated on first run if absent.
+
+```json
+{
+  "chunk_id": "uuid",
+  "purpose": "write",
+  "iat": 1234567890,
+  "exp": 1234567890
+}
+```
+
+| Token | Purpose | Expiry | Validated on |
+|---|---|---|---|
+| Write JWT | `"write"` | Default 1 week (`--write-ttl`) | POST, DELETE |
+| Read JWT | `"read"` | **None — never expires** | GET |
+
+Purpose-to-method mapping:
+- POST requires `purpose == "write"`
+- DELETE requires `purpose == "write"` (same as POST)
+- GET requires `purpose == "read"`
+
+Validation on every request:
+1. Decode JWT with signing key
+2. Check `chunk_id` matches URL path
+3. Check `purpose` matches operation (see mapping above)
+4. Check `exp` not exceeded (write only; read has no exp)
+
+### Bus integration
+
+Binary-store connects via `subscribe_filtered` for `BinaryRef` chunks only. It also receives `SessionDeleted` events (forwarded by `subscribe_filtered`'s registry event listener). Shares state between bus subscriber and HTTP server via `Arc<RwLock<HashMap<String, PendingWrite>>>` where `PendingWrite` holds a `oneshot::Sender<()>` to signal write completion.
+
+On BinaryRef chunk arrival:
+1. `INSERT OR IGNORE INTO assets (chunk_id, session_id, is_transient, created_at) VALUES (?, ?, ?, ?)` — re-publish with same chunk_id is a no-op on the row
+2. Generate write JWT (default 1-week TTL, configurable via `--write-ttl`)
+3. Publish direct mutation with `binary.write_url` + `binary.write_token`
+
+On POST first byte (file created, `.writing` written):
+1. Generate read JWT (no expiry)
+2. Publish broadcast mutation with `binary.read_url` + `binary.read_token` — immediately, before write completes
+
+On POST complete (EOF or final `?offset` segment):
+1. Remove `.writing` sidecar
+2. `UPDATE assets SET file_size = ? WHERE chunk_id = ?`
+
+On POST failure / connection drop:
+- Partial file + `.writing` remain on disk
+- Producer resumes with `POST ?offset=<bytes_written>` using the same write JWT
+- If write JWT expires before resume, producer re-publishes BinaryRef chunk for fresh credentials
+
+On `SessionDeleted` event:
+1. `SELECT chunk_id FROM assets WHERE session_id = ? AND is_transient = 0`
+2. For each chunk: delete file + `.writing` + asset row
+3. Transient chunks in that session are unaffected — GC handles them by age
+
+### Storage
+
+Files on disk under `--data-dir`:
+```
+data/binary/
+  ab/
+    abcd1234-...    ← sharded by first 2 hex chars of chunk_id
+  ef/
+    ef012345-...
+```
+
+### Health endpoint
+
+`GET /health` returns `200 OK` with `{ "status": "ok" }`. Used by process-compose for liveness probes.
+
+### CORS
+
+Binary-store returns permissive CORS headers for browser media tags:
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
+Access-Control-Allow-Headers: Range, Authorization
+```
+
+Prefer HTTPS in production. Token in query string is accepted for `curl`/HTTP simplicity and browser media tag compatibility (`<audio src="...?token=">`). For sensitive deployments, use `Authorization: Bearer` header instead.
+
+### Disk quota
+
+Hard limit per chunk (default: 1 GB, configurable via `--max-chunk-bytes`). POST exceeding this limit after the first byte receives a `413 Payload Too Large` and the connection is dropped. Partial file up to the limit is preserved for resume.
+
+### GC (built-in background task)
+
+Runs inside the binary-store process. Two triggers:
+- **On startup**: scan for stale `.writing` files (abandoned writes from a previous process). Delete `.writing` + partial file.
+- **On interval** (default: every hour, configurable via `--gc-interval`): own SQLite DB at `--data-dir/cafe-binary-store.db`.
+
+**Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS assets (
+    chunk_id     TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    is_transient INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL,
+    file_size    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_assets_session ON assets(session_id);
+```
+
+**GC query (every tick):**
+```sql
+DELETE FROM assets WHERE is_transient = 1 AND created_at < unixepoch() - ?;
+```
+
+The TTL parameter defaults to 30 days, configurable via `--gc-ttl`.
+
+For each deleted row, delete the corresponding file (and any `.writing` sidecar). Non-transient chunks (`is_transient = 0`) are never touched — they're part of session history.
+
+**Session cascade**: The `session_id` column enables cascade on session deletion. When binary-store receives a `SessionDeleted` event, it deletes associated non-transient files immediately. The daily audit also scans for orphaned non-transient entries (assets whose session no longer exists on the bus) — this catches deletions that happened while the binary-store was down. Audit runs on the same interval as the transient GC tick.
+
+**Survives restart:** JWT key persists on disk, GC tracking persists in SQLite, binaries persist as files. `.writing` cleanup on startup handles stale in-progress writes. Nothing is purely in-memory.
+
+## Chunk serialization updates
+
+`serialize_chunk` in `cafe-server/src/binary_ref.rs` gets a new condition:
+- `ContentType::BinaryRef` → always produce binary-ref SSE output (same shape as `Binary` + `?binaryRefs=1`)
+- `ContentType::Binary` + `?binaryRefs=1` → same output, `byte_size` from data (unchanged)
+- All other cases → full serialization (unchanged)
+
+New tests:
+- `ContentType::BinaryRef` publishes as `content_type: "binary-ref"` in SSE
+- `ContentType::BinaryRef` with `binary.byte_size` annotation appears in SSE content
+- `ContentType::BinaryRef` SSE shape matches `Binary` + `?binaryRefs=1` shape
+
+## Cafe-sdk changes
+
+```rust
+// On Chunk
+pub fn is_binary_ref(&self) -> bool {
+    matches!(self.content_type, ContentType::BinaryRef)
+}
+```
+
+No new SDK methods. Binary-store uses existing `publish_direct()` and `subscribe_filtered()`.
+
+## Implementation order
+
+1. **cafe-types**: `ContentType::BinaryRef` variant, `is_binary_ref()`, annotation keys
+2. **cafe-server**: update `serialize_chunk` for `ContentType::BinaryRef`
+3. **cafe-web**: `byte_size?: number` in `BinaryRefContent`
+4. **cafe-binary-store**: new binary — Axum HTTP, JWT signing, filesystem storage, bus subscriber, GC background task
+5. **cafe-tts**: opt-in to publish BinaryRef + stream via binary-store
+6. **process-compose.yml**: add binary-store process
