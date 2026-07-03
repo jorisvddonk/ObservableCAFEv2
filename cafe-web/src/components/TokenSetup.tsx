@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { setToken } from '../api/client';
+import { setToken } from 'cafe-web-sdk';
 
 interface Props {
   onDone: () => void;

@@ -1,7 +1,6 @@
 import { useSessionStore } from '../store/sessions';
-import { getBinaryUrl } from '../api/sessions';
-import { asBinaryRef, chunkMimeType, isMediaChunk } from '../types';
-import type { Chunk } from '../types';
+import { getBinaryUrl, asBinaryRef, chunkMimeType, isMediaChunk } from 'cafe-web-sdk';
+import type { Chunk } from 'cafe-web-sdk';
 
 interface Props {
   chunk: Chunk;

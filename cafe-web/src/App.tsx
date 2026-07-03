@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getToken } from './api/client';
+import { getToken } from 'cafe-web-sdk';
 import { useSessionStore } from './store/sessions';
 import { useSessions } from './hooks/useSessions';
 import { Sidebar } from './components/Sidebar';

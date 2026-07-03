@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
-import { listAgents } from '../api/sessions';
-import type { SessionInfo } from '../types';
-import type { AgentInfo } from '../api/sessions';
+import { listAgents, type SessionInfo, type AgentInfo } from 'cafe-web-sdk';
 
 export function Sidebar() {
   const { sessions, activeSessionId } = useSessionStore();

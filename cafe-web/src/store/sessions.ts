@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Chunk, SessionInfo } from '../types';
+import type { Chunk, SessionInfo } from 'cafe-web-sdk';
 
 interface SessionStore {
   sessions: SessionInfo[];

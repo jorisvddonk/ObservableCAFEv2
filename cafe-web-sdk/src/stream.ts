@@ -1,12 +1,9 @@
-import { getToken, getApiBaseUrl } from './client';
-import type { Chunk } from '../types';
+import { getToken, getBaseUrl } from './client.js';
+import type { Chunk } from './types.js';
 
 /**
  * Open a persistent SSE connection to /api/sessions/:id/stream.
- * Requests binary-refs so large audio/image payloads are not inlined.
- * Delivers history replay followed by all live chunks indefinitely.
- *
- * Returns a cleanup function — call it to close the connection.
+ * Returns a cleanup function.
  */
 export function openSessionStream(
   sessionId: string,
@@ -14,10 +11,8 @@ export function openSessionStream(
   onHistoryComplete: (count: number) => void,
   onError?: (err: Event) => void,
 ): () => void {
-  const base = getApiBaseUrl();
   const token = encodeURIComponent(getToken());
-  // binaryRefs=1: binary chunks arrive as lightweight refs; fetched on demand.
-  const url = `${base}/api/sessions/${sessionId}/stream?token=${token}&binaryRefs=1`;
+  const url = `${getBaseUrl()}/api/sessions/${sessionId}/stream?token=${token}&binaryRefs=1`;
 
   const es = new EventSource(url);
 
@@ -31,7 +26,7 @@ export function openSessionStream(
       }
 
       if (payload.type === 'error') {
-        console.warn('[stream] server error:', payload.message);
+        console.warn('[cafe-web-sdk] server error:', payload.message);
         return;
       }
 
@@ -39,7 +34,7 @@ export function openSessionStream(
         onChunk(payload as Chunk);
       }
     } catch {
-      // ignore parse errors
+      // ignore
     }
   };
 

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
-import type { Chunk } from '../types';
+import type { Chunk } from 'cafe-web-sdk';
 
 // ── colour coding per content type / role ────────────────────────────────────
 

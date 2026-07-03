@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
-import { listSessions, createSession, deleteSession, getHistory } from '../api/sessions';
+import { listSessions, createSession, deleteSession, getHistory } from 'cafe-web-sdk';
 
 export function useSessions() {
   const store = useSessionStore();

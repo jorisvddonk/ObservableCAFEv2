@@ -1,6 +1,5 @@
-export type ContentType = 'text' | 'binary' | 'null' | 'binary-ref';
+export type ContentType = 'text' | 'binary' | 'binary-ref' | 'null';
 
-/** Metadata object inside a binary-ref chunk's `content` field. */
 export interface BinaryRefContent {
   chunk_id: string;
   mime_type: string | null;
@@ -10,13 +9,12 @@ export interface BinaryRefContent {
 export interface Chunk {
   id: string;
   content_type: ContentType;
-  /** Text content for text chunks; BinaryRefContent (as raw object) for binary-ref chunks. */
   content: string | BinaryRefContent | null;
-  data: string | null;       // base64 for full binary chunks (absent for binary-ref)
+  data: string | null;
   mime_type: string | null;
   producer: string;
   annotations: Record<string, unknown>;
-  timestamp: number;         // Unix ms
+  timestamp: number;
 }
 
 export interface SessionInfo {
@@ -48,17 +46,32 @@ export interface SessionConfig {
   max_tokens?: number;
 }
 
+export interface AgentInfo {
+  id: string;
+  description: string;
+  background: boolean;
+}
+
 // Annotation key constants (mirrors cafe-types)
 export const CHAT_ROLE = 'chat.role';
+export const CHAT_MODEL = 'chat.model';
 export const CHAT_IS_STREAMING = 'chat.is_streaming';
 export const CHAT_STREAM_COMPLETE = 'chat.stream_complete';
+export const CHAT_FINISH_REASON = 'chat.finish_reason';
+export const ERROR_MESSAGE = 'error.message';
+export const FLOW_SIGNAL = 'flow.signal';
+export const FLOW_TOMBSTONE = 'flow.tombstone';
+export const MUTATES_TARGET_ID = 'mutates.target_id';
 export const SECURITY_TRUST_LEVEL = 'security.trust-level';
+export const BINARY_READ_URL = 'binary.read_url';
+export const BINARY_READ_TOKEN = 'binary.read_token';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/** Check if a chunk is a binary asset (full binary or binary-ref). */
+export function isMediaChunk(chunk: Chunk): boolean {
+  return chunk.content_type === 'binary' || chunk.content_type === 'binary-ref';
+}
 
-/** Narrow a chunk's content to BinaryRefContent if it is a binary-ref. */
+/** Narrow to BinaryRefContent if the chunk is a binary-ref. */
 export function asBinaryRef(chunk: Chunk): BinaryRefContent | null {
   if (chunk.content_type === 'binary-ref' && chunk.content && typeof chunk.content === 'object') {
     return chunk.content as BinaryRefContent;
@@ -66,12 +79,7 @@ export function asBinaryRef(chunk: Chunk): BinaryRefContent | null {
   return null;
 }
 
-/** True if a chunk carries displayable media (full binary or a binary-ref). */
-export function isMediaChunk(chunk: Chunk): boolean {
-  return chunk.content_type === 'binary' || chunk.content_type === 'binary-ref';
-}
-
-/** Return the mime type for both full binary and binary-ref chunks. */
+/** Return the MIME type for both full binary and binary-ref chunks. */
 export function chunkMimeType(chunk: Chunk): string | null {
   if (chunk.content_type === 'binary-ref') {
     return asBinaryRef(chunk)?.mime_type ?? null;

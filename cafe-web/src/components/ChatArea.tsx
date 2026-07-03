@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
-import { streamChat } from '../api/chat';
-import { openSessionStream } from '../api/stream';
+import { streamChat, openSessionStream } from 'cafe-web-sdk';
 import { Message } from './Message';
-import type { Chunk } from '../types';
+import type { Chunk } from 'cafe-web-sdk';
 
 /** True if a chunk should appear in the chat message list. */
 function isChatMessage(chunk: Chunk): boolean {

@@ -12,6 +12,9 @@ cafe-telegram/cafe-telegram
 # Node / frontend
 cafe-web/node_modules/
 cafe-web/dist/
+cafe-web-sdk/node_modules/
+cafe-web-sdk/dist/
+node_modules/
 
 # Runtime / local config
 *.sock

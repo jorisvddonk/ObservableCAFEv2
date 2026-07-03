@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
-import { listQuickies } from '../api/quickies';
-import { createSession } from '../api/sessions';
-import { streamChat } from '../api/chat';
+import { listQuickies, createSession, streamChat } from 'cafe-web-sdk';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
-import type { Quickie, Chunk } from '../types';
+import type { Quickie, Chunk } from 'cafe-web-sdk';
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
