@@ -64,9 +64,9 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// If the bus has no sessions but the local DB does, the bus was restarted.
-/// Recreate each session and replay its non-transient chunks so the bus
-/// registry is rehydrated.
+/// On reconnect, attempt to restore any sessions from the local DB that
+/// the bus doesn't already have. This rehydrates user sessions lost when
+/// cafe-bus restarts.
 async fn restore_from_db(client: &BusClient, db: &Arc<Db>) {
     let db_sessions = match db.list_sessions().await {
         Ok(s) => s,
@@ -80,28 +80,23 @@ async fn restore_from_db(client: &BusClient, db: &Arc<Db>) {
     }
 
     let bus_sessions = match client.list_sessions().await {
-        Ok(s) => s,
+        Ok(s) => s.iter().map(|s| s.session_id.clone()).collect::<Vec<_>>(),
         Err(e) => {
             warn!("cafe-store: failed to list bus sessions for restore: {}", e);
             return;
         }
     };
-    if !bus_sessions.is_empty() {
-        // Bus already has sessions — no restore needed.
-        return;
-    }
-
-    info!(
-        "cafe-store: bus has no sessions — restoring {} sessions from database",
-        db_sessions.len()
-    );
 
     for s in &db_sessions {
+        if bus_sessions.contains(&s.session_id) {
+            continue;
+        }
+
         if let Err(e) = client
             .create_session(&s.session_id, &s.agent_id, SessionConfig::default())
             .await
         {
-            // SESSION_EXISTS is fine — another store instance already did it.
+            // Race: another service may have created it between our list and create.
             warn!("cafe-store: create_session for {}: {}", s.session_id, e);
             continue;
         }
