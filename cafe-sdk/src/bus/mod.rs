@@ -5,7 +5,7 @@ pub use reconnect::run_with_reconnect;
 pub use wait::wait_for_bus;
 
 use crate::error::SdkError;
-use cafe_types::{Chunk, ClientMessage, ServerMessage, SessionConfig, SessionInfo};
+use cafe_types::{keys, Chunk, ClientMessage, ServerMessage, SessionConfig, SessionInfo};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -70,6 +70,26 @@ impl BusClient {
 
     /// Publish a chunk to a session.
     pub async fn publish(&self, session_id: &str, chunk: Chunk) -> Result<(), SdkError> {
+        let (_writer, _lines) = self
+            .send(&ClientMessage::Publish {
+                session_id: session_id.to_string(),
+                chunk,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Publish a chunk directly to a specific connection (private message over bus).
+    /// Automatically marks the chunk as transient so it's never persisted.
+    pub async fn publish_direct(
+        &self,
+        target_connection: &str,
+        session_id: &str,
+        chunk: Chunk,
+    ) -> Result<(), SdkError> {
+        let chunk = chunk
+            .with_annotation(keys::DIRECT_TO, target_connection)
+            .as_transient();
         let (_writer, _lines) = self
             .send(&ClientMessage::Publish {
                 session_id: session_id.to_string(),

@@ -68,6 +68,7 @@ pub mod keys {
     pub const TRANSIENT: &str = "transient";
     pub const TRANSIENT_RETAIN_SECS: &str = "transient.retain_secs";
     pub const SOURCE_CONNECTION: &str = "source.connection";
+    pub const DIRECT_TO: &str = "direct_to";
 }
 
 /// Standard chat role values.

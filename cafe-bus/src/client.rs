@@ -144,6 +144,31 @@ async fn client_loop(
             ClientMessage::Publish { session_id, mut chunk } => {
                 // Tag with source connection for direct-to replies
                 chunk = chunk.with_annotation(keys::SOURCE_CONNECTION, &conn_id);
+
+                // Check for direct-to: route to specific connection instead of broadcast
+                if let Some(target_id) = chunk.get_annotation::<String>(keys::DIRECT_TO) {
+                    let conns = connections.read().await;
+                    if let Some(target_writer) = conns.get(&target_id) {
+                        send_msg(
+                            target_writer,
+                            &ServerMessage::Chunk {
+                                session_id,
+                                chunk,
+                            },
+                        )
+                        .await;
+                    } else {
+                        send_error(
+                            &writer,
+                            Some(&session_id),
+                            &format!("Target connection not found: {}", target_id),
+                            "TARGET_NOT_FOUND",
+                        )
+                        .await;
+                    }
+                    continue;
+                }
+
                 let mut reg = registry.write().await;
                 if let Some(session) = reg.get_mut(&session_id) {
                     session.publish(chunk);
