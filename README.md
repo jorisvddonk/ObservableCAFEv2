@@ -47,6 +47,8 @@ Wire format is newline-delimited JSON using types defined in `cafe-types`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
+See [`docs/feature-matrix.md`](docs/feature-matrix.md) for where each feature lives (SDK, bus, etc.) and test coverage.
+
 ## Bus protocol
 
 ```
