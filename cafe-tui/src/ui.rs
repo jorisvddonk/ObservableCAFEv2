@@ -35,6 +35,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == AppMode::ModelPicker {
         draw_model_picker(f, app);
     }
+    if app.mode == AppMode::AgentPicker {
+        draw_agent_picker(f, app);
+    }
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
@@ -312,6 +315,49 @@ fn draw_model_picker(f: &mut Frame, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" Models (↑↓ to select, Enter to choose, Esc to close) "),
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(list, area);
+}
+
+fn draw_agent_picker(f: &mut Frame, app: &App) {
+    let area = centered_rect(66, 50, f.size());
+
+    let items: Vec<ListItem> = app
+        .agent_picker_items
+        .iter()
+        .enumerate()
+        .map(|(i, &agent_idx)| {
+            let agent = &app.agents[agent_idx];
+            let style = if i == app.agent_picker_idx {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let label = if agent.description.is_empty() {
+                format!("  {}", agent.id)
+            } else {
+                format!("  {}  —  {}", agent.id, agent.description)
+            };
+            ListItem::new(label).style(style)
+        })
+        .collect();
+
+    let filter_display = if app.agent_picker_filter.is_empty() {
+        String::new()
+    } else {
+        format!(" (filter: {})", app.agent_picker_filter)
+    };
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Agents{} (↑↓ to select, Enter to choose, Esc to close) ", filter_display)),
         )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 

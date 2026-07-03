@@ -10,6 +10,9 @@ pub enum InputAction {
     ListModels,
     OpenModelPicker,
     SelectModel(String),
+    OpenAgentPicker,
+    SelectAgent(String),
+    ListAgents,
     SwitchSession(usize),
     ToggleRaw,
     Quit,
@@ -21,6 +24,7 @@ pub fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction
     match &app.mode {
         AppMode::SessionPicker => handle_session_picker(app, key),
         AppMode::ModelPicker => handle_model_picker(app, key),
+        AppMode::AgentPicker => handle_agent_picker(app, key),
         AppMode::Confirm(action) => handle_confirm(app, key, action.clone()),
         AppMode::Normal => handle_normal(app, key),
     }
@@ -55,8 +59,12 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
             }
         }
         KeyCode::Tab => {
-            // Tab on "/model <text>" opens model picker with filter
-            if let Some(rest) = app.input.strip_prefix("/model ") {
+            // Tab on "/agent <text>" opens agent picker with filter
+            if let Some(rest) = app.input.strip_prefix("/agent ") {
+                app.agent_picker_filter = rest.to_string();
+                app.apply_agent_filter();
+                InputAction::OpenAgentPicker
+            } else if let Some(rest) = app.input.strip_prefix("/model ") {
                 app.model_picker_filter = rest.to_string();
                 InputAction::OpenModelPicker
             } else if let Some(partial) = app.input.strip_prefix('/') {
@@ -64,7 +72,7 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
                 if !partial.contains(' ') {
                     let commands = [
                         "sessions", "new", "delete", "rename",
-                        "system", "model", "clear", "help", "quit",
+                        "system", "model", "agent", "clear", "help", "quit",
                     ];
                     let matches: Vec<&&str> = commands.iter().filter(|c| c.starts_with(partial)).collect();
                     if matches.len() == 1 {
@@ -155,6 +163,14 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
                 InputAction::SetModel(model)
             }
         }
+        "agent" | "a" => {
+            let agent = parts.get(1).unwrap_or(&"").trim().to_string();
+            if agent.is_empty() {
+                InputAction::ListAgents
+            } else {
+                InputAction::SelectAgent(agent)
+            }
+        }
         "clear" | "c" => {
             app.messages.clear();
             InputAction::None
@@ -237,6 +253,50 @@ fn handle_model_picker(app: &mut App, key: crossterm::event::KeyEvent) -> InputA
         KeyCode::Backspace => {
             app.model_picker_filter.pop();
             app.apply_model_filter();
+            InputAction::None
+        }
+        _ => InputAction::None,
+    }
+}
+
+fn handle_agent_picker(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            InputAction::None
+        }
+        KeyCode::Up => {
+            if app.agent_picker_idx > 0 {
+                app.agent_picker_idx -= 1;
+            }
+            InputAction::None
+        }
+        KeyCode::Down => {
+            if app.agent_picker_idx + 1 < app.agent_picker_items.len() {
+                app.agent_picker_idx += 1;
+            }
+            InputAction::None
+        }
+        KeyCode::Enter => {
+            if app.agent_picker_items.is_empty() {
+                app.mode = AppMode::Normal;
+                return InputAction::None;
+            }
+            let idx = app.agent_picker_items[app.agent_picker_idx];
+            let agent_id = app.agents[idx].id.clone();
+            app.mode = AppMode::Normal;
+            app.input = format!("/agent {}", agent_id);
+            InputAction::SelectAgent(agent_id)
+        }
+        KeyCode::Char(c) => {
+            app.agent_picker_filter.push(c);
+            app.apply_agent_filter();
+            InputAction::None
+        }
+        KeyCode::Backspace => {
+            app.agent_picker_filter.pop();
+            app.apply_agent_filter();
             InputAction::None
         }
         _ => InputAction::None,

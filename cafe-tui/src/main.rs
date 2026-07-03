@@ -47,7 +47,7 @@ async fn run_app(
     client: Arc<HttpClient>,
     config: &Config,
 ) -> Result<()> {
-    let mut app = App::new();
+    let mut app = App::new(&config.agent);
 
     // Load initial session list
     match client.list_sessions().await {
@@ -59,9 +59,21 @@ async fn run_app(
         }
     }
 
+    // Load available agents
+    match client.list_agents().await {
+        Ok(agents) => {
+            app.agents = agents;
+            app.apply_agent_filter();
+        }
+        Err(e) => {
+            app.set_status(format!("Failed to list agents: {}", e));
+        }
+    }
+
     // Handle --new flag: create session and apply preset config
     if config.new {
-        if let Some(new_id) = client.create_session("default").await.ok() {
+        app.selected_agent_id = config.agent.clone();
+        if let Some(new_id) = client.create_session(&app.selected_agent_id).await.ok() {
             if let Ok(sessions) = client.list_sessions().await {
                 app.sessions = sessions;
                 if let Some(idx) = app.sessions.iter().position(|s| s.session_id == new_id) {
@@ -157,7 +169,7 @@ async fn run_app(
                     }
 
                     InputAction::CreateSession => {
-                        match client.create_session("default").await {
+                        match client.create_session(&app.selected_agent_id).await {
                             Ok(id) => {
                                 // Refresh session list
                                 if let Ok(sessions) = client.list_sessions().await {
@@ -273,8 +285,49 @@ async fn run_app(
                         }
                     }
 
+                    InputAction::OpenAgentPicker => {
+                        app.agent_picker_filter.clear();
+                        app.apply_agent_filter();
+                        app.mode = AppMode::AgentPicker;
+                    }
+
+                    InputAction::SelectAgent(agent) => {
+                        let found = app.agents.iter().any(|a| a.id == agent);
+                        if found {
+                            app.selected_agent_id = agent.clone();
+                            app.set_status(format!("Agent set to {}", agent));
+                        } else {
+                            app.set_status(format!("Unknown agent: {}", agent));
+                        }
+                    }
+
+                    InputAction::ListAgents => {
+                        if app.agents.is_empty() {
+                            let text = "Usage: /agent <name>\nNo agents listed by server.".to_string();
+                            let chunk = cafe_sdk::Chunk::new_text(text, "com.nominal.cafe-tui")
+                                .with_annotation("chat.role", "system");
+                            app.push_message(chunk);
+                        } else {
+                            let lines: Vec<String> = app
+                                .agents
+                                .iter()
+                                .map(|a| {
+                                    if a.description.is_empty() {
+                                        format!("  {}", a.id)
+                                    } else {
+                                        format!("  {}  —  {}", a.id, a.description)
+                                    }
+                                })
+                                .collect();
+                            let text = format!("Usage: /agent <name>\nAvailable agents:\n{}", lines.join("\n"));
+                            let chunk = cafe_sdk::Chunk::new_text(text, "com.nominal.cafe-tui")
+                                .with_annotation("chat.role", "system");
+                            app.push_message(chunk);
+                        }
+                    }
+
                     InputAction::Help => {
-                        let help_text = "Commands:\n  /sessions  - Browse sessions\n  /new       - Create new session\n  /delete    - Delete current session\n  /rename    - Rename current session\n  /system    - Set system prompt\n  /model     - Set LLM model\n  /clear     - Clear messages\n  /help      - Show this help\n  /quit      - Exit";
+                        let help_text = "Commands:\n  /sessions  - Browse sessions\n  /new       - Create new session\n  /delete    - Delete current session\n  /rename    - Rename current session\n  /system    - Set system prompt\n  /model     - Set LLM model\n  /agent     - Set agent\n  /clear     - Clear messages\n  /help      - Show this help\n  /quit      - Exit";
                         let help_chunk = cafe_sdk::Chunk::new_text(help_text, "com.nominal.cafe-tui")
                             .with_annotation("chat.role", "system");
                         app.push_message(help_chunk);

@@ -1,3 +1,4 @@
+use cafe_sdk::http::AgentInfo;
 use cafe_sdk::{Chunk, SessionInfo};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5,6 +6,7 @@ pub enum AppMode {
     Normal,
     SessionPicker,
     ModelPicker,
+    AgentPicker,
     Confirm(ConfirmAction),
 }
 
@@ -27,10 +29,15 @@ pub struct App {
     pub model_picker_idx: usize,
     pub model_picker_filter: String,
     pub raw_mode: bool,
+    pub agents: Vec<AgentInfo>,
+    pub agent_picker_idx: usize,
+    pub agent_picker_filter: String,
+    pub agent_picker_items: Vec<usize>,
+    pub selected_agent_id: String,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(agent_id: impl Into<String>) -> Self {
         Self {
             sessions: Vec::new(),
             active_session_idx: 0,
@@ -45,6 +52,11 @@ impl App {
             model_picker_idx: 0,
             model_picker_filter: String::new(),
             raw_mode: false,
+            agents: Vec::new(),
+            agent_picker_idx: 0,
+            agent_picker_filter: String::new(),
+            agent_picker_items: Vec::new(),
+            selected_agent_id: agent_id.into(),
         }
     }
 
@@ -96,5 +108,17 @@ impl App {
             .cloned()
             .collect();
         self.model_picker_idx = 0;
+    }
+
+    pub fn apply_agent_filter(&mut self) {
+        let filter = self.agent_picker_filter.to_lowercase();
+        self.agent_picker_items = self
+            .agents
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.id.to_lowercase().contains(&filter) || a.description.to_lowercase().contains(&filter))
+            .map(|(i, _)| i)
+            .collect();
+        self.agent_picker_idx = 0;
     }
 }

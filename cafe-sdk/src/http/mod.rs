@@ -5,8 +5,17 @@ use crate::error::SdkError;
 use cafe_types::{Chunk, SessionInfo};
 use futures_util::StreamExt;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::mpsc;
+
+/// Info about an agent, returned by list_agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub id: String,
+    pub description: String,
+    pub background: bool,
+}
 
 /// HTTP API client for the cafe-server REST API.
 pub struct HttpClient {
@@ -194,5 +203,19 @@ impl HttpClient {
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
         Ok(models)
+    }
+
+    /// List available agents.
+    pub async fn list_agents(&self) -> Result<Vec<AgentInfo>, SdkError> {
+        let resp = self
+            .client
+            .get(self.url("/api/agents"))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Vec<AgentInfo>>()
+            .await?;
+        Ok(resp)
     }
 }

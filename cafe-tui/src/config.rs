@@ -22,6 +22,10 @@ pub struct Config {
     /// Preset system prompt for the new session
     #[arg(long)]
     pub system_prompt: Option<String>,
+
+    /// Agent to use for new sessions (default: "default")
+    #[arg(long, default_value = "default")]
+    pub agent: String,
 }
 
 impl Config {
