@@ -22,6 +22,7 @@ async fn main() -> Result<()> {
             Arc::new(OpenAiBackend::new(
                 config.openai_url.clone(),
                 config.openai_api_key.clone(),
+                config.model_list_urls.clone(),
             ))
         }
         _ => {

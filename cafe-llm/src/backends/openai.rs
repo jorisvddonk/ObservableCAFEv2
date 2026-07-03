@@ -11,14 +11,16 @@ pub struct OpenAiBackend {
     client: Client,
     base_url: String,
     api_key: String,
+    model_list_urls: Vec<String>,
 }
 
 impl OpenAiBackend {
-    pub fn new(base_url: String, api_key: String) -> Self {
+    pub fn new(base_url: String, api_key: String, model_list_urls: Vec<String>) -> Self {
         Self {
             client: Client::new(),
             base_url,
             api_key,
+            model_list_urls,
         }
     }
 }
@@ -98,13 +100,33 @@ impl LlmBackend for OpenAiBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<String>> {
-        let mut req = self
-            .client
-            .get(format!("{}/v1/models", self.base_url));
+        let mut models = Vec::new();
+
+        // Query the primary URL
+        if let Ok(list) = self.fetch_models(&self.base_url).await {
+            models.extend(list);
+        }
+
+        // Query additional model list URLs
+        for url in &self.model_list_urls {
+            if let Ok(list) = self.fetch_models(url).await {
+                models.extend(list);
+            }
+        }
+
+        models.sort();
+        models.dedup();
+        Ok(models)
+    }
+}
+
+impl OpenAiBackend {
+    async fn fetch_models(&self, url: &str) -> Result<Vec<String>> {
+        let mut req = self.client.get(format!("{}/v1/models", url.trim_end_matches('/')));
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
-        let resp = req.send().await?;
+        let resp = req.send().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         if !resp.status().is_success() {
             return Ok(vec![]);
         }

@@ -6,6 +6,7 @@ pub struct Config {
     pub openai_url: String,
     pub openai_api_key: String,
     pub openai_model: String,
+    pub model_list_urls: Vec<String>,
 }
 
 impl Config {
@@ -24,6 +25,9 @@ impl Config {
             openai_api_key: std::env::var("OPENAI_API_KEY")
                 .unwrap_or_default(),
             openai_model: std::env::var("OPENAI_MODEL")
+                .unwrap_or_default(),
+            model_list_urls: std::env::var("MODEL_LIST_URLS")
+                .map(|s| s.split(',').map(|u| u.trim().to_string()).collect())
                 .unwrap_or_default(),
         }
     }

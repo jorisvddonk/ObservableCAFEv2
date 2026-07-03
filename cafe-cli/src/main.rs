@@ -48,6 +48,8 @@ enum Command {
     },
     /// List sessions as JSON
     ListSessions,
+    /// List available LLM models
+    ListModels,
     /// Create a session, prints the session ID
     CreateSession {
         /// Session ID (omit for auto-generated)
@@ -190,6 +192,24 @@ async fn main() -> Result<()> {
         Command::ListSessions => {
             let sessions = client.list_sessions().await?;
             let json = serde_json::to_string(&sessions)?;
+            println!("{}", json);
+        }
+
+        Command::ListModels => {
+            let chunks = client.get_history("_cafe_llm_registry").await?;
+            let models: Vec<String> = chunks
+                .iter()
+                .filter_map(|c| {
+                    if c.content_type == ContentType::Null {
+                        c.get_annotation::<String>("config.available_models")
+                    } else {
+                        None
+                    }
+                })
+                .last()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            let json = serde_json::to_string(&models)?;
             println!("{}", json);
         }
 
