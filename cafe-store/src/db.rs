@@ -124,6 +124,7 @@ impl Db {
         let content_type = match chunk.content_type {
             ContentType::Text => "text",
             ContentType::Binary => "binary",
+            ContentType::BinaryRef => "binary-ref",
             ContentType::Null => "null",
         };
         let annotations = serde_json::to_string(&chunk.annotations)?;
@@ -176,6 +177,7 @@ impl Db {
             let content_type = match content_type_str.as_str() {
                 "text" => ContentType::Text,
                 "binary" => ContentType::Binary,
+                "binary-ref" => ContentType::BinaryRef,
                 _ => ContentType::Null,
             };
             let annotations_str: String = r.get("annotations");

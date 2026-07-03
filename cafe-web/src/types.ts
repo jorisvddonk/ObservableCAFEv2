@@ -4,7 +4,7 @@ export type ContentType = 'text' | 'binary' | 'null' | 'binary-ref';
 export interface BinaryRefContent {
   chunk_id: string;
   mime_type: string | null;
-  byte_size: number;
+  byte_size?: number;
 }
 
 export interface Chunk {

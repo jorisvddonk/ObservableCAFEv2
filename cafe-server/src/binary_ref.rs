@@ -1,4 +1,4 @@
-use cafe_sdk::{Chunk, ContentType};
+use cafe_sdk::{keys, Chunk, ContentType};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -26,18 +26,28 @@ impl BinaryRefQuery {
 
 /// Serialize a chunk for an HTTP response.
 ///
-/// When `binary_refs` is `true` and the chunk is binary, returns a lightweight
-/// `binary-ref` object instead of the full base64 payload. All other chunk
-/// types are serialized in full regardless of the flag.
+/// Produces binary-ref SSE output for:
+/// - `ContentType::Binary` when `?binaryRefs=1` (existing)
+/// - `ContentType::BinaryRef` always (new)
+///
+/// All other chunk types are serialized in full.
 pub fn serialize_chunk(chunk: &Chunk, binary_refs: bool) -> Value {
-    if binary_refs && chunk.content_type == ContentType::Binary {
+    let use_ref = (binary_refs && chunk.content_type == ContentType::Binary)
+               || chunk.content_type == ContentType::BinaryRef;
+
+    if use_ref {
+        let byte_size: Option<u64> = if chunk.content_type == ContentType::Binary {
+            chunk.data.as_ref().map(|d| d.len() as u64)
+        } else {
+            chunk.get_annotation::<u64>(keys::BINARY_BYTE_SIZE)
+        };
         json!({
             "id":           chunk.id,
             "content_type": "binary-ref",
             "content": {
                 "chunk_id":  chunk.id,
                 "mime_type": chunk.mime_type,
-                "byte_size": chunk.data.as_ref().map(|d| d.len()).unwrap_or(0),
+                "byte_size": byte_size,
             },
             "data":         null,
             "mime_type":    null,
@@ -123,6 +133,28 @@ mod tests {
         let chunk = null_chunk();
         let val = serialize_chunk(&chunk, true);
         assert_eq!(val["content_type"], "null");
+    }
+
+    // binary-ref chunk produces the same SSE output as stripped binary
+    #[test]
+    fn binary_ref_chunk_serializes_as_binary_ref() {
+        let chunk = Chunk::new_binary_ref("audio/wav", "com.nominal.cafe-binary-store")
+            .with_annotation("chat.role", "assistant");
+        let val = serialize_chunk(&chunk, false); // flag doesn't matter for BinaryRef
+        assert_eq!(val["content_type"], "binary-ref");
+        assert_eq!(val["content"]["chunk_id"], chunk.id.as_str());
+        assert_eq!(val["content"]["mime_type"], "audio/wav");
+        assert!(val["data"].is_null());
+        assert_eq!(val["annotations"]["chat.role"], "assistant");
+    }
+
+    #[test]
+    fn binary_ref_chunk_with_byte_size() {
+        use cafe_sdk::keys;
+        let chunk = Chunk::new_binary_ref("audio/wav", "com.nominal.cafe-binary-store")
+            .with_annotation(keys::BINARY_BYTE_SIZE, 1024u64);
+        let val = serialize_chunk(&chunk, false);
+        assert_eq!(val["content"]["byte_size"], 1024);
     }
 
     // byte_size is accurate

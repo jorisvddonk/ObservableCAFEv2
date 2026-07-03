@@ -143,7 +143,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                     }
                     lines.push(Line::from(""));
                 }
-                ContentType::Binary => {
+                ContentType::Binary | ContentType::BinaryRef => {
                     let mime = chunk.mime_type.as_deref().unwrap_or("binary");
                     if has_error {
                         let error_text: Option<String> =

@@ -70,6 +70,11 @@ pub mod keys {
     pub const TRANSIENT_RETAIN_SECS: &str = "transient.retain_secs";
     pub const SOURCE_CONNECTION: &str = "source.connection";
     pub const DIRECT_TO: &str = "direct_to";
+    pub const BINARY_WRITE_URL: &str = "binary.write_url";
+    pub const BINARY_WRITE_TOKEN: &str = "binary.write_token";
+    pub const BINARY_READ_URL: &str = "binary.read_url";
+    pub const BINARY_READ_TOKEN: &str = "binary.read_token";
+    pub const BINARY_BYTE_SIZE: &str = "binary.byte_size";
 }
 
 /// Standard chat role values.

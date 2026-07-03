@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub enum ContentType {
     Text,
     Binary,
+    BinaryRef,
     Null,
 }
 
@@ -105,6 +106,20 @@ impl Chunk {
         }
     }
 
+    /// Create a BinaryRef chunk announcing a binary asset (no inline data).
+    pub fn new_binary_ref(mime_type: impl Into<String>, producer: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            content_type: ContentType::BinaryRef,
+            content: None,
+            data: None,
+            mime_type: Some(mime_type.into()),
+            producer: producer.into(),
+            annotations: HashMap::new(),
+            timestamp: Self::now_ms(),
+        }
+    }
+
     /// Returns a clone of self with an additional annotation.
     pub fn with_annotation(
         mut self,
@@ -194,6 +209,11 @@ impl Chunk {
     /// Late subscribers will still receive it within that window.
     pub fn with_retain(self, secs: u64) -> Self {
         self.with_annotation(crate::annotation::keys::TRANSIENT_RETAIN_SECS, secs)
+    }
+
+    /// Returns true if this chunk announces a binary asset without inline data.
+    pub fn is_binary_ref(&self) -> bool {
+        matches!(self.content_type, ContentType::BinaryRef)
     }
 
     /// Returns the target chunk ID if this chunk is a mutation.
