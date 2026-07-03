@@ -22,6 +22,7 @@ A Unix-philosophy reimplementation of the ObservableCAFE architecture as a suite
 | `cafe-telegram` | Go | Telegram bot bridge |
 | `cafe-binary-store` | Rust | Streaming binary asset storage (HTTP, JWT auth) |
 | `cafe-cli` | Rust | Command-line bus client for debugging and e2e tests |
+| `cafe-web-sdk` | TypeScript | ES module SDK for the cafe-server HTTP API |
 | `cafe-web` | TypeScript | React frontend SPA |
 
 ## Prerequisites
@@ -98,6 +99,7 @@ graph TD
     cafe-server -.-> cafe-bus
     cafe-cli -.-> cafe-bus
     cafe-demo -.-> cafe-bus
+    cafe-web-sdk -.-> cafe-server
 
     style cafe-bus fill:#4a6,color:#fff
     style cafe-types fill:#46a,color:#fff
