@@ -1,7 +1,8 @@
 use crate::backends::{LlmBackend, LlmParams};
 use crate::context::{build_messages, extract_config};
 use anyhow::Result;
-use cafe_sdk::{keys, roles, Chunk, ClientMessage, ContentType, ServerMessage};
+use cafe_sdk::bus::BusClient;
+use cafe_sdk::{keys, roles, Chunk, ClientMessage, ContentType, JsonRpcResponse, ServerMessage};
 use futures_util::StreamExt;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -44,7 +45,7 @@ impl SessionEvaluator {
     }
 }
 
-/// Main evaluation loop: subscribe to a session, call LLM on user messages.
+/// Main evaluation loop: subscribe to a session, respond to llm.invoke RPC requests.
 pub async fn run_session(
     session_id: String,
     socket_path: String,
@@ -61,10 +62,6 @@ pub async fn run_session(
     writer.write_all(sub.as_bytes()).await?;
 
     let mut lines = BufReader::new(reader).lines();
-    let mut history: Vec<Chunk> = Vec::new();
-    let mut history_complete = false;
-
-    // Abort channel for in-flight requests
     let (abort_tx, _abort_rx) = watch::channel(false);
 
     while let Some(line) = lines.next_line().await? {
@@ -86,92 +83,56 @@ pub async fn run_session(
                     if let Some(signal) = chunk.get_annotation::<String>(keys::FLOW_SIGNAL) {
                         if signal == "abort" {
                             let _ = abort_tx.send(true);
-                            history.push(chunk);
                             continue;
                         }
                     }
                 }
 
-                history.push(chunk.clone());
+                // Handle llm.invoke RPC requests
+                if let Some(rpc) = chunk.as_rpc_request() {
+                    if rpc.method == "llm.invoke" {
+                        let bus = BusClient::new(&socket_path);
+                        let history = match bus.get_history(&session_id).await {
+                            Ok(h) => h,
+                            Err(e) => {
+                                warn!("cafe-llm: failed to get history for {}: {}", session_id, e);
+                                continue;
+                            }
+                        };
 
-                // Only process user messages after history replay is done
-                if !history_complete {
-                    continue;
-                }
-
-                // Only respond to user text chunks
-                if chunk.content_type != ContentType::Text {
-                    continue;
-                }
-                if chunk.role() != Some(roles::USER) {
-                    continue;
-                }
-
-                // Extract config from history
-                let cfg = extract_config(&history);
-                let model = cfg.model.clone().unwrap_or_else(|| default_model.clone());
-                let messages = build_messages(&history, cfg.system_prompt.as_deref());
-
-                let params = LlmParams {
-                    model: model.clone(),
-                    temperature: cfg.temperature,
-                    max_tokens: cfg.max_tokens,
-                };
-
-                // Reset abort signal
-                let _ = abort_tx.send(false);
-
-                // Stream LLM response
-                if let Err(e) = handle_llm_response(
-                    session_id.clone(),
-                    socket_path.clone(),
-                    backend.clone(),
-                    default_model.clone(),
-                    messages,
-                    params,
-                    &mut writer,
-                )
-                .await
-                {
-                    warn!("cafe-llm: session {} response error: {}", session_id, e);
-                }
-            }
-
-            ServerMessage::HistoryComplete { .. } => {
-                history_complete = true;
-                info!("cafe-llm: history replay complete for session {}", session_id);
-
-                // If the last history chunk is a user message (sent before we subscribed),
-                // respond to it now that replay is finished.
-                if let Some(last) = history.last() {
-                    if last.content_type == ContentType::Text
-                        && last.role() == Some(roles::USER)
-                    {
-                        info!("cafe-llm: replaying last user message after history_complete for session {}", session_id);
                         let cfg = extract_config(&history);
                         let model = cfg.model.clone().unwrap_or_else(|| default_model.clone());
                         let messages = build_messages(&history, cfg.system_prompt.as_deref());
+
                         let params = LlmParams {
                             model: model.clone(),
                             temperature: cfg.temperature,
                             max_tokens: cfg.max_tokens,
                         };
 
-                        if let Err(e) = handle_llm_response(
+                        info!(
+                            "cafe-llm: handling llm.invoke call_id={} session={}",
+                            rpc.id, session_id
+                        );
+
+                        let _ = abort_tx.send(false);
+
+                        handle_llm_response(
                             session_id.clone(),
-                            socket_path.clone(),
-                            backend.clone(),
-                            default_model.clone(),
+                            &mut writer,
+                            &backend,
+                            &default_model,
                             messages,
                             params,
-                            &mut writer,
+                            &rpc.id,
                         )
-                        .await
-                        {
-                            warn!("cafe-llm: session {} replay error: {}", session_id, e);
-                        }
+                        .await;
                     }
                 }
+            }
+
+            ServerMessage::HistoryComplete { .. } => {
+                info!("cafe-llm: history replay complete for session {}", session_id);
             }
 
             _ => {}
@@ -183,13 +144,13 @@ pub async fn run_session(
 
 async fn handle_llm_response(
     session_id: String,
-    _socket_path: String,
-    backend: Arc<dyn LlmBackend>,
-    _default_model: String,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    backend: &Arc<dyn LlmBackend>,
+    _default_model: &str,
     messages: Vec<crate::backends::LlmMessage>,
     params: LlmParams,
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-) -> Result<()> {
+    call_id: &str,
+) {
     let model = params.model.clone();
 
     let mut token_stream = match backend.complete(messages, &params).await {
@@ -198,10 +159,17 @@ async fn handle_llm_response(
             error!("cafe-llm: backend error: {}", e);
             let err_chunk = Chunk::new_null("com.nominal.cafe-llm")
                 .with_annotation(keys::ERROR_MESSAGE, e.to_string())
+                .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
                 .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
                 .with_annotation(keys::CHAT_FINISH_REASON, "error");
             publish_chunk(writer, &session_id, err_chunk).await;
-            return Ok(());
+
+            let rpc_err = JsonRpcResponse::err(call_id, -1, &e.to_string());
+            let err_resp_chunk = Chunk::new_null("com.nominal.cafe-llm")
+                .with_annotation(keys::JSONRPC_RESPONSE, &rpc_err)
+                .as_transient();
+            publish_chunk(writer, &session_id, err_resp_chunk).await;
+            return;
         }
     };
 
@@ -239,19 +207,26 @@ async fn handle_llm_response(
     }
 
     if !full_response.is_empty() {
-        let response_chunk = Chunk::new_text(full_response, "com.nominal.cafe-llm")
+        let response_chunk = Chunk::new_text(&full_response, "com.nominal.cafe-llm")
             .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
             .with_annotation(keys::CHAT_IS_STREAMING, true)
             .with_annotation(keys::CHAT_MODEL, &model);
         publish_chunk(writer, &session_id, response_chunk).await;
     }
 
+    // Publish stream_complete with assistant role so LlmComplete trigger fires
     let done_chunk = Chunk::new_null("com.nominal.cafe-llm")
+        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
-        .with_annotation(keys::CHAT_FINISH_REASON, finish_reason);
+        .with_annotation(keys::CHAT_FINISH_REASON, &finish_reason);
     publish_chunk(writer, &session_id, done_chunk).await;
 
-    Ok(())
+    // Publish RPC response so the pipeline's dispatch_rpc completes
+    let rpc_resp = JsonRpcResponse::ok(call_id, serde_json::json!({"status": "ok"}));
+    let rpc_chunk = Chunk::new_null("com.nominal.cafe-llm")
+        .with_annotation(keys::JSONRPC_RESPONSE, &rpc_resp)
+        .as_transient();
+    publish_chunk(writer, &session_id, rpc_chunk).await;
 }
 
 async fn publish_chunk(
