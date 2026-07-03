@@ -216,18 +216,19 @@ async fn handle_llm_response(
         publish_chunk(writer, &session_id, response_chunk).await;
     }
 
+    // Publish tombstone for all transient token chunks (before stream_complete
+    // so SSE/UI consumers receive it before the stream ends)
+    let tombstone = Chunk::new_null("com.nominal.cafe-llm")
+        .with_annotation(keys::FLOW_TOMBSTONE, &token_ids)
+        .as_transient();
+    publish_chunk(writer, &session_id, tombstone).await;
+
     // Publish stream_complete with assistant role so LlmComplete trigger fires
     let done_chunk = Chunk::new_null("com.nominal.cafe-llm")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
         .with_annotation(keys::CHAT_FINISH_REASON, &finish_reason);
     publish_chunk(writer, &session_id, done_chunk).await;
-
-    // Publish tombstone for all transient token chunks
-    let tombstone = Chunk::new_null("com.nominal.cafe-llm")
-        .with_annotation(keys::FLOW_TOMBSTONE, &token_ids)
-        .as_transient();
-    publish_chunk(writer, &session_id, tombstone).await;
 
     // Publish RPC response so the pipeline's dispatch_rpc completes
     let rpc_resp = JsonRpcResponse::ok(call_id, serde_json::json!({"status": "ok"}));
