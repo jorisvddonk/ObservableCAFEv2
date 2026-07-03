@@ -173,6 +173,13 @@ async fn handle_llm_response(
         }
     };
 
+    // Signal streaming start immediately (before first token)
+    let start_chunk = Chunk::new_null("com.nominal.cafe-llm")
+        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+        .with_annotation(keys::CHAT_IS_STREAMING, true)
+        .as_transient();
+    publish_chunk(writer, &session_id, start_chunk).await;
+
     let mut finish_reason = "stop".to_string();
     let (_abort_tx, mut abort_rx) = watch::channel(false);
     let mut full_response = String::new();
