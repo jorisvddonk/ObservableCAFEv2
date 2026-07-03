@@ -181,3 +181,138 @@ impl PathExists for PathBuf {
         fs::metadata(self).await.is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn new_storage() -> (Storage, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let storage = Storage::new(dir.path().to_path_buf());
+        (storage, dir)
+    }
+
+    async fn write_all(storage: &Storage, chunk_id: &str, data: &[u8]) {
+        storage.start_write(chunk_id).await.unwrap();
+        storage.append(chunk_id, 0, data, 1024 * 1024).await.unwrap();
+        storage.finalize(chunk_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_write_creates_file_and_writing_marker() {
+        let (storage, _dir) = new_storage();
+        storage.start_write("test-1").await.unwrap();
+
+        let cpath = storage.chunk_path("test-1");
+        let wpath = storage.writing_path("test-1");
+
+        assert!(cpath.exists().await);
+        assert!(wpath.exists().await);
+    }
+
+    #[tokio::test]
+    async fn concurrent_write_rejected() {
+        let (storage, _dir) = new_storage();
+        storage.start_write("test-2").await.unwrap();
+        let result = storage.start_write("test-2").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("CONFLICT"));
+    }
+
+    #[tokio::test]
+    async fn write_and_finalize_removes_marker() {
+        let (storage, _dir) = new_storage();
+        storage.start_write("test-3").await.unwrap();
+        storage.finalize("test-3").await.unwrap();
+
+        let wpath = storage.writing_path("test-3");
+        assert!(!wpath.exists().await);
+    }
+
+    #[tokio::test]
+    async fn append_writes_data() {
+        let (storage, _dir) = new_storage();
+        let data = b"hello binary store";
+        write_all(&storage, "test-4", data).await;
+
+        let (read_back, _size, done) = storage.read("test-4", 0, 1024).await.unwrap();
+        assert_eq!(read_back, data);
+        assert!(done);
+    }
+
+    #[tokio::test]
+    async fn resume_at_offset() {
+        let (storage, _dir) = new_storage();
+        storage.start_write("test-5").await.unwrap();
+        storage.append("test-5", 0, b"hello ", 1024).await.unwrap();
+        storage.append("test-5", 6, b"world", 1024).await.unwrap();
+        storage.finalize("test-5").await.unwrap();
+
+        let (data, _size, _done) = storage.read("test-5", 0, 1024).await.unwrap();
+        assert_eq!(data, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn resume_without_writing_marker_fails() {
+        let (storage, _dir) = new_storage();
+        let result = storage.resume_write("nonexistent", 0).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("NOT_FOUND"));
+    }
+
+    #[tokio::test]
+    async fn read_partial_content() {
+        let (storage, _dir) = new_storage();
+        write_all(&storage, "test-6", b"hello world").await;
+
+        let (data, size, done) = storage.read("test-6", 6, 5).await.unwrap();
+        assert_eq!(data, b"world");
+        assert_eq!(size, 11);
+        assert!(done);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_file() {
+        let (storage, _dir) = new_storage();
+        write_all(&storage, "test-7", b"data").await;
+        storage.delete("test-7").await.unwrap();
+
+        let cpath = storage.chunk_path("test-7");
+        assert!(!cpath.exists().await);
+    }
+
+    #[tokio::test]
+    async fn max_bytes_enforced() {
+        let (storage, _dir) = new_storage();
+        storage.start_write("test-8").await.unwrap();
+        let result = storage.append("test-8", 0, b"x", 0).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("PAYLOAD_TOO_LARGE"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_stale_writes() {
+        let (storage, _dir) = new_storage();
+        storage.start_write("stale-1").await.unwrap();
+        storage.start_write("stale-2").await.unwrap();
+
+        let cleaned = storage.cleanup_stale_writes().await.unwrap();
+        assert_eq!(cleaned.len(), 2);
+        assert!(cleaned.contains(&"stale-1".to_string()));
+        assert!(cleaned.contains(&"stale-2".to_string()));
+
+        assert!(!storage.chunk_path("stale-1").exists().await);
+        assert!(!storage.chunk_path("stale-2").exists().await);
+    }
+
+    #[test]
+    fn chunk_path_includes_shard() {
+        let storage = Storage::new(PathBuf::from("/data"));
+        let p = storage.chunk_path("abcdef12-3456-7890-abcd-ef1234567890");
+        let s = p.to_string_lossy();
+        assert!(s.contains("/data/binary/ab/"));
+        assert!(s.contains("abcdef12-3456-7890-abcd-ef1234567890"));
+    }
+}
