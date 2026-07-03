@@ -131,7 +131,13 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
             app.mode = AppMode::SessionPicker;
             InputAction::None
         }
-        "new" | "n" => InputAction::CreateSession,
+        "new" | "n" => {
+            app.agent_picker_create_on_select = true;
+            app.agent_picker_filter.clear();
+            app.apply_agent_filter();
+            app.mode = AppMode::AgentPicker;
+            InputAction::None
+        }
         "delete" | "d" => {
             app.mode = AppMode::Confirm(ConfirmAction::DeleteSession);
             app.set_status("Delete current session? (y/n)");
@@ -285,9 +291,15 @@ fn handle_agent_picker(app: &mut App, key: crossterm::event::KeyEvent) -> InputA
             }
             let idx = app.agent_picker_items[app.agent_picker_idx];
             let agent_id = app.agents[idx].id.clone();
+            app.selected_agent_id = agent_id;
             app.mode = AppMode::Normal;
-            app.input = format!("/agent {}", agent_id);
-            InputAction::SelectAgent(agent_id)
+            let create = app.agent_picker_create_on_select;
+            app.agent_picker_create_on_select = false;
+            if create {
+                InputAction::CreateSession
+            } else {
+                InputAction::None
+            }
         }
         KeyCode::Char(c) => {
             app.agent_picker_filter.push(c);

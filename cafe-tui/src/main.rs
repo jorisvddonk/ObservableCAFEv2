@@ -286,6 +286,7 @@ async fn run_app(
                     }
 
                     InputAction::OpenAgentPicker => {
+                        app.agent_picker_create_on_select = false;
                         app.agent_picker_filter.clear();
                         app.apply_agent_filter();
                         app.mode = AppMode::AgentPicker;

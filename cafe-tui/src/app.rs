@@ -34,6 +34,7 @@ pub struct App {
     pub agent_picker_filter: String,
     pub agent_picker_items: Vec<usize>,
     pub selected_agent_id: String,
+    pub agent_picker_create_on_select: bool,
 }
 
 impl App {
@@ -57,6 +58,7 @@ impl App {
             agent_picker_filter: String::new(),
             agent_picker_items: Vec::new(),
             selected_agent_id: agent_id.into(),
+            agent_picker_create_on_select: false,
         }
     }
 
