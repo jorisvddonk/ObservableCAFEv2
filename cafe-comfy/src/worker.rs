@@ -3,9 +3,7 @@ use cafe_sdk::bus::BusClient;
 use cafe_sdk::{
     keys, roles, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
 };
-use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{error, info, warn};
 
 pub async fn run_with_reconnect(
@@ -19,54 +17,40 @@ pub async fn run_with_reconnect(
         let comfy = comfy.clone();
         let wf = workflow.clone();
         let inp = input_node.clone();
-        async move { poll_sessions(&socket, comfy, &wf, &inp).await }
+        async move { subscribe_sessions(&socket, comfy, &wf, &inp).await }
     })
     .await;
 }
 
-async fn poll_sessions(
+async fn subscribe_sessions(
     socket_path: &str,
     comfy: Arc<ComfyUIClient>,
     workflow: &serde_json::Value,
     input_node: &str,
 ) -> anyhow::Result<()> {
-    info!("cafe-comfy: starting session poller on {}", socket_path);
+    info!("cafe-comfy: starting (subscribe-all mode) on {}", socket_path);
 
     let client = BusClient::new(socket_path);
-    let mut known: HashSet<String> = HashSet::new();
+    let mut rx = client.subscribe_all().await?;
 
-    loop {
-        match client.list_sessions().await {
-            Ok(sessions) => {
-                let current_ids: HashSet<String> =
-                    sessions.iter().map(|s| s.session_id.clone()).collect();
+    let wf = workflow.to_owned();
+    let inp = input_node.to_string();
 
-                for session in &sessions {
-                    if known.contains(&session.session_id) {
-                        continue;
-                    }
-                    info!("cafe-comfy: discovered session {}", session.session_id);
-                    known.insert(session.session_id.clone());
-
-                    let sid = session.session_id.clone();
-                    let client = client.clone();
-                    let vb = comfy.clone();
-                    let wf = workflow.clone();
-                    let inp = input_node.to_string();
-                    tokio::spawn(async move {
-                        if let Err(e) = run_session_handler(sid, client, vb, wf, inp).await {
-                            warn!("cafe-comfy: session handler error: {}", e);
-                        }
-                    });
+    while let Some(msg) = rx.recv().await {
+        if let ServerMessage::SessionCreated { session_id, .. } = msg {
+            let client = client.clone();
+            let vb = comfy.clone();
+            let wf = wf.clone();
+            let inp = inp.clone();
+            tokio::spawn(async move {
+                if let Err(e) = run_session_handler(session_id, client, vb, wf, inp).await {
+                    warn!("cafe-comfy: session handler error: {}", e);
                 }
-                known.retain(|id| current_ids.contains(id));
-            }
-            Err(e) => {
-                warn!("cafe-comfy: list_sessions error: {}", e);
-            }
+            });
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
     }
+
+    Ok(())
 }
 
 async fn run_session_handler(

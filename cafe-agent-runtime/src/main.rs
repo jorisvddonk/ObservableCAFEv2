@@ -10,11 +10,11 @@ mod tool_executor;
 mod watcher;
 
 use anyhow::Result;
-use cafe_sdk::StepDef;
+use cafe_sdk::{ServerMessage, StepDef};
 use config::Config;
 use executor::PipelineExecutor;
 use registry::{AgentEntry, AgentRegistry};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
         let sp = config.socket_path.clone();
         let pipelines = Arc::new(agent_pipelines);
         tokio::spawn(async move {
-            run_pipeline_poller(sp, pipelines).await;
+            run_pipeline_subscriber(sp, pipelines).await;
         });
     }
     // 5. Start file watcher for hot-reload
@@ -131,81 +131,73 @@ async fn main() -> Result<()> {
     run_until_shutdown(change_rx).await
 }
 
-/// Poll list_sessions every 2 s. For each session whose agent_id has RPC steps:
+/// Subscribe to all sessions via SubscribeAll. For each session whose agent_id
+/// has RPC steps:
 ///  1. Publish the agent's initial config chunk (if it's a null config chunk) so
 ///     resolve_session_config can find TTS/LLM settings in the session history.
 ///  2. Spawn a run_session_pipeline task to watch for LLM completions and fire RPC steps.
-async fn run_pipeline_poller(
+async fn run_pipeline_subscriber(
     socket_path: String,
     agent_pipelines: Arc<HashMap<String, AgentPipelineInfo>>,
 ) {
     let client = cafe_sdk::bus::BusClient::new(&socket_path);
-    let mut known: HashSet<String> = HashSet::new();
+    let mut rx = match client.subscribe_all().await {
+        Ok(rx) => rx,
+        Err(e) => {
+            warn!("cafe-agent-runtime: subscribe_all failed: {}", e);
+            return;
+        }
+    };
 
-    loop {
-        match client.list_sessions().await {
-            Ok(sessions) => {
-                let current_ids: HashSet<String> =
-                    sessions.iter().map(|s| s.session_id.clone()).collect();
+    while let Some(msg) = rx.recv().await {
+        let (session_id, agent_id) = match msg {
+            ServerMessage::SessionCreated { session_id, agent_id } => (session_id, agent_id),
+            _ => continue,
+        };
 
-                for session in &sessions {
-                    if known.contains(&session.session_id) {
-                        continue;
-                    }
+        let Some(info) = agent_pipelines.get(&agent_id) else {
+            continue;
+        };
 
-                    if let Some(info) = agent_pipelines.get(&session.agent_id) {
-                        info!(
-                            "cafe-agent-runtime: attaching pipeline to session {} (agent {})",
-                            session.session_id, session.agent_id
-                        );
-                        known.insert(session.session_id.clone());
+        info!(
+            "cafe-agent-runtime: attaching pipeline to session {} (agent {})",
+            session_id, agent_id
+        );
 
-                        let sid = session.session_id.clone();
-                        let sp = socket_path.clone();
-                        let agent_id = session.agent_id.clone();
+        let sid = session_id.clone();
+        let sp = socket_path.clone();
+        let agent_id = agent_id.clone();
 
-                        // Publish the initial config chunk so resolve_session_config
-                        // picks up TTS/LLM settings for user-created sessions.
-                        if info.initial_chunk_type == "null" && !info.initial_chunk_annotations.is_empty() {
-                            let annotations = info.initial_chunk_annotations.clone();
-                            let client = client.clone();
-                            let sid2 = sid.clone();
-                            tokio::spawn(async move {
-                                let mut chunk = cafe_sdk::Chunk::new_null(
-                                    &format!("com.nominal.cafe-agent-runtime/{}", agent_id),
-                                );
-                                for (k, v) in annotations {
-                                    chunk = chunk.with_annotation(k, v);
-                                }
-                                if let Err(e) = client.publish(&sid2, chunk).await {
-                                    warn!(
-                                        "cafe-agent-runtime: failed to publish initial chunk for session {}: {}",
-                                        sid2, e
-                                    );
-                                }
-                            });
-                        }
-
-                        let executor = Arc::new(PipelineExecutor::new(
-                            info.steps.clone(),
-                            Duration::from_secs(info.rpc_timeout_secs),
-                            info.max_pipeline_depth,
-                        ));
-                        tokio::spawn(async move {
-                            session_loop::run_session_loop(sid.clone(), sp, executor).await;
-                        });
-                    }
+        // Publish the initial config chunk so resolve_session_config
+        // picks up TTS/LLM settings for user-created sessions.
+        if info.initial_chunk_type == "null" && !info.initial_chunk_annotations.is_empty() {
+            let annotations = info.initial_chunk_annotations.clone();
+            let client = client.clone();
+            let sid2 = sid.clone();
+            tokio::spawn(async move {
+                let mut chunk = cafe_sdk::Chunk::new_null(
+                    &format!("com.nominal.cafe-agent-runtime/{}", agent_id),
+                );
+                for (k, v) in annotations {
+                    chunk = chunk.with_annotation(k, v);
                 }
-
-                // Prune sessions that no longer exist
-                known.retain(|id| current_ids.contains(id));
-            }
-            Err(e) => {
-                warn!("cafe-agent-runtime: list_sessions error: {}", e);
-            }
+                if let Err(e) = client.publish(&sid2, chunk).await {
+                    warn!(
+                        "cafe-agent-runtime: failed to publish initial chunk for session {}: {}",
+                        sid2, e
+                    );
+                }
+            });
         }
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        let executor = Arc::new(PipelineExecutor::new(
+            info.steps.clone(),
+            Duration::from_secs(info.rpc_timeout_secs),
+            info.max_pipeline_depth,
+        ));
+        tokio::spawn(async move {
+            session_loop::run_session_loop(sid.clone(), sp, executor).await;
+        });
     }
 }
 

@@ -3,63 +3,40 @@ use cafe_sdk::bus::BusClient;
 use cafe_sdk::{
     keys, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
 };
-use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{error, info, warn};
 
 pub async fn run_with_reconnect(socket_path: String, sheetbot: Arc<SheetbotClient>) {
     cafe_sdk::bus::run_with_reconnect("cafe-sheetbot", move || {
         let socket = socket_path.clone();
         let sb = sheetbot.clone();
-        async move { poll_sessions(&socket, sb).await }
+        async move { subscribe_sessions(&socket, sb).await }
     })
     .await;
 }
 
-async fn poll_sessions(
+async fn subscribe_sessions(
     socket_path: &str,
     sheetbot: Arc<SheetbotClient>,
 ) -> anyhow::Result<()> {
-    info!("cafe-sheetbot: starting session poller on {}", socket_path);
+    info!("cafe-sheetbot: starting (subscribe-all mode) on {}", socket_path);
 
     let client = BusClient::new(socket_path);
-    let mut known: HashSet<String> = HashSet::new();
+    let mut rx = client.subscribe_all().await?;
 
-    loop {
-        match client.list_sessions().await {
-            Ok(sessions) => {
-                let current_ids: HashSet<String> =
-                    sessions.iter().map(|s| s.session_id.clone()).collect();
-
-                for session in &sessions {
-                    if known.contains(&session.session_id) {
-                        continue;
-                    }
-
-                    info!("cafe-sheetbot: discovered session {}", session.session_id);
-                    let sid = session.session_id.clone();
-                    known.insert(sid.clone());
-
-                    let client = client.clone();
-                    let sb = sheetbot.clone();
-                    let sid_clone = sid.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = run_session_handler(sid, client, sb).await {
-                            warn!("cafe-sheetbot: session {} handler error: {}", sid_clone, e);
-                        }
-                    });
+    while let Some(msg) = rx.recv().await {
+        if let ServerMessage::SessionCreated { session_id, .. } = msg {
+            let client = client.clone();
+            let sb = sheetbot.clone();
+            tokio::spawn(async move {
+                if let Err(e) = run_session_handler(session_id, client, sb).await {
+                    warn!("cafe-sheetbot: session handler error: {}", e);
                 }
-
-                known.retain(|id| current_ids.contains(id));
-            }
-            Err(e) => {
-                warn!("cafe-sheetbot: list_sessions error: {}", e);
-            }
+            });
         }
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
     }
+
+    Ok(())
 }
 
 async fn run_session_handler(
