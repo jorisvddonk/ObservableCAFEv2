@@ -49,6 +49,17 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 See [`docs/feature-matrix.md`](docs/feature-matrix.md) for where each feature lives (SDK, bus, etc.) and test coverage.
 
+## CLI tool
+
+`cafe-cli` provides command-line access to the bus. Run `cafe-cli --help` for available commands.
+
+Examples:
+```
+cafe-cli create-session --agent default
+cafe-cli publish <session> --text "hello world"
+cafe-cli history <session>
+```
+
 ## Bus protocol
 
 ```
