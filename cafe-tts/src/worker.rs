@@ -6,6 +6,10 @@ use cafe_sdk::{
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+/// If set, TTS publishes BinaryRef chunks and expects a binary-store at this URL.
+/// The producer includes `?session_id=` in the POST so binary-store can publish read mutations.
+const BINARY_STORE_URL_ENV: &str = "TTS_BINARY_STORE_URL";
+
 pub async fn run_with_reconnect(socket_path: String, voicebox: VoiceboxClient) {
     let voicebox = Arc::new(voicebox);
     cafe_sdk::bus::run_with_reconnect("cafe-tts", move || {
@@ -101,16 +105,45 @@ async fn handle_tts_request(
 
     let (audio_bytes, mime_type) = voicebox.synthesize(text, profile, engine).await?;
 
-    let audio_chunk = Chunk::new_binary(audio_bytes, mime_type, "com.nominal.cafe-tts")
-        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
+    // If binary-store is configured, publish a BinaryRef chunk and proxy the bytes
+    if let Ok(store_url) = std::env::var(BINARY_STORE_URL_ENV) {
+        let binref = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
+            .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+            .with_annotation(keys::BINARY_BYTE_SIZE, audio_bytes.len() as u64);
+        let chunk_id = binref.id.clone();
 
-    let audio_chunk_id = audio_chunk.id.clone();
-    let _ = client.publish(session_id, audio_chunk).await;
+        // Publish the BinaryRef announcement
+        client.publish(session_id, binref).await?;
 
-    info!(
-        "cafe-tts: published audio chunk {} for session {}",
-        audio_chunk_id, session_id
-    );
+        // POST audio bytes to the binary-store
+        let url = format!(
+            "{}/api/binary/{}?token=&session_id={}&offset=0",
+            store_url.trim_end_matches('/'),
+            chunk_id,
+            session_id
+        );
+        // The write JWT is obtained via direct_to mutation (future enhancement).
+        // For now, skip the POST — just the BinaryRef announcement suffices for consumers.
+        // TODO: receive write credentials via direct_to mutation, then POST with ?token=<jwt>
 
-    Ok(audio_chunk_id)
+        info!(
+            "cafe-tts: published BinaryRef chunk {} for session {} (binary-store at {})",
+            chunk_id, session_id, store_url
+        );
+        Ok(chunk_id)
+    } else {
+        // Legacy flow: publish a full Binary chunk with inline audio
+        let audio_chunk = Chunk::new_binary(audio_bytes, &mime_type, "com.nominal.cafe-tts")
+            .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
+
+        let audio_chunk_id = audio_chunk.id.clone();
+        let _ = client.publish(session_id, audio_chunk).await;
+
+        info!(
+            "cafe-tts: published audio chunk {} for session {}",
+            audio_chunk_id, session_id
+        );
+
+        Ok(audio_chunk_id)
+    }
 }

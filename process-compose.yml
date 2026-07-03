@@ -26,6 +26,20 @@ processes:
       cafe-bus:
         condition: process_healthy
 
+  cafe-binary-store:
+    command: ./target/debug/cafe-binary-store --port 4001 --bus-socket /tmp/cafe-bus.sock
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "curl -sf http://localhost:4001/health"
+      initial_delay_seconds: 1
+      period_seconds: 2
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+
   cafe-llm:
     command: ./target/debug/cafe-llm
     environment:
