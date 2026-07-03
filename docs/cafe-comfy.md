@@ -13,18 +13,21 @@ image back to the session.
 
 ## Data flow
 
-```
-cafe-agent-runtime             cafe-comfy               ComfyUI
-      │                            │                       │
-      │── comfy.invoke ───────────►│                       │
-      │    { text: "..." }        │── POST /prompt ──────►│
-      │                           │◄── { prompt_id } ─────│
-      │                           │── GET /history/{id} ─►│
-      │                           │◄── { outputs... } ────│
-      │                           │── GET /view ─────────►│
-      │                           │◄── image bytes ───────│
-      │◄── binary chunk (image) ──│                       │
-      │◄── null chunk (rpc ok) ───│                       │
+```mermaid
+sequenceDiagram
+    participant AR as cafe-agent-runtime
+    participant C as cafe-comfy
+    participant U as ComfyUI
+
+    AR->>C: comfy.invoke { text: "..." }
+    C->>U: POST /prompt
+    U-->>C: { prompt_id }
+    C->>U: GET /history/{id}
+    U-->>C: { outputs... }
+    C->>U: GET /view
+    U-->>C: image bytes
+    C-->>AR: binary chunk (image)
+    C-->>AR: null chunk (rpc ok)
 ```
 
 ## Configuration

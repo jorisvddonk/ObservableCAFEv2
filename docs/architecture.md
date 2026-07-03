@@ -6,74 +6,89 @@ ObservableCAFE is a suite of small, composable Unix processes that collectively 
 a reactive multi-agent LLM platform. Processes communicate via a central message bus
 (`cafe-bus`) over a Unix domain socket. No process calls another directly.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           cafe-bus                                       │
-│              (Unix socket: /tmp/cafe-bus.sock)                           │
-│                                                                          │
-│  Sessions: { session_id → [ history: Vec<Chunk>, subscribers ] }        │
-└────────┬──────────────┬──────────────┬───────────────┬──────────────────┘
-         │              │              │               │
-    subscribe_all   subscribe     subscribe        subscribe
-         │          + publish     + publish        + publish
-         ▼              │              │               │
-    cafe-store          cafe-llm    cafe-agent-runtime  cafe-server
-    (SQLite)        (LLM calls)  (agent lifecycle)  (HTTP gateway)
-     cafe-tts         cafe-comfy
-    (TTS/Voicebox)  (ComfyUI/img)
-                                                        │
-                                              ┌─────────┴──────────┐
-                                         HTTP/SSE              HTTP/SSE
-                                              │                    │
-                                          cafe-web           cafe-tui
-                                          (browser)          (terminal)
-                                              │
-                                         cafe-telegram
-                                         (Telegram bot)
+```mermaid
+graph TB
+    bus["cafe-bus (Unix socket)"]
+
+    subgraph "Bus-connected services"
+        store[cafe-store<br/>SQLite persistence]
+        llm[cafe-llm<br/>LLM calls]
+        agent[cafe-agent-runtime<br/>agent lifecycle]
+        tts[cafe-tts<br/>TTS / Voicebox]
+        comfy[cafe-comfy<br/>ComfyUI / img]
+        server[cafe-server<br/>HTTP gateway]
+    end
+
+    bus --> store
+    bus --> llm
+    bus --> agent
+    bus --> tts
+    bus --> comfy
+    bus --> server
+
+    subgraph "Clients"
+        web[cafe-web<br/>browser]
+        tui[cafe-tui<br/>terminal]
+        tg[cafe-telegram<br/>Telegram bot]
+    end
+
+    server -- HTTP/SSE --> web
+    server -- HTTP/SSE --> tui
+    server -- HTTP/SSE --> tg
 ```
 
 ---
 
 ## Data flow for a user message
 
-```
-1.  User types a message in cafe-web
-2.  cafe-web POSTs to cafe-server: POST /api/sessions/abc/chat { content: "Hello" }
-3.  cafe-server creates a Chunk { content_type: text, content: "Hello", annotations: { chat.role: user } }
-4.  cafe-server publishes the chunk to cafe-bus for session "abc"
-5.  cafe-bus appends it to session history, broadcasts to all subscribers
-6.  cafe-llm (subscribed to session "abc") receives the chunk
-7.  cafe-llm builds conversation context from session history
-8.  cafe-llm calls Ollama, streams back response tokens
-9.  cafe-llm publishes each token as a Chunk { chat.role: assistant, chat.is_streaming: true }
-10. cafe-bus broadcasts each token chunk
-11. cafe-server (subscribed for this request) receives token chunks, forwards as SSE events
-12. cafe-web receives SSE events, appends tokens to the message display
-13. cafe-llm publishes a null chunk { chat.stream_complete: true }
-14. cafe-server closes the SSE response
-15. cafe-store (subscribed to everything) has persisted all chunks to SQLite throughout
+```mermaid
+sequenceDiagram
+    participant User as User (browser)
+    participant Web as cafe-web
+    participant Svr as cafe-server
+    participant Bus as cafe-bus
+    participant LLM as cafe-llm
+    participant Store as cafe-store
+
+    User->>Web: type message
+    Web->>Svr: POST /api/sessions/abc/chat {content:"Hello"}
+    Svr->>Bus: publish chunk (chat.role: user)
+    Bus->>LLM: broadcast chunk
+    Bus->>Store: broadcast chunk (persisted)
+    Bus->>Svr: broadcast chunk (SSE forward)
+    Svr->>Web: SSE: text chunk
+    LLM->>Bus: publish tokens (chat.is_streaming)
+    Bus->>Svr: broadcast tokens
+    Svr->>Web: SSE: streaming tokens
+    LLM->>Bus: publish stream_complete
+    Bus->>Svr: broadcast complete
+    Svr->>Web: SSE: stream complete
 ```
 
 ---
 
 ## Startup order
 
-Services must start in this order due to socket dependencies:
+```mermaid
+graph LR
+    bus[cafe-bus] --> store[cafe-store]
+    bus --> llm[cafe-llm]
+    bus --> agent[cafe-agent-runtime]
+    bus --> tts[cafe-tts]
+    bus --> comfy[cafe-comfy]
+    bus --> server[cafe-server]
+    server --> web[cafe-web]
+    server --> tui[cafe-tui]
+    server --> tg[cafe-telegram]
 
-```
-1. cafe-bus          — creates the socket; everything else waits for it
-2. cafe-store        — connects to bus immediately
-   cafe-llm          — connects to bus immediately (parallel with store)
-   cafe-agent-runtime — connects to bus, initialises agents
-3. cafe-server       — connects to bus; starts accepting HTTP after bus is ready
-4. cafe-tts          — connects to bus (parallel with server, optional)
-   cafe-comfy        — connects to bus (parallel with server, optional)
-5. cafe-web          — static files, served by cafe-server or separately
-   cafe-tui          — connects to cafe-server HTTP
-   cafe-telegram     — connects to cafe-server HTTP
+    style bus fill:#4a6,color:#fff
+    style store fill:#46a,color:#fff
+    style llm fill:#46a,color:#fff
+    style agent fill:#46a,color:#fff
+    style server fill:#46a,color:#fff
 ```
 
-`process-compose` manages this via `depends_on` + readiness probes (see `process-compose.yml`).
+Dependencies are enforced by `process-compose` via `depends_on` + readiness probes (see `process-compose.yml`).
 
 ---
 
