@@ -50,6 +50,64 @@ uv run tests/binary-store-e2e.py
 
 ## Architecture
 
+```mermaid
+graph TD
+    subgraph "Data Model"
+        cafe-types
+    end
+
+    subgraph "Client SDKs"
+        cafe-sdk --> cafe-types
+        cafe-web-sdk
+    end
+
+    subgraph "Infrastructure"
+        cafe-bus --> cafe-types
+        cafe-store --> cafe-sdk
+        cafe-server --> cafe-sdk
+        cafe-binary-store --> cafe-sdk
+    end
+
+    subgraph "Agents & Pipeline"
+        cafe-llm --> cafe-sdk
+        cafe-tts --> cafe-sdk
+        cafe-comfy --> cafe-sdk
+        cafe-sheetbot --> cafe-sdk
+        cafe-dice --> cafe-sdk
+        cafe-agent-runtime --> cafe-sdk
+    end
+
+    subgraph "Frontend"
+        cafe-tui --> cafe-sdk
+        cafe-web --> cafe-web-sdk
+    end
+
+    subgraph "Tools"
+        cafe-cli --> cafe-sdk
+        cafe-demo --> cafe-sdk
+    end
+
+    cafe-binary-store -.-> cafe-bus
+    cafe-store -.-> cafe-bus
+    cafe-llm -.-> cafe-bus
+    cafe-tts -.-> cafe-bus
+    cafe-comfy -.-> cafe-bus
+    cafe-sheetbot -.-> cafe-bus
+    cafe-dice -.-> cafe-bus
+    cafe-agent-runtime -.-> cafe-bus
+    cafe-server -.-> cafe-bus
+    cafe-cli -.-> cafe-bus
+    cafe-demo -.-> cafe-bus
+
+    style cafe-bus fill:#4a6,color:#fff
+    style cafe-types fill:#46a,color:#fff
+    style cafe-sdk fill:#46a,color:#fff
+    style cafe-web-sdk fill:#46a,color:#fff
+```
+
+All services communicate via `cafe-bus` over a Unix socket at `/tmp/cafe-bus.sock`.
+Wire format is newline-delimited JSON using types defined in `cafe-types`.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 See [`docs/adr-*.md`](docs/) for Architecture Decision Records covering key design choices (SubscribeFiltered, Connection IDs, Direct-to, Mutations, Transient Retention, Binary Streaming, etc.).
