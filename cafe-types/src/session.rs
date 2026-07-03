@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::step::StepDef;
+
 /// Metadata about a session, returned by list_sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
@@ -20,13 +22,18 @@ pub struct AgentDefinition {
     pub background: bool,
     pub allows_reload: bool,
     pub persists_state: bool,
-    pub pipeline: Vec<String>,
+    /// Ordered list of pipeline steps ([[steps]] in TOML).
+    pub steps: Vec<StepDef>,
     pub schedule: Option<String>,
     pub initial_chunk_content: String,
     pub initial_chunk_type: String,
     pub initial_chunk_data: Option<Vec<u8>>,
     pub initial_chunk_mime_type: Option<String>,
     pub initial_chunk_annotations: std::collections::HashMap<String, serde_json::Value>,
+    /// Per-agent RPC timeout in seconds (default 60).
+    pub rpc_timeout_secs: u64,
+    /// Maximum pipeline recursion depth via step_complete chaining (default 10).
+    pub max_pipeline_depth: u32,
 }
 
 impl Default for AgentDefinition {
@@ -37,13 +44,28 @@ impl Default for AgentDefinition {
             background: false,
             allows_reload: true,
             persists_state: true,
-            pipeline: vec!["trust-filter".into(), "llm".into()],
+            steps: vec![
+                StepDef {
+                    id: "trust-filter".into(),
+                    step_type: "trust-filter".into(),
+                    trigger: "user_message".into(),
+                    enabled_if: None,
+                },
+                StepDef {
+                    id: "llm".into(),
+                    step_type: "llm".into(),
+                    trigger: "user_message".into(),
+                    enabled_if: None,
+                },
+            ],
             schedule: None,
             initial_chunk_content: String::new(),
             initial_chunk_type: "text".into(),
             initial_chunk_data: None,
             initial_chunk_mime_type: None,
             initial_chunk_annotations: std::collections::HashMap::new(),
+            rpc_timeout_secs: 60,
+            max_pipeline_depth: 10,
         }
     }
 }

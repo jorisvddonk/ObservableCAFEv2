@@ -4,7 +4,25 @@ background = true
 allows_reload = true
 persists_state = true
 
-pipeline = ["trust-filter", "llm", "tool-detector", "tool-executor"]
+[[steps]]
+id = "trust-filter"
+type = "trust-filter"
+trigger = "user_message"
+
+[[steps]]
+id = "llm"
+type = "llm"
+trigger = "user_message"
+
+[[steps]]
+id = "tool-detector"
+type = "tool-detector"
+trigger = "llm_complete"
+
+[[steps]]
+id = "tool-executor"
+type = "tool-executor"
+trigger = "step_complete:tool-detector"
 
 [initial_chunk]
 type = "null"

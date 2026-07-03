@@ -99,7 +99,8 @@ async fn run_session_handler(
         };
 
         let resp_chunk = Chunk::new_null("com.nominal.cafe-tts")
-            .with_annotation(keys::JSONRPC_RESPONSE, &response);
+            .with_annotation(keys::JSONRPC_RESPONSE, &response)
+            .as_transient();
         let _ = client.publish(&session_id, resp_chunk).await;
     }
 

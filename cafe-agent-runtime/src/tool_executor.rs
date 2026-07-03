@@ -21,7 +21,8 @@ pub async fn execute(
     client.get_history(session_id).await?;
 
     let req_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-        .with_annotation(keys::JSONRPC_REQUEST, &request);
+        .with_annotation(keys::JSONRPC_REQUEST, &request)
+        .as_transient();
     client.publish(session_id, req_chunk).await?;
 
     let mut rx = client.subscribe(session_id).await?;
@@ -55,7 +56,8 @@ pub async fn execute(
                     error: None,
                 };
                 let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-                    .with_annotation(keys::TOOL_RESULT, &tool_result);
+                    .with_annotation(keys::TOOL_RESULT, &tool_result)
+                    .as_transient();
                 client.publish(session_id, result_chunk).await?;
             } else {
                 let err = response.error.unwrap();
@@ -69,7 +71,8 @@ pub async fn execute(
                     error: Some(err.message),
                 };
                 let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-                    .with_annotation(keys::TOOL_RESULT, &tool_result);
+                    .with_annotation(keys::TOOL_RESULT, &tool_result)
+                    .as_transient();
                 client.publish(session_id, result_chunk).await?;
             }
         }
@@ -87,7 +90,8 @@ pub async fn execute(
                 error: Some(format!("RPC timeout after {}s", rpc_timeout.as_secs())),
             };
             let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-                .with_annotation(keys::TOOL_RESULT, &tool_result);
+                .with_annotation(keys::TOOL_RESULT, &tool_result)
+                .as_transient();
             client.publish(session_id, result_chunk).await?;
         }
     }

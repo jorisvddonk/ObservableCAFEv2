@@ -4,10 +4,17 @@ background = true
 allows_reload = true
 persists_state = false
 schedule = "0 7 * * *"
-pipeline = ["rss-fetch", "llm-summarize"]
 
-# Seed the session with a runtime config null chunk so resolve_session_config
-# can read config.rss.url (and any other evaluator config) from history.
+[[steps]]
+id = "rss-fetch"
+type = "rss-fetch"
+trigger = "scheduler_tick"
+
+[[steps]]
+id = "llm-summarize"
+type = "llm-summarize"
+trigger = "step_complete:rss-fetch"
+
 [initial_chunk]
 type = "null"
 

@@ -4,7 +4,21 @@ background = false
 allows_reload = true
 persists_state = true
 
-pipeline = ["trust-filter", "llm", "comfy"]
+[[steps]]
+id = "trust-filter"
+type = "trust-filter"
+trigger = "user_message"
+
+[[steps]]
+id = "llm"
+type = "llm"
+trigger = "user_message"
+
+[[steps]]
+id = "comfy"
+type = "comfy"
+trigger = "llm_complete"
+enabled_if = "config.comfy.enabled"
 
 [initial_chunk]
 type = "null"
@@ -15,3 +29,4 @@ type = "null"
 "config.llm.temperature"             = 0.8
 "config.comfy.workflow_path"         = "workflow.json"
 "config.comfy.workflow_input_node"   = "6"
+"config.comfy.enabled"               = false

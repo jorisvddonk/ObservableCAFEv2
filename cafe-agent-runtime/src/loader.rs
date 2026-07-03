@@ -49,7 +49,7 @@ pub struct AgentFile {
     pub background: Option<bool>,
     pub allows_reload: Option<bool>,
     pub persists_state: Option<bool>,
-    pub pipeline: Option<Vec<String>>,
+    pub steps: Option<Vec<cafe_sdk::StepDef>>,
     pub schedule: Option<String>,
     // --- flat style ---
     pub initial_chunk_content: Option<String>,
@@ -59,6 +59,8 @@ pub struct AgentFile {
     pub initial_chunk_annotations: Option<std::collections::HashMap<String, serde_json::Value>>,
     // --- nested style ---
     pub initial_chunk: Option<InitialChunkTable>,
+    pub rpc_timeout_secs: Option<u64>,
+    pub max_pipeline_depth: Option<u32>,
 }
 
 impl From<AgentFile> for AgentDefinition {
@@ -112,13 +114,22 @@ impl From<AgentFile> for AgentDefinition {
             background: f.background.unwrap_or(false),
             allows_reload: f.allows_reload.unwrap_or(true),
             persists_state: f.persists_state.unwrap_or(true),
-            pipeline: f.pipeline.unwrap_or_else(|| vec!["llm".into()]),
+            steps: f.steps.unwrap_or_else(|| vec![
+                cafe_sdk::StepDef {
+                    id: "llm".into(),
+                    step_type: "llm".into(),
+                    trigger: "user_message".into(),
+                    enabled_if: None,
+                },
+            ]),
             schedule: f.schedule,
             initial_chunk_content: chunk_content,
             initial_chunk_type: chunk_type,
             initial_chunk_data: chunk_data,
             initial_chunk_mime_type: chunk_mime_type,
             initial_chunk_annotations: chunk_annotations,
+            rpc_timeout_secs: f.rpc_timeout_secs.unwrap_or(60),
+            max_pipeline_depth: f.max_pipeline_depth.unwrap_or(10),
         }
     }
 }
@@ -239,7 +250,12 @@ mod tests {
             background: Some(false),
             allows_reload: Some(true),
             persists_state: Some(true),
-            pipeline: Some(vec!["llm".to_string()]),
+            steps: Some(vec![cafe_sdk::StepDef {
+                id: "llm".into(),
+                step_type: "llm".into(),
+                trigger: "user_message".into(),
+                enabled_if: None,
+            }]),
             schedule: Some("0 0 * * *".to_string()),
             initial_chunk_content: Some("Hello from test!".to_string()),
             initial_chunk_type: Some("text".to_string()),
@@ -247,6 +263,8 @@ mod tests {
             initial_chunk_mime_type: None,
             initial_chunk_annotations: Some(annotations),
             initial_chunk: None,
+            rpc_timeout_secs: None,
+            max_pipeline_depth: None,
         };
 
         let agent: AgentDefinition = agent_file.into();
@@ -255,7 +273,9 @@ mod tests {
         assert!(!agent.background);
         assert!(agent.allows_reload);
         assert!(agent.persists_state);
-        assert_eq!(agent.pipeline, vec!["llm".to_string()]);
+        assert_eq!(agent.steps.len(), 1);
+        assert_eq!(agent.steps[0].step_type, "llm");
+        assert_eq!(agent.steps[0].trigger, "user_message");
         assert_eq!(agent.schedule, Some("0 0 * * *".to_string()));
         assert_eq!(agent.initial_chunk_content, "Hello from test!");
         assert_eq!(agent.initial_chunk_type, "text");
@@ -270,7 +290,18 @@ mod tests {
     fn test_load_agent_file_with_nested_initial_chunk_null() {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(temp_file, r#"name = "volition""#).unwrap();
-        writeln!(temp_file, r#"pipeline = ["stt", "llm", "tts"]"#).unwrap();
+        writeln!(temp_file, r#"[[steps]]"#).unwrap();
+        writeln!(temp_file, r#"id = "stt""#).unwrap();
+        writeln!(temp_file, r#"type = "stt""#).unwrap();
+        writeln!(temp_file, r#"trigger = "user_message""#).unwrap();
+        writeln!(temp_file, r#"[[steps]]"#).unwrap();
+        writeln!(temp_file, r#"id = "llm""#).unwrap();
+        writeln!(temp_file, r#"type = "llm""#).unwrap();
+        writeln!(temp_file, r#"trigger = "user_message""#).unwrap();
+        writeln!(temp_file, r#"[[steps]]"#).unwrap();
+        writeln!(temp_file, r#"id = "tts""#).unwrap();
+        writeln!(temp_file, r#"type = "tts""#).unwrap();
+        writeln!(temp_file, r#"trigger = "llm_complete""#).unwrap();
         writeln!(temp_file, "").unwrap();
         writeln!(temp_file, "[initial_chunk]").unwrap();
         writeln!(temp_file, r#"type = "null""#).unwrap();

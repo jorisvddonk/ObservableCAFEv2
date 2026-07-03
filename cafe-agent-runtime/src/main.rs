@@ -1,16 +1,18 @@
 mod config;
+mod executor;
 mod lifecycle;
 mod loader;
-mod pipeline;
 mod registry;
 mod scheduler;
+mod session_loop;
 mod tool_detector;
 mod tool_executor;
 mod watcher;
 
 use anyhow::Result;
+use cafe_sdk::StepDef;
 use config::Config;
-use pipeline::PipelineExecutor;
+use executor::PipelineExecutor;
 use registry::{AgentEntry, AgentRegistry};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -20,7 +22,9 @@ use tracing::{error, info, warn};
 /// Everything the poller needs to know about an agent with RPC steps.
 #[derive(Clone)]
 struct AgentPipelineInfo {
-    pipeline: Vec<String>,
+    steps: Vec<StepDef>,
+    rpc_timeout_secs: u64,
+    max_pipeline_depth: u32,
     /// initial_chunk type ("null", "text", …) — used to seed config into new sessions
     initial_chunk_type: String,
     initial_chunk_annotations: std::collections::HashMap<String, serde_json::Value>,
@@ -81,12 +85,14 @@ async fn main() -> Result<()> {
         }
 
         // Record pipeline for any agent that has RPC steps
-        let has_rpc_steps = def.pipeline.iter().any(|s| {
-            !matches!(s.as_str(), "role-annotator" | "trust-filter" | "llm")
+        let has_rpc_steps = def.steps.iter().any(|s| {
+            !matches!(s.step_type.as_str(), "role-annotator" | "trust-filter" | "tool-detector" | "tool-executor")
         });
         if has_rpc_steps {
             agent_pipelines.insert(name.clone(), AgentPipelineInfo {
-                pipeline: def.pipeline.clone(),
+                steps: def.steps.clone(),
+                rpc_timeout_secs: def.rpc_timeout_secs,
+                max_pipeline_depth: def.max_pipeline_depth,
                 initial_chunk_type: def.initial_chunk_type.clone(),
                 initial_chunk_annotations: def.initial_chunk_annotations.clone(),
             });
@@ -180,19 +186,13 @@ async fn run_pipeline_poller(
                             });
                         }
 
-                        let executor = PipelineExecutor::from_step_names(
-                            &info.pipeline,
-                            Duration::from_secs(30),
-                        );
+                        let executor = Arc::new(PipelineExecutor::new(
+                            info.steps.clone(),
+                            Duration::from_secs(info.rpc_timeout_secs),
+                            info.max_pipeline_depth,
+                        ));
                         tokio::spawn(async move {
-                            if let Err(e) =
-                                pipeline::run_session_pipeline(sid.clone(), sp, executor).await
-                            {
-                                warn!(
-                                    "cafe-agent-runtime: pipeline watcher for session {} exited: {}",
-                                    sid, e
-                                );
-                            }
+                            session_loop::run_session_loop(sid.clone(), sp, executor).await;
                         });
                     }
                 }
