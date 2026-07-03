@@ -101,24 +101,15 @@ async fn handle_tts_request(
 
     let (audio_bytes, mime_type) = voicebox.synthesize(text, profile, engine).await?;
 
-    // Always publish BinaryRef — the binary-store is always available.
-    // The actual bytes are currently inlined in the response chunk until the
-    // direct-to write credentials flow is implemented (TODO: POST to binary-store).
-    let binref = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
+    let chunk = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         .with_annotation(keys::BINARY_BYTE_SIZE, audio_bytes.len() as u64);
 
-    // Also publish the full audio as Binary (backward compat for consumers
-    // that don't support binary-ref fetching yet).
-    let audio = Chunk::new_binary(audio_bytes, &mime_type, "com.nominal.cafe-tts")
-        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
-
-    let chunk_id = binref.id.clone();
-    let _ = client.publish(session_id, binref).await;
-    let _ = client.publish(session_id, audio).await;
+    let chunk_id = chunk.id.clone();
+    client.publish(session_id, chunk).await?;
 
     info!(
-        "cafe-tts: published BinaryRef + Binary chunks {} for session {}",
+        "cafe-tts: published BinaryRef chunk {} for session {}",
         chunk_id, session_id
     );
 

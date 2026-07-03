@@ -13,6 +13,7 @@ members = [
     "cafe-sheetbot",
     "cafe-demo",
     "cafe-sdk",
+    "cafe-cli",
     "cafe-binary-store",
 ]
 

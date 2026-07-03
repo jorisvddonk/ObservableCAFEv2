@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use cafe_sdk::{bus::BusClient, keys};
@@ -89,9 +89,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/api/binary/{chunk_id}", post(write_handler))
-        .route("/api/binary/{chunk_id}", get(read_handler))
-        .route("/api/binary/{chunk_id}", delete(delete_handler))
+        .route("/api/binary/:chunk_id", get(read_handler).post(write_handler).delete(delete_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", cfg.port);
