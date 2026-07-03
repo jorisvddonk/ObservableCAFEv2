@@ -37,12 +37,6 @@ anyhow        = { workspace = true }
 
 ```
 cafe-bus/src/
-├── main.rs         # entry point: parse env/args, start listener, block
-├── listener.rs     # accept connections, spawn per-client tasks
-├── client.rs       # per-client read/write loop; parse ClientMessage, send ServerMessage
-├── registry.rs     # SessionRegistry: HashMap behind Arc<RwLock<>>
-├── session.rs      # SessionState: history Vec<Chunk>, broadcast::Sender<Chunk>
-└── config.rs       # Config struct from env vars
 ```
 
 ---

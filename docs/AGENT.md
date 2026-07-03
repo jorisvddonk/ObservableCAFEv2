@@ -23,36 +23,6 @@ binary, or null) annotated with metadata. Pipelines are declarative — they des
 
 ```
 observablecafe/
-├── Cargo.toml              # Rust workspace root (all Rust crates listed here)
-├── Justfile                # Task runner: just build / just dev / just test
-├── process-compose.yml     # Local process orchestration (like docker-compose for binaries)
-├── docs/
-│   ├── AGENT.md            # ← you are here
-│   ├── architecture.md     # System diagram and startup order
-│   ├── spec-cafe.md        # CAFE data model spec (Chunk, Annotation, Evaluator)
-│   ├── spec-bus-protocol.md # Wire protocol for cafe-bus IPC
-│   ├── spec-http-api.md    # HTTP API exposed by cafe-server
-│   ├── cafe-types.md       # Build guide for the shared types crate
-│   ├── cafe-bus.md         # Build guide for the bus
-│   ├── cafe-store.md       # Build guide for the persistence service
-│   ├── cafe-llm.md         # Build guide for the LLM bridge
-│   ├── cafe-server.md      # Build guide for the HTTP server
-│   ├── cafe-agent-runtime.md # Build guide for the agent host
-│   ├── cafe-tui.md         # Build guide for the terminal client
-│   ├── cafe-telegram.md    # Build guide for the Telegram bridge (Go)
-│   ├── cafe-comfy.md       # Build guide for the ComfyUI image generation bridge
-│   └── cafe-web.md         # Build guide for the React frontend (TypeScript)
-├── cafe-types/             # Rust library: shared data model
-├── cafe-bus/               # Rust binary: central message bus
-├── cafe-store/             # Rust binary: SQLite persistence
-├── cafe-llm/               # Rust binary: LLM backend bridge
-├── cafe-server/            # Rust binary: HTTP API + SSE gateway
-├── cafe-tui/               # Rust binary: terminal UI client
-├── cafe-agent-runtime/     # Rust binary: agent loader + scheduler
-├── cafe-telegram/          # Go binary: Telegram bot bridge
-├── cafe-tts/               # Rust binary: Voicebox TTS bridge
-├── cafe-comfy/             # Rust binary: ComfyUI image generation bridge
-└── cafe-web/               # TypeScript/React: browser frontend
 ```
 
 ---

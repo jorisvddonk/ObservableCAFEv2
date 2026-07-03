@@ -41,10 +41,6 @@ sqlx        = { version = "0.7", features = ["sqlite", "runtime-tokio", "json", 
 
 ```
 cafe-store/src/
-├── main.rs         # connect to bus, run persistence loop
-├── db.rs           # SQLite schema + query functions
-├── bus_client.rs   # reconnecting bus connection, message loop
-└── config.rs       # Config from env vars
 ```
 
 ---

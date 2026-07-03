@@ -44,15 +44,6 @@ async-trait  = "0.1"
 
 ```
 cafe-llm/src/
-├── main.rs             # connect to bus, dispatch to handlers
-├── backends/
-│   ├── mod.rs          # LlmBackend trait
-│   ├── ollama.rs       # Ollama streaming API
-│   └── openai.rs       # OpenAI-compatible streaming API
-├── context.rs          # build conversation context from chunk history
-├── evaluator.rs        # main evaluation loop: history → LLM → chunks
-├── bus_client.rs       # bus connection + subscription management
-└── config.rs           # Config from env vars
 ```
 
 ---

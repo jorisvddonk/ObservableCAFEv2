@@ -101,18 +101,6 @@ glob                 = "0.3"
 
 ```
 cafe-agent-runtime/src/
-├── main.rs             # scan dirs, start background agents, run watcher loop
-├── loader.rs           # scan directories, parse TOML agent definitions
-├── registry.rs         # AgentRegistry: name → AgentDef + session_id
-├── lifecycle.rs        # create/destroy/reload agent sessions via bus
-├── scheduler.rs        # cron scheduling for background agents
-├── evaluators/
-│   ├── mod.rs          # Evaluator enum + dispatch
-│   ├── trust_filter.rs
-│   ├── role_annotator.rs
-│   └── rss_fetch.rs
-├── watcher.rs          # notify-based file watcher → reload events
-└── config.rs           # Config from env
 ```
 
 ---

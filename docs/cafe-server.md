@@ -41,20 +41,6 @@ uuid          = { version = "1", features = ["v4"] }
 
 ```
 cafe-server/src/
-├── main.rs             # build router, bind port, run
-├── router.rs           # axum Router definition: all routes + middleware
-├── handlers/
-│   ├── sessions.rs     # CRUD for sessions
-│   ├── chat.rs         # POST /api/sessions/:id/chat (SSE streaming)
-│   ├── stream.rs       # GET /api/sessions/:id/stream (persistent SSE)
-│   ├── chunks.rs       # POST/PATCH/DELETE chunks
-│   ├── quickies.rs     # CRUD for quickies
-│   └── admin.rs        # token management, agent reload, status
-├── auth.rs             # bearer token extractor middleware
-├── bus_client.rs       # shared bus connection pool
-├── db.rs               # SQLite for tokens + quickies
-├── sse.rs              # SSE stream helpers
-└── config.rs           # Config from env
 ```
 
 ---

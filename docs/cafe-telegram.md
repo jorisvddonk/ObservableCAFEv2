@@ -38,13 +38,6 @@ go get modernc.org/sqlite
 
 ```
 cafe-telegram/
-├── main.go             # init, start bot, run update loop
-├── bot.go              # Telegram bot handler: route commands + messages
-├── client.go           # cafe-server HTTP client (sessions, chat, stream)
-├── sessions.go         # user → session mapping + subscription management
-├── db.go               # SQLite: persist subscriptions
-├── stream.go           # SSE consumer: read chunks, forward to Telegram
-└── config.go           # Config from env vars
 ```
 
 ---

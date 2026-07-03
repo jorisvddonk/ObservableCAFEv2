@@ -46,25 +46,6 @@ Add these as needed:
 
 ```
 cafe-web/src/
-├── main.tsx                # React root mount
-├── App.tsx                 # top-level layout: sidebar + chat area
-├── api/
-│   ├── client.ts           # fetch wrapper: base URL + auth header
-│   ├── sessions.ts         # session CRUD
-│   ├── chat.ts             # send message + SSE stream consumer
-│   └── quickies.ts         # quickies CRUD
-├── components/
-│   ├── Sidebar.tsx         # session list + new session button
-│   ├── ChatArea.tsx        # message list + input bar
-│   ├── Message.tsx         # single message (text, image, audio, trust UI)
-│   ├── QuickiesPanel.tsx   # quickie cards
-│   └── StreamingIndicator.tsx
-├── store/
-│   └── sessions.ts         # zustand store: active session, messages, streaming state
-├── hooks/
-│   ├── useSSEStream.ts     # generic SSE hook (EventSource wrapper)
-│   └── useSessions.ts      # session list + actions
-└── types.ts                # TypeScript types matching cafe-types Chunk, SessionInfo, etc.
 ```
 
 ---

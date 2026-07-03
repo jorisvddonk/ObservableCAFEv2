@@ -24,12 +24,6 @@ base64      = "0.22"
 
 ```
 cafe-types/src/
-├── lib.rs          # re-exports everything; module declarations
-├── chunk.rs        # Chunk struct, ContentType, constructors
-├── annotation.rs   # AnnotationKey constants, AnnotationValue helpers
-├── envelope.rs     # BusEnvelope (op + session_id + chunk)
-├── error.rs        # CafeError (thiserror)
-└── session.rs      # SessionInfo, AgentDefinition (metadata structs)
 ```
 
 ---

@@ -40,67 +40,6 @@ clap         = { version = "4", features = ["derive", "env"] }
 
 ```
 cafe-tui/src/
-├── main.rs         # arg parsing, terminal setup, run event loop
-├── app.rs          # App state struct + update logic
-├── ui.rs           # ratatui rendering (layout, widgets)
-├── api.rs          # HTTP client: list sessions, send message, stream SSE
-├── input.rs        # keyboard event handling + slash command parsing
-└── config.rs       # Config (URL, token) from env + CLI args
-```
-
----
-
-## CLI arguments
-
-```
-cafe-tui [OPTIONS]
-
-Options:
-  --url <URL>      cafe-server URL [env: CAFE_SERVER_URL] [default: http://localhost:3000]
-  --token <TOKEN>  API token [env: CAFE_TOKEN]
-  -h, --help
-```
-
----
-
-## App state (app.rs)
-
-```rust
-pub struct App {
-    pub sessions: Vec<SessionInfo>,
-    pub active_session_idx: usize,
-    pub messages: Vec<Chunk>,           // history of active session
-    pub input: String,                  // current input line
-    pub streaming: bool,                // LLM is currently responding
-    pub scroll_offset: usize,
-    pub mode: AppMode,
-}
-
-pub enum AppMode {
-    Normal,
-    SessionPicker,
-    Confirm(ConfirmAction),
-}
-```
-
----
-
-## Layout (ui.rs)
-
-```
-┌─────────────────────────────────────────────┐
-│ ObservableCAFE  │  My Session  [default]     │
-├─────────────────────────────────────────────┤
-│                                             │
-│  User: Hello, how are you?                  │
-│                                             │
-│  Assistant: I'm doing well! How can I...    │
-│                                             │
-│  (streaming...)                             │
-│                                             │
-├─────────────────────────────────────────────┤
-│ > type a message...                         │
-└─────────────────────────────────────────────┘
 ```
 
 Use ratatui `Paragraph`, `Block`, `List` widgets. Scroll the message area.
