@@ -14,7 +14,8 @@ use uuid::Uuid;
 /// Shared state available to all transports.
 pub struct AppState {
     pub bus_path: String,
-    pub tools: Vec<&'static tools::ToolDef>,
+    /// All available tools (unfiltered). Per-client filtering is applied in transport.
+    pub all_tools: Vec<&'static tools::ToolDef>,
 }
 
 #[derive(Parser)]
@@ -42,21 +43,19 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
-    let filtered_tools = tools::filter_tools(&args.tools);
     info!(
-        "cafe-mcp-bridge: exposing {}/{} tools, transport={}",
-        filtered_tools.len(),
+        "cafe-mcp-bridge: all {} tools available, transport={}",
         tools::TOOLS.len(),
         args.transport
     );
 
     let state = Arc::new(AppState {
         bus_path: args.bus,
-        tools: filtered_tools,
+        all_tools: tools::TOOLS.iter().collect(),
     });
 
     match args.transport.as_str() {
-        "stdio" => transport::stdio::run(state).await?,
+        "stdio" => transport::stdio::run(state, args.tools).await?,
         "http" => transport::http::run(state, args.port).await?,
         other => anyhow::bail!("unknown transport: {other}"),
     }
@@ -65,8 +64,13 @@ async fn main() -> Result<()> {
 }
 
 /// Dispatch a single MCP JSON-RPC request.
+/// `tool_patterns` — optional per-client tool filters (e.g., from SSE ?tool= query).
 /// Returns the response value (can be a notification with no response).
-pub async fn handle_mcp_request(req: &Value, state: &AppState) -> Option<Value> {
+pub async fn handle_mcp_request(
+    req: &Value,
+    state: &AppState,
+    tool_patterns: Option<&[String]>,
+) -> Option<Value> {
     let method = req["method"].as_str().unwrap_or("");
     let id = &req["id"];
     let params = &req["params"];
@@ -86,8 +90,11 @@ pub async fn handle_mcp_request(req: &Value, state: &AppState) -> Option<Value> 
         }
         "notifications/initialized" => None, // notification — no response
         "tools/list" => {
-            let tool_list: Vec<Value> = state
-                .tools
+            let available = match tool_patterns {
+                Some(patterns) => tools::filter_tools(patterns),
+                None => state.all_tools.clone(),
+            };
+            let tool_list: Vec<Value> = available
                 .iter()
                 .map(|t| {
                     json!({

@@ -5,10 +5,15 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::{handle_mcp_request, AppState};
 
-pub async fn run(state: Arc<AppState>) -> Result<()> {
+pub async fn run(state: Arc<AppState>, tool_patterns: Vec<String>) -> Result<()> {
     let stdin = tokio::io::stdin();
     let mut reader = BufReader::new(stdin).lines();
     let mut writer = tokio::io::stdout();
+    let patterns = if tool_patterns.iter().any(|p| p == "*") {
+        None
+    } else {
+        Some(tool_patterns)
+    };
 
     while let Ok(Some(line)) = reader.next_line().await {
         if line.trim().is_empty() {
@@ -23,7 +28,7 @@ pub async fn run(state: Arc<AppState>) -> Result<()> {
             }
         };
 
-        if let Some(resp) = handle_mcp_request(&req, &state).await {
+        if let Some(resp) = handle_mcp_request(&req, &state, patterns.as_deref()).await {
             let mut buf = serde_json::to_string(&resp)?;
             buf.push('\n');
             writer.write_all(buf.as_bytes()).await?;
