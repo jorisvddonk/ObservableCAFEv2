@@ -55,8 +55,9 @@ subscriptions (same pattern as cafe-dice).
 | Method | Params | Returns |
 |---|---|---|
 | `knowledgebase.embed` | `{ text }` | `{ embedding: [f32] }` |
-| `knowledgebase.index` | `{ namespace, doc_id?, text, metadata? }` | `{ doc_id }` |
-| `knowledgebase.search` | `{ namespace, query, k? }` | `{ results: [{ doc_id, text, metadata, score }] }` |
+| `knowledgebase.index` | `{ namespace, doc_id?, text, metadata?, chunk_size?, chunk_overlap? }` | `{ doc_id, chunk_count }` |
+| `knowledgebase.search` | `{ namespace, query, k? }` | `{ results: [{ doc_id, text, metadata, score, parent_doc_id?, chunk_index? }] }` |
+| `knowledgebase.search_with_context` | `{ namespace, query, k?, context_chunks? }` | `{ results: [{ ..., context_before, context_after }] }` |
 | `knowledgebase.delete` | `{ namespace, doc_id }` | `{ deleted: true }` |
 | `knowledgebase.list` | `{ namespace }` | `{ documents: [...] }` |
 
@@ -97,6 +98,45 @@ and feeds results as context to the LLM.
 | `CAFE_KNOWLEDGEBASE_DB_PATH` | `./knowledgebase.lance` | LanceDB directory path |
 | `CAFE_KNOWLEDGEBASE_EMBED_DIM` | `768` | Expected embedding dimension |
 
+### Chunking
+
+Every `knowledgebase.index` operation automatically stores **both** the full
+document vector AND chunk-level vectors in the same namespace. This means:
+
+- Broad queries match the full document (high semantic coverage)
+- Specific queries match individual chunks (precise snippet retrieval)
+- Search returns whichever is most relevant
+
+**Chunking algorithm** (`index::chunk_text()`):
+1. Split on double-newline (paragraph boundaries)
+2. Merge small paragraphs until `chunk_size` characters are reached
+3. If a single paragraph exceeds `chunk_size`, hard-split by character count
+4. Overlap: prepend last `overlap` chars of the previous chunk to the next
+
+**Schema** (LanceDB table per namespace):
+```
+doc_id:         Utf8     (primary key)
+text:           Utf8
+metadata:       Utf8     (JSON, optional)
+created_at:     Utf8     (Unix timestamp)
+parent_doc_id:  Utf8     (self for full docs, parent doc_id for chunks)
+chunk_index:    Int32    (-1 for full docs, 0+ for chunks)
+embedding:      FixedSizeList<Float32, dim>
+```
+
+Full documents have `parent_doc_id = doc_id` and `chunk_index = -1`.
+Chunks have `parent_doc_id = <parent>`, `chunk_index = <N>`,
+and `doc_id = "<parent>--chunk-<N>"`.
+
+### Context-aware search
+
+`knowledgebase.search_with_context` returns each matching chunk plus N
+neighboring chunks (configurable via `context_chunks` param, default 2).
+
+The context is assembled by scanning all rows sharing the same
+`parent_doc_id`, sorting by `chunk_index`, and extracting the N before
+and N after the match.
+
 ### Consequences
 
 - Vector search is available to any bus-connected service via RPC
@@ -105,6 +145,19 @@ and feeds results as context to the LLM.
 - No separate vector DB server to manage
 - Embedding API is configurable — works with local Ollama or remote OpenAI
 - Indexing is straightforward via CLI or direct RPC
+- Every document is automatically chunked — no CLI flag needed
+- Context-aware search returns neighboring snippets for LLM context
+
+### Environment Variables
+
+| Var | Default | Description |
+|---|---|---|
+| `CAFE_KNOWLEDGEBASE_EMBED_URL` | `http://localhost:11434/api/embed` | Embedding API endpoint |
+| `CAFE_KNOWLEDGEBASE_EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
+| `CAFE_KNOWLEDGEBASE_DB_PATH` | `./knowledgebase.lance` | LanceDB directory path |
+| `CAFE_KNOWLEDGEBASE_EMBED_DIM` | `768` | Expected embedding dimension |
+| `CAFE_KNOWLEDGEBASE_CHUNK_SIZE` | `512` | Chunk size in characters |
+| `CAFE_KNOWLEDGEBASE_CHUNK_OVERLAP` | `64` | Overlap between chunks |
 
 ### Files Created
 
