@@ -112,6 +112,8 @@ Wire format is newline-delimited JSON using types defined in `cafe-types`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
+See [`docs/cafe-annotations.md`](docs/cafe-annotations.md) for the list of `cafe.*` annotation keys interpreted by the bus and platform services.
+
 See [`docs/adr-*.md`](docs/) for Architecture Decision Records covering key design choices (SubscribeFiltered, Connection IDs, Direct-to, Mutations, Transient Retention, Binary Streaming, etc.).
 
 ## CLI
