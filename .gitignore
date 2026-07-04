@@ -1,3 +1,6 @@
+# LanceDB vector database (auto-generated)
+/knowledgebase.lance/
+
 # TypeScript
 *.tsbuildinfo
 
