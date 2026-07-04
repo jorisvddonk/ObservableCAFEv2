@@ -9,7 +9,11 @@ path = "src/main.rs"
 
 [dependencies]
 cafe-sdk = { path = "../cafe-sdk", features = ["bus-client"] }
-tokio = { workspace = true, features = ["io-util", "sync", "net", "process"] }
+tokio = { workspace = true, features = ["io-util", "sync", "net", "process", "rt"] }
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["cors"] }
+tokio-stream = "0.1"
+futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"] }

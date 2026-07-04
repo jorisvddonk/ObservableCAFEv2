@@ -224,6 +224,20 @@ processes:
       cafe-bus:
         condition: process_healthy
 
+  cafe-mcp-bridge:
+    command: ./target/debug/cafe-mcp-bridge --transport http --port 3100
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+
   cafe-demo:
     command: ./target/debug/cafe-demo
     environment:
