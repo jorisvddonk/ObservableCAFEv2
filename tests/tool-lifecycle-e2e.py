@@ -1,10 +1,10 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx"]
+# dependencies = []
 # ///
 """
-Lifecycle e2e test for LLM-generated tool calls.
+Lifecycle e2e test for LLM-generated tool calls — uses cafe-cli for all ops.
 
 Tests: start → dice-llm session → chat "roll 2d6" → LLM emits
 <|tool_call|> → shutdown → restart → verify persistence → chat
@@ -13,17 +13,16 @@ again → delete.
 Requires: cargo build --release, LLM backend running (port 8080).
 """
 
-import httpx
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE_DIR = os.path.join(PROJECT_ROOT, "target", "release")
+CLI = os.path.join(RELEASE_DIR, "cafe-cli")
 
 BINARIES = {
     "bus": os.path.join(RELEASE_DIR, "cafe-bus"),
@@ -33,117 +32,30 @@ BINARIES = {
     "server": os.path.join(RELEASE_DIR, "cafe-server"),
     "dice": os.path.join(RELEASE_DIR, "cafe-dice"),
 }
-SERVER_PORT = os.environ.get("CAFE_SERVER_PORT", "49998")
-SERVER_URL = f"http://localhost:{SERVER_PORT}"
 
 
-def require_binaries():
-    missing = [k for k, v in BINARIES.items() if not os.path.exists(v)]
-    if missing:
-        print(f"Build release binaries first: cargo build --release -p {' -p '.join(missing)}")
-        sys.exit(1)
+def run(cmd, **kwargs):
+    print(f"  + {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
-def dump_logs(tmpdir):
-    for key in ["bus", "store", "llm", "agent", "server", "dice"]:
-        logfile = os.path.join(tmpdir, f"{key}.log")
-        try:
-            with open(logfile) as f:
-                lines = f.readlines()
-                print(f"  [{key}.log] last 10 lines:", file=sys.stderr)
-                for line in lines[-10:]:
-                    print(f"    {line.rstrip()[:200]}", file=sys.stderr)
-        except FileNotFoundError:
-            pass
-
-
-def start_all(env, tmpdir):
-    procs = {}
-    for key, path in BINARIES.items():
-        e = env.copy()
-        if key == "server":
-            e["PORT"] = SERVER_PORT
-        log = open(os.path.join(tmpdir, f"{key}.log"), "w")
-        procs[key] = subprocess.Popen([path], env=e, stdout=log, stderr=subprocess.STDOUT)
-        time.sleep(0.5)
-    time.sleep(2)
-    return procs
-
-
-def stop_all(procs):
-    for key in ["server", "agent", "llm", "dice", "store", "bus"]:
-        p = procs.pop(key, None)
-        if p:
-            p.terminate()
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait()
-
-
-def create_session(token, agent="default"):
-    r = httpx.post(
-        f"{SERVER_URL}/api/sessions",
-        json={"agent_id": agent},
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()["id"]
-
-
-def delete_session(token, session_id):
-    r = httpx.delete(
-        f"{SERVER_URL}/api/sessions/{session_id}",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10,
-    )
-    r.raise_for_status()
-
-
-def send_chat(token, session_id, message, timeout=60):
-    def _read():
-        r = httpx.post(
-            f"{SERVER_URL}/api/sessions/{session_id}/chat",
-            json={"content": message},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=timeout,
-        )
-        r.raise_for_status()
-        chunks = []
-        for line in r.iter_lines():
-            if not line or not line.startswith("data: "):
-                continue
-            chunk = json.loads(line[6:])
-            chunks.append(chunk)
-            if chunk.get("annotations", {}).get("chat.stream_complete"):
-                break
-        return chunks
-
-    with ThreadPoolExecutor(1) as pool:
-        try:
-            return pool.submit(_read).result(timeout=timeout + 10)
-        except Exception:
-            raise TimeoutError(f"Chat timed out after {timeout}s")
-
-
-def get_history(token, session_id):
-    r = httpx.get(
-        f"{SERVER_URL}/api/sessions/{session_id}/history",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10,
-    )
-    r.raise_for_status()
-    return r.json().get("chunks", [])
+def cli(socket_path, *args):
+    r = run([CLI, "--bus", socket_path, "--server", "http://localhost:49999",
+             "--token", "test-admin-token", *args])
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
 
 
 def main():
-    require_binaries()
+    for p in list(BINARIES.values()) + [CLI]:
+        if not os.path.exists(p):
+            print(f"Build release binaries first: cargo build --release", file=sys.stderr)
+            sys.exit(1)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
         db_path = os.path.join(tmpdir, "cafe.db")
+
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["LLM_BACKEND"] = "openai"
@@ -152,69 +64,92 @@ def main():
         env["CAFE_ADMIN_TOKEN"] = "test-admin-token"
         env["CAFE_DB_PATH"] = db_path
 
-        # ── Phase 1: First run ──
+        # ── Phase 1 ──
         print("=== Phase 1: First run ===", file=sys.stderr)
-        procs = start_all(env, tmpdir)
-        token = "test-admin-token"
+        procs = {}
+        for key, path in BINARIES.items():
+            log = open(os.path.join(tmpdir, f"{key}.log"), "w")
+            e = env.copy()
+            if key == "server":
+                e["PORT"] = "49999"
+            procs[key] = subprocess.Popen([path], env=e, stdout=log, stderr=subprocess.STDOUT)
+            time.sleep(0.5)
+        time.sleep(2)
 
         try:
-            session_id = create_session(token, "dice-llm")
+            session_id = cli(bus_socket, "create-session", "--agent", "dice-llm")
             print(f"  session={session_id}", file=sys.stderr)
 
-            chunks = send_chat(token, session_id, "roll 2d6")
-            print(f"  {len(chunks)} SSE chunks", file=sys.stderr)
+            c = cli(bus_socket, "chat", session_id, "roll 2d6", "--timeout-secs", "60")
+            chunks = [json.loads(l) for l in c.split("\n") if l.strip()]
+            asst = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
+            text = "".join(c.get("content", "") or "" for c in asst)
+            assert len(text.strip()) > 0, "Empty LLM response"
+            has_tool = "<|tool_call|>" in text
+            print(f"  {len(chunks)} chunks, tool_call={has_tool}", file=sys.stderr)
 
-            # Check LLM responded
-            assistant = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
-            full_text = "".join(c.get("content", "") or "" for c in assistant)
-            print(f"  LLM response ({len(full_text)} chars): {full_text[:200]}", file=sys.stderr)
-            assert len(full_text.strip()) > 0, "Empty LLM response"
+            h = cli(bus_socket, "history", session_id)
+            history = [json.loads(l) for l in h.split("\n") if l.strip()]
+            print(f"  history: {len(history)} chunks", file=sys.stderr)
 
-            # Check response contains tool call marker (LLM was prompted correctly)
-            has_tool_call = "<|tool_call|>" in full_text
-            if has_tool_call:
-                print(f"  LLM generated tool call ✅", file=sys.stderr)
-            else:
-                print(f"  No tool call in response (LLM may not have understood)", file=sys.stderr)
-
-            # Check history for assistant chunks
-            history = get_history(token, session_id)
-            asst_msgs = [c for c in history if c.get("annotations", {}).get("chat.role") == "assistant"]
-            print(f"  history: {len(asst_msgs)} assistant chunks", file=sys.stderr)
-
-        except:
-            dump_logs(tmpdir)
-            raise
         finally:
             print("=== Shutdown ===", file=sys.stderr)
-            stop_all(procs)
+            for key in ["server", "agent", "llm", "dice", "store", "bus"]:
+                p = procs.pop(key, None)
+                if p:
+                    p.terminate()
+            for key in ["server", "agent", "llm", "dice", "store", "bus"]:
+                p = procs.pop(key, None)
+                if p:
+                    try:
+                        p.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait()
 
-        # ── Phase 2: Restart ──
+        # ── Phase 2 ──
         print("=== Phase 2: Restart ===", file=sys.stderr)
-        procs = start_all(env, tmpdir)
+        for key, path in BINARIES.items():
+            log = open(os.path.join(tmpdir, f"{key}.log"), "w")
+            e = env.copy()
+            if key == "server":
+                e["PORT"] = "49999"
+            procs[key] = subprocess.Popen([path], env=e, stdout=log, stderr=subprocess.STDOUT)
+            time.sleep(0.5)
+        time.sleep(3)
 
         try:
-            time.sleep(2)
-            history = get_history(token, session_id)
-            asst_msgs = [c for c in history if c.get("annotations", {}).get("chat.role") == "assistant"]
-            assert len(asst_msgs) >= 1, f"No assistant messages after restart ({len(history)} chunks)"
-            print(f"  history persisted: {len(history)} chunks", file=sys.stderr)
+            h = cli(bus_socket, "history", session_id)
+            history = [json.loads(l) for l in h.split("\n") if l.strip()]
+            assert len(history) >= 1, "Empty history after restart"
+            print(f"  history: {len(history)} chunks", file=sys.stderr)
 
-            chunks = send_chat(token, session_id, "roll a d20")
-            assistant = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
-            text = "".join(c.get("content", "") or "" for c in assistant)
+            c = cli(bus_socket, "chat", session_id, "roll a d20", "--timeout-secs", "60")
+            chunks = [json.loads(l) for l in c.split("\n") if l.strip()]
+            asst = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
+            text = "".join(c.get("content", "") or "" for c in asst)
             assert len(text.strip()) > 0, "Empty response after restart"
-            print(f"  post-restart response ({len(text)} chars)", file=sys.stderr)
+            print(f"  response: {text[:100]}", file=sys.stderr)
 
-            delete_session(token, session_id)
-            print(f"  session deleted", file=sys.stderr)
+            cli(bus_socket, "delete-session", session_id)
+            s = json.loads(cli(bus_socket, "list-sessions"))
+            assert session_id not in [x["session_id"] for x in s]
+            print("  deleted", file=sys.stderr)
 
-        except:
-            dump_logs(tmpdir)
-            raise
         finally:
             print("=== Final shutdown ===", file=sys.stderr)
-            stop_all(procs)
+            for key in ["server", "agent", "llm", "dice", "store", "bus"]:
+                p = procs.pop(key, None)
+                if p:
+                    p.terminate()
+            for key in ["server", "agent", "llm", "dice", "store", "bus"]:
+                p = procs.pop(key, None)
+                if p:
+                    try:
+                        p.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait()
 
     print(file=sys.stderr)
     print("=== ALL TOOL LIFECYCLE TESTS PASSED ===", file=sys.stderr)

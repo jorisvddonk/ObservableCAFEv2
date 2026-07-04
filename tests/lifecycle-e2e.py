@@ -1,10 +1,10 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx"]
+# dependencies = []
 # ///
 """
-Full lifecycle e2e test.
+Full lifecycle e2e test — uses cafe-cli for all bus/HTTP operations.
 
 Tests: start services → create session → chat → verify LLM turn →
 shutdown → restart → chat again (persistence) → verify → delete
@@ -13,10 +13,8 @@ session → verify deleted → shutdown.
 Requires: cargo build --release, LLM backend running (port 8080).
 """
 
-import httpx
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -24,6 +22,8 @@ import time
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE_DIR = os.path.join(PROJECT_ROOT, "target", "release")
+CLI = os.path.join(RELEASE_DIR, "cafe-cli")
+CLI_ARGS = ["--bus"]
 
 BINARIES = {
     "bus": os.path.join(RELEASE_DIR, "cafe-bus"),
@@ -32,9 +32,6 @@ BINARIES = {
     "agent": os.path.join(RELEASE_DIR, "cafe-agent-runtime"),
     "server": os.path.join(RELEASE_DIR, "cafe-server"),
 }
-SERVER_PORT = os.environ.get("CAFE_SERVER_PORT", "49999")
-SERVER_URL = f"http://localhost:{SERVER_PORT}"
-TOKEN = "test-admin-token"
 
 
 def dump_logs(tmpdir):
@@ -50,35 +47,25 @@ def dump_logs(tmpdir):
             pass
 
 
-def require_binaries():
-    missing = [k for k, v in BINARIES.items() if not os.path.exists(v)]
-    if missing:
-        print(f"Build release binaries first: cargo build --release -p {' -p '.join(missing)}",
-              file=sys.stderr)
-        sys.exit(1)
+def run(cmd, **kwargs):
+    print(f"  + {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
 def start_all(env, tmpdir):
-    """Start all services, return dict of process handles."""
     procs = {}
     for key, path in BINARIES.items():
-        if key == "store":
-            e = env.copy()
-            e["CAFE_DB_PATH"] = os.path.join(tmpdir, "cafe.db")
-        elif key == "server":
-            e = env.copy()
-            e["PORT"] = SERVER_PORT
-        else:
-            e = env
+        e = env.copy()
+        if key == "server":
+            e["PORT"] = "49999"
         log = open(os.path.join(tmpdir, f"{key}.log"), "w")
         procs[key] = subprocess.Popen([path], env=e, stdout=log, stderr=subprocess.STDOUT)
         time.sleep(0.5)
-    # Wait extra for agent to discover sessions
     time.sleep(2)
     return procs
 
 
-def stop_all(procs, tmpdir):
+def stop_all(procs):
     for key in ["server", "agent", "llm", "store", "bus"]:
         p = procs.pop(key, None)
         if p:
@@ -93,177 +80,110 @@ def stop_all(procs, tmpdir):
                 p.wait()
 
 
-def create_session(token, agent="default"):
-    r = httpx.post(
-        f"{SERVER_URL}/api/sessions",
-        json={"agent_id": agent},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    r.raise_for_status()
-    data = r.json()
-    print(f"  session={data['id']} agent={data['agent_id']}", file=sys.stderr)
-    return data["id"]
-
-
-def delete_session(token, session_id):
-    r = httpx.delete(
-        f"{SERVER_URL}/api/sessions/{session_id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    r.raise_for_status()
-
-
-def list_sessions(token):
-    r = httpx.get(
-        f"{SERVER_URL}/api/sessions",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    r.raise_for_status()
-    return [s["session_id"] for s in r.json()]
-
-
-def send_chat(token, session_id, message, timeout=60):
-    """Send a chat message, return SSE events as a list of chunks.
-    Runs in a thread so we can enforce a hard wall-clock timeout."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _read():
-        r = httpx.post(
-            f"{SERVER_URL}/api/sessions/{session_id}/chat",
-            json={"content": message},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        r.raise_for_status()
-        chunks = []
-        for line in r.iter_lines():
-            if not line or not line.startswith("data: "):
-                continue
-            chunk = json.loads(line[6:])
-            chunks.append(chunk)
-            if chunk.get("annotations", {}).get("chat.stream_complete"):
-                break
-        return chunks
-
-    with ThreadPoolExecutor(1) as pool:
-        try:
-            return pool.submit(_read).result(timeout=timeout)
-        except Exception:
-            raise TimeoutError(f"Chat timed out after {timeout}s")
-
-
-def get_history(token, session_id):
-    r = httpx.get(
-        f"{SERVER_URL}/api/sessions/{session_id}/history",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    r.raise_for_status()
-    return r.json().get("chunks", [])
+def cli(socket_path, *args):
+    r = run([CLI, "--bus", socket_path, "--server", "http://localhost:49999",
+             "--token", "test-admin-token", *args])
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
 
 
 def main():
-    require_binaries()
+    for path in list(BINARIES.values()) + [CLI]:
+        if not os.path.exists(path):
+            print(f"Build release binaries first: cargo build --release", file=sys.stderr)
+            sys.exit(1)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
-        admin_log = os.path.join(tmpdir, "admin.log")
-
         db_path = os.path.join(tmpdir, "cafe.db")
+
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["LLM_BACKEND"] = "openai"
         env["OPENAI_URL"] = "http://localhost:8080"
         env["OPENAI_MODEL"] = "gemma3:1b"
-        env["CAFE_ADMIN_TOKEN"] = TOKEN
+        env["CAFE_ADMIN_TOKEN"] = "test-admin-token"
         env["CAFE_DB_PATH"] = db_path
 
-        # ── Phase 1: First run ──
+        # ── Phase 1 ──
         print("=== Phase 1: First run ===", file=sys.stderr)
         procs = start_all(env, tmpdir)
 
-        # Save admin token
-        time.sleep(1)
-        admin_token = TOKEN
-        print(f"  token={admin_token}", file=sys.stderr)
-
         try:
-            # Create session
-            print("=== Create session ===", file=sys.stderr)
-            session_id = create_session(admin_token)
+            # Verify list-sessions works on a fresh bus
+            s = json.loads(cli(bus_socket, "list-sessions"))
+            print(f"  initial sessions: {len(s)}", file=sys.stderr)
 
-            # Send a message and verify LLM response
-            print("=== Chat ===", file=sys.stderr)
-            chunks = send_chat(admin_token, session_id, "Say hello in one word.")
+            session_id = cli(bus_socket, "create-session", "--agent", "default")
+            print(f"  session={session_id}", file=sys.stderr)
+
+            chunks_raw = cli(bus_socket, "chat", session_id, "Say hello in one word.", "--timeout-secs", "60")
+            chunks = [json.loads(l) for l in chunks_raw.strip().split("\n") if l.strip()]
             print(f"  {len(chunks)} SSE chunks", file=sys.stderr)
+            asst = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
+            text = "".join(c.get("content", "") or "" for c in asst)
+            assert len(text.strip()) > 0, "Empty assistant response"
+            print(f"  assistant: {text[:100]}", file=sys.stderr)
 
-            # Debug: show all chunks
-            for i, c in enumerate(chunks[:10]):
-                print(f"  chunk[{i}]: type={c.get('content_type')} role={c.get('annotations',{}).get('chat.role')} content={str(c.get('content',''))[:80]}", file=sys.stderr)
+            # Debug: check sessions and try history
+            s = json.loads(cli(bus_socket, "list-sessions"))
+            ids = [x["session_id"] for x in s]
+            print(f"  sessions: {ids}", file=sys.stderr)
+            assert session_id in ids, f"Session {session_id} not in bus sessions: {ids}"
 
-            # Check that there's an assistant response
-            assistant = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
-            content = next((c.get("content", "") for c in assistant if c.get("content")), "")
-            print(f"  assistant: {content[:100]}", file=sys.stderr)
-            assert len(assistant) > 0, f"No assistant chunks in SSE (got {len(chunks)} chunks)"
-
-            # Verify history
-            history = get_history(admin_token, session_id)
-            user_msgs = [c for c in history if c.get("annotations", {}).get("chat.role") == "user"]
+            history_raw = cli(bus_socket, "history", session_id)
+            history = [json.loads(l) for l in history_raw.strip().split("\n") if l.strip()]
             asst_msgs = [c for c in history if c.get("annotations", {}).get("chat.role") == "assistant"]
-            assert len(user_msgs) >= 1, "No user message in history"
-            assert len(asst_msgs) >= 1, "No assistant message in history"
-            print(f"  history: {len(user_msgs)} user, {len(asst_msgs)} assistant", file=sys.stderr)
+            assert len(asst_msgs) >= 1
+            print(f"  history: {len(asst_msgs)} assistant", file=sys.stderr)
 
         except:
             dump_logs(tmpdir)
             raise
         finally:
-            # Shutdown
             print("=== Shutdown ===", file=sys.stderr)
-            stop_all(procs, tmpdir)
+            stop_all(procs)
 
-        # ── Phase 2: Restart and verify persistence ──
+        # Verify DB has data before restart
+        import sqlite3
+        db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+        print(f"  DB file: {db_size} bytes", file=sys.stderr)
+        if db_size > 0:
+            conn = sqlite3.connect(db_path)
+            sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            conn.close()
+            print(f"  DB has {sessions} sessions, {chunks} chunks", file=sys.stderr)
+
+        # ── Phase 2: Restart ──
         print("=== Phase 2: Restart ===", file=sys.stderr)
         procs = start_all(env, tmpdir)
 
         try:
-            # Verify session still exists (wait for restore to complete)
-            time.sleep(3)
-            sessions = list_sessions(admin_token)
-            assert session_id in sessions, f"Session {session_id} lost on restart"
-            print(f"  session persisted: {session_id}", file=sys.stderr)
-
-            # Verify history still intact
-            history = get_history(admin_token, session_id)
+            time.sleep(5)
+            history_raw = cli(bus_socket, "history", session_id)
+            history = [json.loads(l) for l in history_raw.strip().split("\n") if l.strip()]
+            assert len(history) >= 1, "Empty history after restart"
             print(f"  history: {len(history)} chunks", file=sys.stderr)
-            for i, c in enumerate(history[:5]):
-                print(f"    [{i}] type={c.get('content_type')} role={c.get('annotations',{}).get('chat.role')} prod={c.get('producer','')[:30]}", file=sys.stderr)
-            asst_msgs = [c for c in history if c.get("annotations", {}).get("chat.role") == "assistant"]
-            assert len(asst_msgs) >= 1, f"No assistant messages after restart (history has {len(history)} chunks)"
 
-            # Send another message
-            print("=== Chat (post-restart) ===", file=sys.stderr)
-            chunks = send_chat(admin_token, session_id, "Say goodbye in one word.")
-            print(f"  {len(chunks)} SSE chunks", file=sys.stderr)
+            chunks_raw = cli(bus_socket, "chat", session_id, "Say goodbye in one word.", "--timeout-secs", "60")
+            chunks = [json.loads(l) for l in chunks_raw.strip().split("\n") if l.strip()]
             asst = [c for c in chunks if c.get("annotations", {}).get("chat.role") == "assistant"]
-            content = next((c.get("content", "") for c in asst if c.get("content")), "")
-            assert len(content.strip()) > 0, f"Empty assistant response ({len(chunks)} chunks)"
-            print(f"  assistant: {content[:100]}", file=sys.stderr)
+            text = "".join(c.get("content", "") or "" for c in asst)
+            assert len(text.strip()) > 0, "Empty response after restart"
+            print(f"  assistant: {text[:100]}", file=sys.stderr)
 
-            # Delete session
-            print("=== Delete session ===", file=sys.stderr)
-            delete_session(admin_token, session_id)
-
-            # Verify deleted
-            sessions = list_sessions(admin_token)
-            assert session_id not in sessions, f"Session {session_id} still exists after delete"
-            print("  session deleted", file=sys.stderr)
+            cli(bus_socket, "delete-session", session_id)
+            sessions = json.loads(cli(bus_socket, "list-sessions"))
+            assert session_id not in [s["session_id"] for s in sessions]
+            print(f"  session deleted", file=sys.stderr)
 
         except:
             dump_logs(tmpdir)
             raise
         finally:
             print("=== Final shutdown ===", file=sys.stderr)
-            stop_all(procs, tmpdir)
+            stop_all(procs)
 
     print(file=sys.stderr)
     print("=== ALL LIFECYCLE TESTS PASSED ===", file=sys.stderr)

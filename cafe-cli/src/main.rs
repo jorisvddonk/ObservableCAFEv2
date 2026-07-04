@@ -1,9 +1,11 @@
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
+use cafe_sdk::http::HttpClient;
 use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SubscribeFilter};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
 
 fn parse_keyval(s: &str) -> Result<(String, String)> {
     let mut parts = s.splitn(2, '=');
@@ -17,6 +19,14 @@ fn parse_keyval(s: &str) -> Result<(String, String)> {
 struct Cli {
     #[arg(long, default_value = "/tmp/cafe-bus.sock")]
     bus: String,
+
+    /// Cafe-server HTTP URL (needed for chat command)
+    #[arg(long, default_value = "http://localhost:4000")]
+    server: String,
+
+    /// Auth token (needed for HTTP commands)
+    #[arg(long)]
+    token: Option<String>,
 
     #[arg(short, long, help = "Logging to stderr")]
     verbose: bool,
@@ -81,6 +91,14 @@ enum Command {
     /// Print session history as JSON lines
     History {
         session_id: String,
+    },
+    /// Send a chat message and print SSE response chunks as JSON lines
+    Chat {
+        session_id: String,
+        message: String,
+        /// Wait up to this many seconds for a response (default 30)
+        #[arg(long, default_value = "30")]
+        timeout_secs: u64,
     },
 }
 
@@ -330,6 +348,33 @@ async fn main() -> Result<()> {
             let chunks = client.get_history(&session_id).await?;
             for chunk in &chunks {
                 let json = serde_json::to_string(chunk)?;
+                println!("{}", json);
+            }
+        }
+
+        Command::Chat {
+            session_id,
+            message,
+            timeout_secs,
+        } => {
+            let token = cli.token.as_deref().unwrap_or("");
+            let http = HttpClient::new(&cli.server, token);
+            let (tx, mut rx) = mpsc::channel::<Chunk>(256);
+
+            tokio::select! {
+                result = http.stream_chat(&session_id, &message, tx) => {
+                    if let Err(e) = result {
+                        eprintln!("chat error: {}", e);
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
+                    eprintln!("chat timeout after {}s", timeout_secs);
+                }
+            }
+
+            // Drain all chunks (stream_chat closes tx when done)
+            while let Some(chunk) = rx.recv().await {
+                let json = serde_json::to_string(&chunk)?;
                 println!("{}", json);
             }
         }

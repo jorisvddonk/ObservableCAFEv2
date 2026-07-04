@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx"]
+# dependencies = []
 # ///
 """
 End-to-end test: null config chunks switch model and system prompt.
@@ -24,9 +24,8 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,10 +39,8 @@ SERVER_BIN = os.path.join(RELEASE_DIR, "cafe-server")
 
 MOCK_PORT = 49995
 SERVER_PORT = 49994
-SERVER_URL = f"http://localhost:{SERVER_PORT}"
 TOKEN = "test-admin-token"
 
-# In-memory buffer for mock LLM requests, shared via threading
 mock_requests = []
 mock_lock = threading.Lock()
 
@@ -52,42 +49,30 @@ class MockLLMHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length).decode())
-
         model = body.get("model", "unknown")
         messages = body.get("messages", [])
         system_prompt = next((m["content"] for m in messages if m.get("role") == "system"), "")
-
         with mock_lock:
             mock_requests.append({"model": model, "system_prompt": system_prompt})
-
-        # Return canned SSE stream
         reply = f"Responding with {model}. System: {system_prompt[:40]}..."
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-
         for word in reply.split():
-            chunk = {
-                "id": "mock-0",
-                "object": "chat.completion.chunk",
-                "choices": [{"delta": {"content": word + " "}, "index": 0}],
-            }
+            chunk = {"id": "mock-0", "object": "chat.completion.chunk",
+                     "choices": [{"delta": {"content": word + " "}, "index": 0}]}
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
             self.wfile.flush()
-
-        final = {
-            "id": "mock-0",
-            "object": "chat.completion.chunk",
-            "choices": [{"delta": {}, "finish_reason": "stop", "index": 0}],
-        }
+        final = {"id": "mock-0", "object": "chat.completion.chunk",
+                 "choices": [{"delta": {}, "finish_reason": "stop", "index": 0}]}
         self.wfile.write(f"data: {json.dumps(final)}\n\n".encode())
         self.wfile.write("data: [DONE]\n\n".encode())
         self.wfile.flush()
 
     def log_message(self, format, *args):
-        pass  # silence logs
+        pass
 
 
 def run_mock_server():
@@ -97,35 +82,20 @@ def run_mock_server():
         server.handle_request()
 
 
+def run(cmd, **kwargs):
+    print(f"  + {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
 def start_proc(cmd, env, logfile):
     return subprocess.Popen(cmd, env=env, stdout=open(logfile, "w"), stderr=subprocess.STDOUT)
 
 
-def send_chat(token, session_id, message, timeout=30):
-    import httpx
-
-    def _read():
-        r = httpx.post(
-            f"{SERVER_URL}/api/sessions/{session_id}/chat",
-            json={"content": message},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        r.raise_for_status()
-        chunks = []
-        for line in r.iter_lines():
-            if not line or not line.startswith("data: "):
-                continue
-            chunk = json.loads(line[6:])
-            chunks.append(chunk)
-            if chunk.get("annotations", {}).get("chat.stream_complete"):
-                break
-        return chunks
-
-    with ThreadPoolExecutor(1) as pool:
-        try:
-            return pool.submit(_read).result(timeout=timeout)
-        except Exception:
-            raise TimeoutError(f"Chat timed out after {timeout}s")
+def cli(socket_path, *args):
+    r = run([CLI, "--bus", socket_path, "--server", "http://localhost:49994",
+             "--token", TOKEN, *args])
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
 
 
 def main():
@@ -189,7 +159,8 @@ def main():
             time.sleep(1)
 
             # Chat
-            chunks = send_chat(TOKEN, session_id, "hello, what are you?")
+            c = cli(bus_socket, "chat", session_id, "hello, what are you?", "--timeout-secs", "60")
+            chunks = [json.loads(l) for l in c.split("\n") if l.strip()]
             print(f"  {len(chunks)} SSE chunks", file=sys.stderr)
 
             # Verify mock received gemma3 and cat prompt
@@ -214,7 +185,8 @@ def main():
             print(f"  published config chunk (model=llama3.2:3b, dog)", file=sys.stderr)
             time.sleep(1)
 
-            chunks = send_chat(TOKEN, session_id, "what's your name?")
+            c = cli(bus_socket, "chat", session_id, "what's your name?", "--timeout-secs", "60")
+            chunks = [json.loads(l) for l in c.split("\n") if l.strip()]
             print(f"  {len(chunks)} SSE chunks", file=sys.stderr)
 
             with mock_lock:
