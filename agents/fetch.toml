@@ -1,0 +1,10 @@
+name = "fetch"
+description = "Web fetch agent — !fetch <url> to download and display web content"
+background = false
+allows_reload = true
+persists_state = false
+
+[[steps]]
+id = "web-fetch"
+type = "web-fetch"
+trigger = "user_message"

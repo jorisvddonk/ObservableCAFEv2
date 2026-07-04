@@ -1,0 +1,13 @@
+[package]
+name = "cafe-web-fetch"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cafe-sdk = { path = "../cafe-sdk", features = ["bus-client"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1"
+reqwest = { workspace = true }
+serde_json = "1"

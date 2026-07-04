@@ -1,6 +1,6 @@
 # ADR-109: Web fetch service
 
-**Status**: Draft — not yet implemented
+**Status**: Implemented (`e6be9c1`) — cafe-web-fetch binary, agent TOML, process-compose entry. HTTP endpoint at `POST /api/sessions/:id/web` kept as-is.
 
 **Context**: `fetch_web` lives in `cafe-server/src/handlers/chunks.rs:62-130` as a synchronous HTTP handler. It accepts a URL, fetches it with `reqwest`, and publishes the result as a chunk with `web.source_url`, `web.content_type`, `web.fetch_time`, and optionally `web.error` annotations.
 
