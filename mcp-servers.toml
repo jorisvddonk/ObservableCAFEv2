@@ -1,0 +1,10 @@
+# MCP servers available to agent pipelines via cafe-mcp-client.
+# Each server is spawned as a child process and exposed as MCP tools
+# on the bus with provider: "mcp".
+#
+# Example:
+# [[server]]
+# name = "tavily"
+# command = "npx"
+# args = ["-y", "@tavily/mcp"]
+

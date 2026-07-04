@@ -8,6 +8,9 @@ pub struct ToolCall {
     pub name: String,
     /// Parameters as a JSON object.
     pub parameters: Value,
+    /// Provider: "mcp" for MCP-served tools, None for bus RPC.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// Result produced by executing a tool.
@@ -20,6 +23,9 @@ pub struct ToolResult {
     /// Set if the tool execution failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Provider, copied from ToolCall for routing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// Tool definition used in agent config annotations.
@@ -32,6 +38,9 @@ pub struct ToolDefinition {
     /// "rpc" for bus-dispatched tools, "builtin" for in-process.
     #[serde(default = "default_tool_type")]
     pub tool_type: String,
+    /// Provider: "mcp" for MCP-served tools, None for bus RPC.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 fn default_tool_type() -> String {

@@ -51,6 +51,7 @@ impl StepType {
             "trust-filter" => StepType::BuiltIn(BuiltInEvaluator::TrustFilter),
             "tool-detector" => StepType::BuiltIn(BuiltInEvaluator::ToolDetector),
             "tool-executor" => StepType::BuiltIn(BuiltInEvaluator::ToolExecutor),
+            "mcp" => StepType::BuiltIn(BuiltInEvaluator::Mcp),
             other => StepType::Rpc(other.to_string()),
         }
     }
@@ -62,6 +63,7 @@ pub enum BuiltInEvaluator {
     TrustFilter,
     ToolDetector,
     ToolExecutor,
+    Mcp,
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +173,10 @@ impl PipelineExecutor {
                     match eval {
                         BuiltInEvaluator::RoleAnnotator => {}
                         BuiltInEvaluator::TrustFilter => {}
+                        BuiltInEvaluator::Mcp => {
+                            // No-op: MCP tools are handled by cafe-mcp-client
+                            // via tool.call/tool.result on the session bus.
+                        }
                         BuiltInEvaluator::ToolDetector => {
                             if let Some(ref text) = ctx.assembled_llm_text {
                                 let (_, calls) = tool_detector::detect(text);

@@ -5,11 +5,17 @@ use std::time::Duration;
 use tracing::{error, info};
 
 /// Execute a tool call by dispatching a JSON-RPC request on the bus.
+/// Skips MCP-provided tools (handled by cafe-mcp-client).
 pub async fn execute(
     call: &ToolCall,
     session_id: &str,
     client: &BusClient,
 ) -> Result<()> {
+    if call.provider.as_deref() == Some("mcp") {
+        info!("tool_executor: skipping MCP tool '{}' (handled by cafe-mcp-client)", call.name);
+        return Ok(());
+    }
+
     let request = JsonRpcRequest::new(&call.name, call.parameters.clone());
     let call_id = request.id.clone();
 
@@ -55,6 +61,7 @@ pub async fn execute(
                     name: call.name.clone(),
                     output,
                     error: None,
+                    provider: call.provider.clone(),
                 };
                 let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
                     .with_annotation(keys::CAFE_TOOL_RESULT, &tool_result)
@@ -83,6 +90,7 @@ pub async fn execute(
                     name: call.name.clone(),
                     output: serde_json::Value::Null,
                     error: Some(err.message),
+                    provider: call.provider.clone(),
                 };
                 let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
                     .with_annotation(keys::CAFE_TOOL_RESULT, &tool_result)
@@ -109,6 +117,7 @@ pub async fn execute(
                 name: call.name.clone(),
                 output: serde_json::Value::Null,
                 error: Some(format!("RPC timeout after {}s", rpc_timeout.as_secs())),
+                provider: call.provider.clone(),
             };
                 let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
                     .with_annotation(keys::CAFE_TOOL_RESULT, &tool_result)
