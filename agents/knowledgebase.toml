@@ -1,0 +1,15 @@
+name = "knowledgebase"
+description = "RAG agent: searches indexed documents and answers questions using vector search"
+background = false
+allows_reload = true
+persists_state = false
+
+[[steps]]
+id = "knowledgebase-search"
+type = "knowledgebase-search"
+trigger = "user_message"
+
+[[steps]]
+id = "llm"
+type = "llm"
+trigger = "step_complete:knowledgebase-search"

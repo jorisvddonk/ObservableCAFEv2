@@ -1,0 +1,18 @@
+[package]
+name = "cafe-knowledgebase-index"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-knowledgebase-index"
+path = "src/main.rs"
+
+[dependencies]
+cafe-sdk = { path = "../cafe-sdk", features = ["bus-client"] }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { version = "1", features = ["v4"] }

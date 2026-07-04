@@ -191,6 +191,23 @@ processes:
       cafe-bus:
         condition: process_healthy
 
+  cafe-knowledgebase:
+    command: ./target/debug/cafe-knowledgebase
+    environment:
+      - "RUST_BACKTRACE=1"
+      - "CAFE_KNOWLEDGEBASE_EMBED_URL=http://localhost:11434/api/embed"
+      - "CAFE_KNOWLEDGEBASE_EMBED_MODEL=nomic-embed-text"
+      - "CAFE_KNOWLEDGEBASE_DB_PATH=./knowledgebase.lance"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+
   cafe-demo:
     command: ./target/debug/cafe-demo
     environment:
