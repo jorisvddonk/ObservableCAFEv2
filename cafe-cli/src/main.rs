@@ -6,12 +6,62 @@ use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
+use std::io::Write;
+
+/// Find binary-store read credentials from session history.
+fn find_read_creds(history: &[Chunk], chunk_id: &str) -> Result<(String, String)> {
+    for c in history.iter().rev() {
+        if let Some(target) = c.is_mutation() {
+            if target == chunk_id {
+                if let Some(ru) = c.annotations.get("binary.read_url").and_then(|v| v.as_str()) {
+                    let rt = c.annotations.get("binary.read_token").and_then(|v| v.as_str()).unwrap_or("");
+                    return Ok((ru.to_string(), rt.to_string()));
+                }
+            }
+        }
+    }
+    anyhow::bail!("no read credentials found for chunk {}", chunk_id)
+}
 
 fn parse_keyval(s: &str) -> Result<(String, String)> {
     let mut parts = s.splitn(2, '=');
     let key = parts.next().ok_or_else(|| anyhow::anyhow!("missing key"))?.to_string();
     let val = parts.next().unwrap_or("").to_string();
     Ok((key, val))
+}
+
+#[derive(Subcommand)]
+enum StoreAction {
+    /// Upload a file to the binary-store
+    Upload {
+        path: String,
+        #[arg(long)]
+        mime: Option<String>,
+        /// Binary-store URL (default: http://localhost:4002)
+        #[arg(long, default_value = "http://localhost:4002")]
+        store_url: String,
+        /// Session to use (default: auto-create)
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Download a file from the binary-store
+    Download {
+        chunk_id: String,
+        #[arg(long)]
+        output: Option<String>,
+        #[arg(long, default_value = "http://localhost:4002")]
+        store_url: String,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Stream a file from the binary-store to stdout
+    Stream {
+        chunk_id: String,
+        #[arg(long, default_value = "http://localhost:4002")]
+        store_url: String,
+        #[arg(long)]
+        session: Option<String>,
+    },
 }
 
 #[derive(Parser)]
@@ -91,6 +141,11 @@ enum Command {
     /// Print session history as JSON lines
     History {
         session_id: String,
+    },
+    /// Binary-store operations (upload/download/stream)
+    Store {
+        #[command(subcommand)]
+        action: StoreAction,
     },
     /// Send a chat message and print SSE response chunks as JSON lines
     Chat {
@@ -349,6 +404,191 @@ async fn main() -> Result<()> {
             for chunk in &chunks {
                 let json = serde_json::to_string(chunk)?;
                 println!("{}", json);
+            }
+        }
+
+        Command::Store { action } => {
+            match action {
+                StoreAction::Upload { path, mime, store_url, session } => {
+                    let session_id = session.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    let chunk_id = uuid::Uuid::new_v4().to_string();
+                    let store_url = store_url.trim_end_matches('/').to_string();
+
+                    // Open raw socket for credential exchange
+                    let stream = tokio::net::UnixStream::connect(&cli.bus).await?;
+                    let (reader, mut writer) = tokio::io::split(stream);
+                    let mut lines = BufReader::new(reader).lines();
+
+                    // Read Connected
+                    if let Some(line) = lines.next_line().await? {
+                        let _ = serde_json::from_str::<ServerMessage>(&line);
+                    }
+
+                    // SubscribeAll, CreateSession, Publish BinaryRef
+                    writer.write_all(b"{\"op\":\"subscribe_all\"}\n").await?;
+                    let create = serde_json::json!({"op":"create_session","session_id":session_id,"agent_id":"default","config":{}});
+                    writer.write_all(create.to_string().as_bytes()).await?;
+                    writer.write_all(b"\n").await?;
+
+                    let mut binref = Chunk::new_binary_ref(mime.as_deref().unwrap_or("application/octet-stream"), "cafe-cli");
+                    binref.id = chunk_id.clone();
+                    let publish = serde_json::json!({"op":"publish","session_id":session_id,"chunk":&binref});
+                    writer.write_all(publish.to_string().as_bytes()).await?;
+                    writer.write_all(b"\n").await?;
+
+                    // Wait for write credentials mutation
+                    let mut write_url = None;
+                    let mut write_token = None;
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                    while tokio::time::Instant::now() < deadline {
+                        tokio::select! {
+                            line = lines.next_line() => {
+                                match line {
+                                    Ok(Some(line)) => {
+                                        if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
+                                            if let ServerMessage::Chunk { chunk, .. } = msg {
+                                                let ann = &chunk.annotations;
+                                                if ann.contains_key("binary.write_url") {
+                                                    write_url = ann.get("binary.write_url").and_then(|v| v.as_str().map(String::from));
+                                                    write_token = ann.get("binary.write_token").and_then(|v| v.as_str().map(String::from));
+                                                    if write_url.is_some() && write_token.is_some() {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                    }
+
+                    let write_url = write_url.ok_or_else(|| anyhow::anyhow!("no write credentials received"))?;
+                    let write_token = write_token.unwrap_or_default();
+
+                    // Read file and upload
+                    let data = tokio::fs::read(&path).await?;
+                    let mime_type = mime.unwrap_or_else(|| {
+                        path.rsplit('.').next().map(|ext| {
+                            match ext {
+                                "wav" => "audio/wav",
+                                "mp3" => "audio/mpeg",
+                                "png" => "image/png",
+                                "jpg" | "jpeg" => "image/jpeg",
+                                "gif" => "image/gif",
+                                "txt" => "text/plain",
+                                "json" => "application/json",
+                                _ => "application/octet-stream",
+                            }
+                        }).unwrap_or("application/octet-stream").to_string()
+                    });
+
+                    let upload_url = format!("{}?token={}&session_id={}", write_url, write_token, session_id);
+                    let client = reqwest::Client::new();
+                    client.post(&upload_url)
+                        .header("Content-Type", &mime_type)
+                        .body(data)
+                        .send()
+                        .await?;
+
+                    // Wait for read credentials mutation
+                    let mut read_url = None;
+                    let mut read_token = None;
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                    while tokio::time::Instant::now() < deadline {
+                        tokio::select! {
+                            line = lines.next_line() => {
+                                match line {
+                                    Ok(Some(line)) => {
+                                        if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
+                                            if let ServerMessage::Chunk { chunk, .. } = msg {
+                                                let ann = &chunk.annotations;
+                                                if ann.contains_key("binary.read_url") {
+                                                    read_url = ann.get("binary.read_url").and_then(|v| v.as_str().map(String::from));
+                                                    read_token = ann.get("binary.read_token").and_then(|v| v.as_str().map(String::from));
+                                                    if read_url.is_some() {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                    }
+
+                    // Fallback: read from history
+                    if read_url.is_none() {
+                        let bus = BusClient::new(&cli.bus);
+                        if let Ok(history) = bus.get_history(&session_id).await {
+                            for c in &history {
+                                if let Some(target) = c.is_mutation() {
+                                    if target == chunk_id {
+                                        if let Some(ru) = c.annotations.get("binary.read_url").and_then(|v| v.as_str()) {
+                                            read_url = Some(ru.to_string());
+                                            read_token = c.annotations.get("binary.read_token").and_then(|v| v.as_str().map(String::from));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Print credentials for scripting
+                    let result = serde_json::json!({
+                        "chunk_id": chunk_id,
+                        "session_id": session_id,
+                        "write_url": write_url,
+                        "write_token": write_token,
+                        "read_url": read_url,
+                        "read_token": read_token,
+                        "store_url": store_url,
+                    });
+                    println!("{}", serde_json::to_string(&result)?);
+                }
+
+                StoreAction::Download { chunk_id, output, store_url, session } => {
+                    let session_id = session.as_deref().unwrap_or("_store_ops");
+                    let bus = BusClient::new(&cli.bus);
+
+                    // Find read credentials from history
+                    let history = bus.get_history(session_id).await?;
+                    let (read_url, read_token) = find_read_creds(&history, &chunk_id)?;
+
+                    let client = reqwest::Client::new();
+                    let resp = client.get(format!("{}?token={}", read_url, read_token))
+                        .send().await?;
+                    let bytes = resp.bytes().await?;
+
+                    if let Some(out) = output {
+                        tokio::fs::write(&out, &bytes).await?;
+                        eprintln!("downloaded {} bytes to {}", bytes.len(), out);
+                    } else {
+                        std::io::stdout().lock().write_all(&bytes)?;
+                    }
+                }
+
+                StoreAction::Stream { chunk_id, store_url, session } => {
+                    let session_id = session.as_deref().unwrap_or("_store_ops");
+                    let bus = BusClient::new(&cli.bus);
+
+                    let history = bus.get_history(session_id).await?;
+                    let (read_url, read_token) = find_read_creds(&history, &chunk_id)?;
+
+                    let client = reqwest::Client::new();
+                    let mut resp = client.get(format!("{}?token={}", read_url, read_token))
+                        .send().await?;
+
+                    let mut stdout = std::io::stdout().lock();
+                    while let Some(chunk) = resp.chunk().await? {
+                        stdout.write_all(&chunk)?;
+                    }
+                }
             }
         }
 
