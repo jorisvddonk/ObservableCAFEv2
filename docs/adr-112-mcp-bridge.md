@@ -137,6 +137,123 @@ For RPC-based tools, cafe-mcp-bridge:
 5. Deletes the temporary session
 6. Returns the result as MCP tool output
 
+## Tests
+
+| Test | File | What it covers |
+|---|---|---|
+| MCP Bridge | `tests/mcp-bridge-e2e.py` | Stdio transport: `tools/list`, `web_fetch` (inline), `cafe_meta_ping` (meta), `kb_search` (bus RPC) |
+| MCP Client | `tests/mcp-client-e2e.py` | Fake MCP server → `tool.call` with `provider:mcp` → cafe-mcp-client → MCP server → `tool.result` round-trip |
+
+Both tests use temporary bus instances (no process-compose dependency, no shared state).
+
+## cafe-mcp-client — MCP Client on the Bus
+
+### Architecture
+
+```
+LLM emits <|tool_call|>{"name":"tavily_search","provider":"mcp","parameters":{...}}
+  │
+  ▼
+tool-detector → publishes tool.call { provider: "mcp" }
+  │
+  ├── tool-executor → skips (provider is "mcp")
+  │
+  └── cafe-mcp-client → forwards to external MCP server via stdio
+          │
+          ▼
+        MCP server (tavily, filesystem, etc.)
+          │
+          ▼
+        cafe-mcp-client → publishes tool.result { provider: "mcp" }
+          │
+          ▼
+        tool-executor picks up tool.result → agent continues
+```
+
+### Provider field
+
+All `ToolCall`, `ToolResult`, and `ToolDefinition` structs in `cafe-types`
+now carry an optional `provider` field:
+
+- `None` (or omitted) → bus RPC tool (handled by tool-executor)
+- `Some("mcp")` → MCP tool (handled by cafe-mcp-client)
+
+The field is `#[serde(skip_serializing_if = "Option::is_none")]` so existing
+serialized data is backward compatible.
+
+### Agent TOML
+
+The `type = "mcp"` step is purely declarative — it's a no-op built-in step
+that causes no RPC dispatch. It tells cafe-mcp-client (via session
+subscription) and the pipeline that MCP tools should be available for this
+agent.
+
+```toml
+name = "research"
+
+[[steps]]
+id = "llm"
+type = "llm"
+trigger = "user_message"
+
+[[steps]]
+id = "tool-detector"
+type = "tool-detector"
+trigger = "llm_complete"
+
+[[steps]]
+id = "tool-executor"
+type = "tool-executor"
+trigger = "step_complete:tool-detector"
+
+[[steps]]
+id = "mcp"
+type = "mcp"
+trigger = "user_message"
+```
+
+The MCP tool definitions must be listed in `tools.available` annotations
+(with `provider: "mcp"`) so the LLM knows about them and includes the
+provider in its tool calls.
+
+### MCP Server Configuration: `mcp-servers.toml`
+
+```toml
+[[server]]
+name = "tavily"
+command = "npx"
+args = ["-y", "@tavily/mcp"]
+
+[[server]]
+name = "filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+```
+
+On startup, cafe-mcp-client:
+1. Reads `mcp-servers.toml` (path via `CAFE_MCP_SERVERS` env var)
+2. Spawns each server as a child process (stdio transport)
+3. Sends `initialize` + reads response
+4. Sends `tools/list` + discovers available tools
+5. Registers tool→server mapping
+
+On each session:
+1. Subscribes via SubscribeAll
+2. Reads `tool.call` chunks — only processes those with `provider: "mcp"`
+3. Looks up the tool name in the registry
+4. Forwards the call to the correct MCP server via JSON-RPC
+5. Publishes `tool.result` + assistant text chunk back to the session
+
+### Collision avoidance
+
+| Tool type | provider field | Handler | Notes |
+|---|---|---|---|
+| Bus RPC | `None` (absent) | `tool-executor` → bus RPC | dice.roll, kb_search, etc. |
+| MCP | `"mcp"` | `cafe-mcp-client` → external server | tavily_search, etc. |
+
+Both handlers subscribe to the same session. They inspect the `provider`
+field to decide whether to process or skip — no collisions.
+
 ## Files
 
 | File | Purpose |
@@ -145,4 +262,9 @@ For RPC-based tools, cafe-mcp-bridge:
 | `cafe-mcp-bridge/src/tools.rs` | Tool definitions, schemas, filtering |
 | `cafe-mcp-bridge/src/transport/stdio.rs` | stdin/stdout JSON-RPC loop |
 | `cafe-mcp-bridge/src/transport/http.rs` | HTTP+SSE transport with per-session tool filtering |
-| `process-compose.yml` | HTTP transport on port 3100 with `--meta` |
+| `cafe-mcp-client/src/main.rs` | MCP client: spawn servers, intercept tool.call, forward via JSON-RPC |
+| `cafe-types/src/tools.rs` | `ToolCall`, `ToolResult`, `ToolDefinition` with `provider` field |
+| `cafe-agent-runtime/src/executor.rs` | `"mcp"` step type (no-op built-in) |
+| `cafe-agent-runtime/src/tool_executor.rs` | Skips `provider: "mcp"` calls |
+| `mcp-servers.toml` | MCP server configuration |
+| `process-compose.yml` | HTTP bridge on port 3100 with `--meta`, plus cafe-mcp-client |
