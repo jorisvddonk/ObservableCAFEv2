@@ -3,6 +3,7 @@ use cafe_sdk::bus::BusClient;
 use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SubscribeFilter};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Parser)]
 #[command(name = "cafe-cli")]
@@ -32,6 +33,9 @@ enum Command {
         binary_ref: bool,
         #[arg(long)]
         transient: bool,
+        /// Seconds to wait for mutations on the published chunk (uses long-lived connection)
+        #[arg(long)]
+        wait: Option<u64>,
     },
     /// Subscribe to a session and print chunks as JSON lines
     Subscribe {
@@ -85,7 +89,9 @@ async fn main() -> Result<()> {
             mime,
             binary_ref,
             transient,
+            wait,
         } => {
+            let chunk_id = uuid::Uuid::new_v4().to_string();
             let mut chunk = if binary_ref {
                 let mime = mime.unwrap_or_else(|| "application/octet-stream".into());
                 Chunk::new_binary_ref(mime, "cafe-cli")
@@ -99,12 +105,78 @@ async fn main() -> Result<()> {
             } else {
                 anyhow::bail!("specify --text, --file, or --binary-ref");
             };
+            chunk.id = chunk_id.clone();
 
             if transient {
                 chunk = chunk.as_transient();
             }
 
-            client.publish(&session_id, chunk).await?;
+            if let Some(wait_secs) = wait {
+                // Use a raw socket so we share the same connection — needed to receive
+                // direct_to mutations (binary-store sends write credentials back).
+                let stream = tokio::net::UnixStream::connect(&cli.bus).await?;
+                let (reader, mut writer) = tokio::io::split(stream);
+                let mut lines = tokio::io::BufReader::new(reader).lines();
+
+                // Read Connected
+                if let Some(line) = lines.next_line().await? {
+                    if let Ok(ServerMessage::Connected { .. }) = serde_json::from_str(&line) {
+                        // consumed
+                    }
+                }
+
+                // SubscribeAll so we receive direct_to mutations
+                writer
+                    .write_all(b"{\"op\":\"subscribe_all\"}\n")
+                    .await?;
+
+                // Create session if needed (fire-and-forget is fine — SESSION_EXISTS ignored)
+                let create = serde_json::json!({
+                    "op": "create_session",
+                    "session_id": session_id,
+                    "agent_id": "default",
+                    "config": {}
+                });
+                writer.write_all(create.to_string().as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+
+                // Publish the chunk
+                let publish = serde_json::json!({
+                    "op": "publish",
+                    "session_id": session_id,
+                    "chunk": &chunk,
+                });
+                writer.write_all(publish.to_string().as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+
+                // Wait for mutations targeting our chunk_id
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_secs);
+                while tokio::time::Instant::now() < deadline {
+                    tokio::select! {
+                        line = lines.next_line() => {
+                            match line {
+                                Ok(Some(line)) => {
+                                    if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
+                                        if let ServerMessage::Chunk { chunk, .. } = msg {
+                                            if let Some(target) = chunk.is_mutation() {
+                                                if target == chunk_id {
+                                                    // Found a mutation targeting our chunk — print it
+                                                    let json = serde_json::to_string(&chunk)?;
+                                                    println!("{}", json);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => break,
+                            }
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    }
+                }
+            } else {
+                client.publish(&session_id, chunk).await?;
+            }
         }
 
         Command::Subscribe {
