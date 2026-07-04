@@ -9,13 +9,12 @@ End-to-end test for binary-ref chunk flow via the bus.
 Flow:
 1. Start cafe-bus + cafe-binary-store
 2. Create session via cafe-cli
-3. Publish BinaryRef chunk with --wait → cafe-cli keeps connection alive,
-   receives the direct_to mutation with write credentials, prints it
-4. Extract write_token and write_url from cafe-cli output
-5. POST bytes to binary-store
-6. Binary-store publishes broadcast mutation with read credentials
-7. cafe-cli --wait catches the read mutation too
-8. GET bytes back, verify match
+3. Publish BinaryRef chunk with --wait in the BACKGROUND
+4. Read write credentials from --wait's stdout (direct_to mutation)
+5. POST bytes to binary-store (while --wait is still running)
+6. Read read credentials from --wait's stdout (broadcast mutation)
+7. GET bytes back, verify match
+8. Delete
 
 Usage:
     cargo build --release
@@ -35,11 +34,6 @@ RELEASE_DIR = os.path.join(PROJECT_ROOT, "target", "release")
 CLI = os.path.join(RELEASE_DIR, "cafe-cli")
 BUS_BIN = os.path.join(RELEASE_DIR, "cafe-bus")
 BINARY_BIN = os.path.join(RELEASE_DIR, "cafe-binary-store")
-
-
-def run(cmd, **kwargs):
-    print(f"  + {' '.join(cmd)}", file=sys.stderr)
-    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
 def main():
@@ -72,53 +66,44 @@ def main():
 
             # Create session
             print("=== Create session ===", file=sys.stderr)
-            r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "default"])
+            r = subprocess.run(
+                [CLI, "--bus", bus_socket, "create-session", "--agent", "default"],
+                capture_output=True, text=True,
+            )
             assert r.returncode == 0
             session_id = r.stdout.strip()
 
-            # Publish BinaryRef chunk with --wait (keeps connection alive for mutations)
-            print("=== Publish BinaryRef (with --wait) ===", file=sys.stderr)
-            r = run(
-                [CLI, "--bus", bus_socket, "publish", session_id, "--binary-ref", "--mime", "text/plain", "--wait", "10"],
-                timeout=15,
+            # Publish BinaryRef with --wait in BACKGROUND (30s timeout)
+            # This keeps the connection alive to receive BOTH the write mutation
+            # (published immediately) and the read mutation (published after POST).
+            print("=== Publish BinaryRef (background --wait) ===", file=sys.stderr)
+            wait_proc = subprocess.Popen(
+                [CLI, "--bus", bus_socket, "publish", session_id, "--binary-ref", "--mime", "text/plain", "--wait", "30"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
             )
-            # cafe-cli prints each mutation as a JSON line on stdout
-            mutations = [json.loads(line) for line in r.stdout.strip().split("\n") if line.strip()]
-            print(f"  {len(mutations)} mutation(s)", file=sys.stderr)
+            time.sleep(1)
 
-            # Find write credentials mutation
+            # Read the write credentials mutation from --wait's stdout
             write_url = write_token = None
-            for m in mutations:
-                ann = m.get("annotations", {})
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                line = wait_proc.stdout.readline()
+                if not line:
+                    continue
+                mut = json.loads(line.strip())
+                ann = mut.get("annotations", {})
                 if ann.get("binary.write_url"):
                     write_url = ann["binary.write_url"]
                     write_token = ann.get("binary.write_token", "")
-                    print(f"  found write credentials", file=sys.stderr)
+                    print(f"  got write credentials via direct_to ✅", file=sys.stderr)
+                    break
 
-            # Fail over to JWT from key file if direct_to didn't arrive
             if not write_url:
-                print("  direct_to not received — using JWT from key file", file=sys.stderr)
-                jwt_key_file = os.path.join(data_dir, "cafe-binary-store.key")
-                for _ in range(10):
-                    if os.path.exists(jwt_key_file):
-                        break
-                    time.sleep(0.5)
-                import base64, hashlib, hmac
-                with open(jwt_key_file, "rb") as f:
-                    jwt_secret = f.read()
-                chunk_id = "e2e-fallback"
+                raise AssertionError("No write credentials received via direct_to")
 
-                def b64url(d):
-                    return base64.urlsafe_b64encode(d).rstrip(b"=").decode()
-                hdr = b64url(json.dumps({"alg":"HS256"}).encode())
-                pay = b64url(json.dumps({"chunk_id":chunk_id,"purpose":"write","iat":int(time.time()),"exp":int(time.time())+3600}).encode())
-                sig = b64url(hmac.new(jwt_secret, f"{hdr}.{pay}".encode(), hashlib.sha256).digest())
-                write_token = f"{hdr}.{pay}.{sig}"
-                write_url = f"http://localhost:{binary_port}/api/binary/{chunk_id}"
-
-            # Upload
+            # Upload bytes (while --wait is still running)
             print("=== Upload bytes ===", file=sys.stderr)
-            test_data = b"Hello from cafe-cli --wait!"
+            test_data = b"Hello from binary-ref e2e!"
             req = urllib.request.Request(
                 f"{write_url}?token={write_token}&session_id={session_id}",
                 data=test_data, method="POST",
@@ -127,23 +112,25 @@ def main():
                 assert resp.status == 200
             print(f"  uploaded {len(test_data)} bytes", file=sys.stderr)
 
-            # Generate read credentials from JWT key file (read mutation is published
-            # after the POST completes, but --wait already finished)
-            import base64, hashlib, hmac
-            jwt_key_file = os.path.join(data_dir, "cafe-binary-store.key")
-            with open(jwt_key_file, "rb") as f:
-                jwt_secret = f.read()
-            chunk_id = write_url.rstrip("/").rsplit("/", 1)[-1]
+            # Read the read credentials mutation from --wait's stdout
+            read_url = read_token = None
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                line = wait_proc.stdout.readline()
+                if not line:
+                    continue
+                mut = json.loads(line.strip())
+                ann = mut.get("annotations", {})
+                if ann.get("binary.read_url"):
+                    read_url = ann["binary.read_url"]
+                    read_token = ann.get("binary.read_token", "")
+                    print(f"  got read credentials via broadcast mutation ✅", file=sys.stderr)
+                    break
 
-            def b64url(d):
-                return base64.urlsafe_b64encode(d).rstrip(b"=").decode()
-            hdr = b64url(json.dumps({"alg":"HS256"}).encode())
-            pay = b64url(json.dumps({"chunk_id":chunk_id,"purpose":"read","iat":int(time.time())}).encode())
-            sig = b64url(hmac.new(jwt_secret, f"{hdr}.{pay}".encode(), hashlib.sha256).digest())
-            read_token = f"{hdr}.{pay}.{sig}"
-            read_url = f"http://localhost:{binary_port}/api/binary/{chunk_id}"
+            if not read_url:
+                raise AssertionError("No read credentials received via bus")
 
-            # Download
+            # Download bytes using read credentials
             print("=== Download bytes ===", file=sys.stderr)
             resp = urllib.request.urlopen(f"{read_url}?token={read_token}")
             downloaded = resp.read()
@@ -160,6 +147,9 @@ def main():
         finally:
             bus_proc.kill()
             binary_proc.kill()
+            try:
+                wait_proc.kill()
+            except: pass
             bus_proc.wait()
             binary_proc.wait()
 
