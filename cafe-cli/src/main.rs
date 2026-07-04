@@ -5,6 +5,13 @@ use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+fn parse_keyval(s: &str) -> Result<(String, String)> {
+    let mut parts = s.splitn(2, '=');
+    let key = parts.next().ok_or_else(|| anyhow::anyhow!("missing key"))?.to_string();
+    let val = parts.next().unwrap_or("").to_string();
+    Ok((key, val))
+}
+
 #[derive(Parser)]
 #[command(name = "cafe-cli")]
 struct Cli {
@@ -31,6 +38,12 @@ enum Command {
         mime: Option<String>,
         #[arg(long)]
         binary_ref: bool,
+        /// Publish a null chunk (specify --annotation for config keys)
+        #[arg(long)]
+        null: bool,
+        /// Annotation in key=value format (repeat for multiple)
+        #[arg(long = "annotation", value_parser = parse_keyval)]
+        annotations: Vec<(String, String)>,
         #[arg(long)]
         transient: bool,
         /// Seconds to wait for mutations on the published chunk (uses long-lived connection)
@@ -88,11 +101,19 @@ async fn main() -> Result<()> {
             file,
             mime,
             binary_ref,
+            null,
+            annotations,
             transient,
             wait,
         } => {
             let chunk_id = uuid::Uuid::new_v4().to_string();
-            let mut chunk = if binary_ref {
+            let mut chunk = if null {
+                let mut c = Chunk::new_null("cafe-cli");
+                for (k, v) in &annotations {
+                    c = c.with_annotation(k.as_str(), v.as_str());
+                }
+                c
+            } else if binary_ref {
                 let mime = mime.unwrap_or_else(|| "application/octet-stream".into());
                 Chunk::new_binary_ref(mime, "cafe-cli")
             } else if let Some(content) = text {
@@ -103,7 +124,7 @@ async fn main() -> Result<()> {
                 let mime = mime.unwrap_or_else(|| "application/octet-stream".into());
                 Chunk::new_binary(data, mime, "cafe-cli")
             } else {
-                anyhow::bail!("specify --text, --file, or --binary-ref");
+                anyhow::bail!("specify --text, --file, --binary-ref, or --null");
             };
             chunk.id = chunk_id.clone();
 

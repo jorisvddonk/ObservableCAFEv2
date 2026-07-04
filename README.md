@@ -150,6 +150,9 @@ uv run tests/binary-ref-e2e.py
 
 # SubscribeFiltered (content_type filter) + session isolation
 uv run tests/bus-filters-e2e.py
+
+# Config switching (null chunks switch model and system prompt at runtime)
+uv run tests/config-switching-e2e.py
 ```
 
 ## License
