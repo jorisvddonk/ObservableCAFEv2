@@ -138,6 +138,9 @@ uv run tests/binary-store-e2e.py
 
 # Tool calling pipeline (user message → detector RPC → tool execution)
 uv run tests/tool-calling-e2e.py
+
+# Full lifecycle (start → chat → shutdown → restart → persist → delete)
+uv run tests/lifecycle-e2e.py
 ```
 
 ## License
