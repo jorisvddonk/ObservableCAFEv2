@@ -424,12 +424,30 @@ async fn main() -> Result<()> {
                         let _ = serde_json::from_str::<ServerMessage>(&line);
                     }
 
-                    // SubscribeAll, CreateSession, Publish BinaryRef
+                    // SubscribeAll, then wait briefly for snapshot to settle
                     writer.write_all(b"{\"op\":\"subscribe_all\"}\n").await?;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+
+                    // Create session (auto-generated UUID, always succeeds)
                     let create = serde_json::json!({"op":"create_session","session_id":session_id,"agent_id":"default","config":{}});
                     writer.write_all(create.to_string().as_bytes()).await?;
                     writer.write_all(b"\n").await?;
 
+                    // Drain until we see the SessionCreated for our session
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                    while tokio::time::Instant::now() < deadline {
+                        if let Ok(Some(line)) = lines.next_line().await {
+                            if line.contains(&format!(r#""session_id":"{}""#, session_id))
+                                && line.contains(r#""event":"session_created""#)
+                            {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Publish BinaryRef
                     let mut binref = Chunk::new_binary_ref(mime.as_deref().unwrap_or("application/octet-stream"), "cafe-cli");
                     binref.id = chunk_id.clone();
                     let publish = serde_json::json!({"op":"publish","session_id":session_id,"chunk":&binref});
