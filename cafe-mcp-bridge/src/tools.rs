@@ -340,7 +340,7 @@ pub(crate) static TOOLS: LazyLock<Vec<ToolDef>> = LazyLock::new(|| vec![
 
 /// Simple glob match for tool name filtering.
 /// Supports `*` (any chars) and `?` (single char).
-pub fn matches_pattern(name: &str, pattern: &str) -> bool {
+pub(crate) fn matches_pattern(name: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;
     }
@@ -367,6 +367,71 @@ fn glob_match(pat: &[char], name: &[char], pi: usize, ni: usize) -> bool {
         _ => false,
     }
 }
+
+/// Meta tools (admin/management operations, enabled via --meta flag).
+pub(crate) static META_TOOLS: LazyLock<Vec<ToolDef>> = LazyLock::new(|| vec![
+    ToolDef {
+        name: "cafe_meta_ping",
+        description: "Ping the cafe bus to verify connectivity",
+        input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        rpc_method: None,
+    },
+    ToolDef {
+        name: "cafe_meta_list_sessions",
+        description: "List all sessions on the cafe bus",
+        input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        rpc_method: None,
+    },
+    ToolDef {
+        name: "cafe_meta_get_history",
+        description: "Get the full chunk history for a session",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"}
+            },
+            "required": ["session_id"]
+        }),
+        rpc_method: None,
+    },
+    ToolDef {
+        name: "cafe_meta_publish_chunk",
+        description: "Publish a text chunk to a session",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "text": {"type": "string", "description": "Text content"}
+            },
+            "required": ["session_id", "text"]
+        }),
+        rpc_method: None,
+    },
+    ToolDef {
+        name: "cafe_meta_delete_session",
+        description: "Delete a session from the bus",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to delete"}
+            },
+            "required": ["session_id"]
+        }),
+        rpc_method: None,
+    },
+    ToolDef {
+        name: "cafe_meta_list_agents",
+        description: "List available agent configurations from agents/*.toml",
+        input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        rpc_method: None,
+    },
+    ToolDef {
+        name: "cafe_meta_list_models",
+        description: "List available LLM models from cafe-server",
+        input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        rpc_method: None,
+    },
+]);
 
 /// Filter tools by patterns. Empty patterns = all tools.
 pub fn filter_tools(patterns: &[String]) -> Vec<&'static ToolDef> {

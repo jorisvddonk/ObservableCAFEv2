@@ -36,6 +36,10 @@ struct Args {
     /// Port for HTTP transport (default 3100)
     #[arg(long, default_value_t = 3100)]
     port: u16,
+
+    /// Enable cafe_meta_* admin tools (list sessions, publish chunks, etc.)
+    #[arg(long, default_value_t = false)]
+    meta: bool,
 }
 
 #[tokio::main]
@@ -43,15 +47,19 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    let mut all_tools: Vec<&'static tools::ToolDef> = tools::TOOLS.iter().collect();
+    if args.meta {
+        all_tools.extend(tools::META_TOOLS.iter());
+    }
     info!(
-        "cafe-mcp-bridge: all {} tools available, transport={}",
-        tools::TOOLS.len(),
+        "cafe-mcp-bridge: {} tools available, transport={}",
+        all_tools.len(),
         args.transport
     );
 
     let state = Arc::new(AppState {
         bus_path: args.bus,
-        all_tools: tools::TOOLS.iter().collect(),
+        all_tools,
     });
 
     match args.transport.as_str() {
@@ -91,7 +99,12 @@ pub async fn handle_mcp_request(
         "notifications/initialized" => None, // notification — no response
         "tools/list" => {
             let available = match tool_patterns {
-                Some(patterns) => tools::filter_tools(patterns),
+                Some(patterns) => {
+                    let all = &state.all_tools;
+                    all.iter().filter(|t| {
+                        patterns.iter().any(|p| tools::matches_pattern(t.name, p))
+                    }).copied().collect::<Vec<_>>()
+                },
                 None => state.all_tools.clone(),
             };
             let tool_list: Vec<Value> = available
@@ -154,8 +167,120 @@ async fn dispatch_tool(name: &str, arguments: &Value, bus_path: &str) -> Result<
     let args_map = arguments.as_object().cloned().unwrap_or_default();
     match name {
         "web_fetch" => inline_web_fetch(&args_map).await,
+        n if n.starts_with("cafe_meta_") => dispatch_meta(n, &args_map, bus_path).await,
         _ => rpc_dispatch(name, &args_map, bus_path).await,
     }
+}
+
+/// Dispatch a cafe_meta_* tool (inline bus operations).
+async fn dispatch_meta(
+    name: &str,
+    args: &serde_json::Map<String, Value>,
+    bus_path: &str,
+) -> Result<String> {
+    let client = BusClient::new(bus_path);
+    match name {
+        "cafe_meta_ping" => meta_ping(&client).await,
+        "cafe_meta_list_sessions" => meta_list_sessions(&client).await,
+        "cafe_meta_get_history" => meta_get_history(&client, args).await,
+        "cafe_meta_publish_chunk" => meta_publish_chunk(&client, args).await,
+        "cafe_meta_delete_session" => meta_delete_session(&client, args).await,
+        "cafe_meta_list_agents" => meta_list_agents().await,
+        "cafe_meta_list_models" => meta_list_models().await,
+        _ => anyhow::bail!("unknown meta tool: {name}"),
+    }
+}
+
+// ── Meta tool implementations ──
+
+async fn meta_ping(client: &BusClient) -> Result<String> {
+    client.ping().await?;
+    Ok(json!({"status": "ok", "pong": true}).to_string())
+}
+
+async fn meta_list_sessions(client: &BusClient) -> Result<String> {
+    let sessions = client.list_sessions().await?;
+    let sessions_json: Vec<Value> = sessions
+        .iter()
+        .map(|s| {
+            json!({
+                "session_id": s.session_id,
+                "agent_id": s.agent_id,
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&sessions_json)?)
+}
+
+async fn meta_get_history(
+    client: &BusClient,
+    args: &serde_json::Map<String, Value>,
+) -> Result<String> {
+    let session_id = args["session_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing session_id"))?;
+    let chunks = client.get_history(session_id).await?;
+    Ok(serde_json::to_string_pretty(&chunks)?)
+}
+
+async fn meta_publish_chunk(
+    client: &BusClient,
+    args: &serde_json::Map<String, Value>,
+) -> Result<String> {
+    let session_id = args["session_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing session_id"))?;
+    let text = args["text"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing text"))?;
+
+    let chunk = Chunk::new_text(text, "cafe-mcp-bridge");
+    client.publish(session_id, chunk).await?;
+    Ok(json!({"published": true}).to_string())
+}
+
+async fn meta_delete_session(
+    client: &BusClient,
+    args: &serde_json::Map<String, Value>,
+) -> Result<String> {
+    let session_id = args["session_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing session_id"))?;
+    client.delete_session(session_id).await?;
+    Ok(json!({"deleted": true}).to_string())
+}
+
+async fn meta_list_agents() -> Result<String> {
+    let agents_dir = std::path::Path::new("agents");
+    let mut agents = Vec::new();
+    if agents_dir.is_dir() {
+        for entry in std::fs::read_dir(agents_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(table) = content.parse::<toml::Table>() {
+                        if let Some(name) = table.get("name").and_then(|v| v.as_str()) {
+                            agents.push(json!({
+                                "name": name,
+                                "file": path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(serde_json::to_string_pretty(&agents)?)
+}
+
+async fn meta_list_models() -> Result<String> {
+    let server_url = std::env::var("CAFE_SERVER_URL")
+        .unwrap_or_else(|_| "http://localhost:4000".into());
+    let url = format!("{}/api/models", server_url.trim_end_matches('/'));
+    let resp = reqwest::get(&url).await?;
+    let text = resp.text().await?;
+    Ok(text)
 }
 
 /// Inline web fetch: GET URL, strip HTML, return text.

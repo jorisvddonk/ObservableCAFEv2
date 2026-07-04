@@ -225,7 +225,7 @@ processes:
         condition: process_healthy
 
   cafe-mcp-bridge:
-    command: ./target/debug/cafe-mcp-bridge --transport http --port 3100
+    command: ./target/debug/cafe-mcp-bridge --transport http --port 3100 --meta
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
