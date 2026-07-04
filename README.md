@@ -147,6 +147,9 @@ uv run tests/tool-lifecycle-e2e.py
 
 # Binary-ref upload/download via bus (BinaryRef chunk → binary-store → write/read/delete)
 uv run tests/binary-ref-e2e.py
+
+# SubscribeFiltered (content_type filter) + session isolation
+uv run tests/bus-filters-e2e.py
 ```
 
 ## License
