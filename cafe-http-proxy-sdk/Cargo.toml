@@ -1,0 +1,10 @@
+[package]
+name = "cafe-http-proxy-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cafe-sdk = { path = "../cafe-sdk", features = ["bus-client"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"

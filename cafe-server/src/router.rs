@@ -1,9 +1,7 @@
-use crate::handlers::{admin, agents, chat, chunks, models, quickies, sessions, stream};
+use crate::handlers::{admin, agents, chat, chunks, models, proxy, quickies, sessions, stream};
 use crate::AppState;
-use axum::{
-    routing::{delete, get, patch, post},
-    Router,
-};
+use axum::routing::{any, delete, get, patch, post};
+use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 
 pub fn build_router(state: AppState) -> Router {
@@ -28,7 +26,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/sessions/:id/chat", post(chat::chat))
         .route("/api/sessions/:id/stream", get(stream::stream_session))
         .route("/api/sessions/:id/chunks", post(chunks::send_chunk))
-        .route("/api/sessions/:id/web", post(chunks::fetch_web))
         .route(
             "/api/sessions/:id/chunks/:chunk_id",
             patch(chunks::trust_chunk),
@@ -52,6 +49,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/agents", get(admin::list_agents))
         .route("/api/admin/agents/reload", post(admin::reload_agents))
         .route("/api/admin/status", get(admin::system_status))
+        // Dynamic HTTP proxy routes (registered by bus services)
+        .route("/api/ext/*path", any(proxy::proxy_handler))
         .layer(cors)
         .with_state(state)
 }

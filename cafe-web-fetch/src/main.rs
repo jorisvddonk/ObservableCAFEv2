@@ -1,5 +1,5 @@
-use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage};
+use cafe_http_proxy_sdk::{self as proxy_sdk, ProxyRequest, ProxyResponse};
+use cafe_sdk::{keys, Chunk, ServerMessage};
 use tracing::{error, info, warn};
 
 #[tokio::main]
@@ -10,77 +10,127 @@ async fn main() -> anyhow::Result<()> {
 
     cafe_sdk::bus::run_with_reconnect("cafe-web-fetch", move || {
         let sp = socket_path.clone();
-        async move { subscribe_all(&sp).await }
+        async move { run(&sp).await }
     })
     .await;
 
     Ok(())
 }
 
-async fn subscribe_all(socket_path: &str) -> anyhow::Result<()> {
+async fn run(socket_path: &str) -> anyhow::Result<()> {
     info!("cafe-web-fetch: starting on {}", socket_path);
-    let client = BusClient::new(socket_path);
-    let mut rx = client.subscribe_all().await?;
+    let client = cafe_sdk::bus::BusClient::new(socket_path);
 
-    while let Some(msg) = rx.recv().await {
-        if let ServerMessage::SessionCreated { session_id, .. } = msg {
-            let c = client.clone();
-            tokio::spawn(async move {
-                if let Err(e) = run_session(session_id, c).await {
-                    warn!("cafe-web-fetch: session error: {}", e);
-                }
-            });
+    // Subscribe to the proxy session
+    let mut rx = client.subscribe(proxy_sdk::PROXY_SESSION).await?;
+
+    // Register our route
+    let reg = proxy_sdk::RouteRegistration {
+        pattern: "/api/ext/sessions/:id/fetch".into(),
+        methods: vec!["POST".into(), "GET".into()],
+    };
+    proxy_sdk::publish_registration(&client, &reg).await?;
+    info!("cafe-web-fetch: registered route {}", reg.pattern);
+
+    // Spawn heartbeat re-registration every 30s
+    let hb_client = client.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            if let Err(e) = proxy_sdk::publish_registration(&hb_client, &reg).await {
+                warn!("cafe-web-fetch: heartbeat registration failed: {}", e);
+            }
         }
-    }
-    Ok(())
-}
+    });
 
-async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()> {
-    let mut rx = client.subscribe(&session_id).await?;
-
+    // Handle incoming messages
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
             _ => continue,
         };
 
-        let Some(request) = chunk.as_rpc_request() else { continue; };
-        if request.method != "web-fetch.invoke" { continue; }
+        // Only process RPC requests for our method
+        let rpc_req = match chunk.as_rpc_request() {
+            Some(r) if r.method == proxy_sdk::HTTP_REQUEST_HANDLE => r,
+            _ => continue,
+        };
+        let call_id = rpc_req.id.clone();
 
-        let call_id = request.id.clone();
-        let text = request.params["text"].as_str().unwrap_or("");
-
-        info!("cafe-web-fetch: handling web-fetch.invoke call_id={}", call_id);
-
-        let response = match parse_and_fetch(text, &client, &session_id).await {
-            Ok(chunk_id) => {
-                info!("cafe-web-fetch: fetched, chunk_id={}", chunk_id);
-                JsonRpcResponse::ok(&call_id, serde_json::json!({"chunk_id": chunk_id}))
-            }
-            Err(e) => {
-                warn!("cafe-web-fetch: fetch error: {}", e);
-                JsonRpcResponse::err(&call_id, -1, &e.to_string())
-            }
+        let Some(req) = proxy_sdk::parse_request(&chunk) else {
+            continue;
         };
 
-        let resp_chunk = Chunk::new_null("com.nominal.cafe-web-fetch")
-            .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
-            .as_transient()
-            .with_retain(60);
-        let _ = client.publish(&session_id, resp_chunk).await;
+        // Fetch the session ID from the path
+        let session_id = extract_session_id(&req.path);
+
+        let result = handle_fetch(&req, &client, session_id.as_deref()).await;
+
+        let response = match result {
+            Ok(chunk_id) => ProxyResponse {
+                status: 200,
+                headers: [("content-type".into(), "application/json".into())]
+                    .into_iter()
+                    .collect(),
+                body: proxy_sdk::encode_body(
+                    serde_json::json!({ "chunk_id": chunk_id }).to_string().as_bytes(),
+                ),
+            },
+            Err(e) => ProxyResponse {
+                status: 502,
+                headers: [("content-type".into(), "application/json".into())]
+                    .into_iter()
+                    .collect(),
+                body: proxy_sdk::encode_body(
+                    serde_json::json!({ "error": e.to_string() }).to_string().as_bytes(),
+                ),
+            },
+        };
+
+        // Publish response via direct_to (the chunk has source.connection from the publisher)
+        let conn_id = chunk
+            .annotations
+            .get(keys::CAFE_SOURCE_CONNECTION)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !conn_id.is_empty() {
+            if let Err(e) = proxy_sdk::publish_response(
+                &client,
+                conn_id,
+                &call_id,
+                &response,
+            )
+            .await
+            {
+                warn!("cafe-web-fetch: failed to publish response: {}", e);
+            }
+        }
     }
 
     Ok(())
 }
 
-/// Parse "!fetch <url>", fetch and publish, return the chunk ID.
-async fn parse_and_fetch(text: &str, client: &BusClient, session_id: &str) -> anyhow::Result<String> {
-    let text = text.trim();
-    let url = text
-        .strip_prefix("!fetch ")
-        .or_else(|| text.strip_prefix("!f "))
-        .ok_or_else(|| anyhow::anyhow!("not a fetch command"))?
-        .trim();
+fn extract_session_id(path: &str) -> Option<String> {
+    // Path is like /api/ext/sessions/:id/fetch
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+    if segs.len() >= 4 && segs[0] == "api" && segs[1] == "ext" && segs[2] == "sessions" {
+        Some(segs[3].to_string())
+    } else {
+        None
+    }
+}
+
+/// Fetch the URL from the request body and publish the result as a chunk.
+async fn handle_fetch(
+    req: &ProxyRequest,
+    client: &cafe_sdk::bus::BusClient,
+    session_id: Option<&str>,
+) -> anyhow::Result<String> {
+    let body_str = String::from_utf8(proxy_sdk::decode_body(&req.body)?)?;
+    let body_json: serde_json::Value = serde_json::from_str(&body_str)?;
+    let url = body_json["url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing url in request body"))?;
 
     let response = reqwest::get(url).await?;
     let content_type = response
@@ -89,8 +139,8 @@ async fn parse_and_fetch(text: &str, client: &BusClient, session_id: &str) -> an
         .and_then(|v| v.to_str().ok())
         .unwrap_or("text/plain")
         .to_string();
-    let body = response.text().await?;
-    let stripped = strip_html(&body);
+    let text = response.text().await?;
+    let stripped = strip_html(&text);
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -98,7 +148,7 @@ async fn parse_and_fetch(text: &str, client: &BusClient, session_id: &str) -> an
         .as_millis() as i64;
 
     let chunk = Chunk::new_text(stripped, "com.nominal.cafe-web-fetch")
-        .with_annotation(keys::WEB_SOURCE_URL, &url)
+        .with_annotation(keys::WEB_SOURCE_URL, url)
         .with_annotation(keys::WEB_CONTENT_TYPE, &content_type)
         .with_annotation(keys::WEB_FETCH_TIME, now_ms)
         .with_annotation(
@@ -107,7 +157,13 @@ async fn parse_and_fetch(text: &str, client: &BusClient, session_id: &str) -> an
         );
 
     let chunk_id = chunk.id.clone();
-    client.publish(session_id, chunk).await?;
+
+    if let Some(sid) = session_id {
+        client.publish(sid, chunk).await?;
+    } else {
+        warn!("cafe-web-fetch: no session_id in path, cannot publish result chunk");
+    }
+
     Ok(chunk_id)
 }
 
@@ -147,5 +203,18 @@ mod tests {
     #[test]
     fn strip_html_empty() {
         assert_eq!(strip_html(""), "");
+    }
+
+    #[test]
+    fn extract_session_id_ok() {
+        assert_eq!(
+            extract_session_id("/api/ext/sessions/abc123/fetch"),
+            Some("abc123".into())
+        );
+    }
+
+    #[test]
+    fn extract_session_id_wrong_path() {
+        assert_eq!(extract_session_id("/api/sessions/abc/fetch"), None);
     }
 }

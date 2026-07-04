@@ -132,16 +132,17 @@ and `mime_type` from the upload's content-type header.
 Response `202`.
 
 ### Fetch web content (untrusted)
-`POST /api/sessions/:id/web`
+`POST /api/ext/sessions/:id/fetch`
 
 ```json
 { "url": "https://example.com/article" }
 ```
 
-Fetches the URL, strips HTML tags, wraps as an untrusted text chunk, publishes to
-the session. The user must explicitly trust it before the LLM can see it.
+Fetches the URL via the cafe-web-fetch bus service (registered as a dynamic route).
+Strips HTML tags, wraps as an untrusted text chunk, publishes to the session.
+The user must explicitly trust it before the LLM can see it.
 
-Response `202`.
+Response `200` with `{ "chunk_id": "..." }` on success, `502` on fetch failure.
 
 ### Trust / untrust a chunk
 `PATCH /api/sessions/:id/chunks/:chunk_id`

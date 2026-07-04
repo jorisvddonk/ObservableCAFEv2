@@ -14,6 +14,7 @@ members = [
     "cafe-demo",
     "cafe-dice",
     "cafe-web-fetch",
+    "cafe-http-proxy-sdk",
     "cafe-sdk",
     "cafe-cli",
     "cafe-binary-store",
