@@ -1,0 +1,10 @@
+name = "stt"
+description = "Speech-to-text: transcribes audio using voicebox"
+background = false
+allows_reload = true
+persists_state = false
+
+[[steps]]
+id = "stt"
+type = "stt"
+trigger = "user_message"

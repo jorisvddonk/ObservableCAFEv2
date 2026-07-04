@@ -177,6 +177,22 @@ processes:
     # Set disabled: true if you don't have SheetBot available.
     disabled: false
 
+  cafe-stt:
+    command: ./target/debug/cafe-stt
+    environment:
+      - "RUST_BACKTRACE=1"
+      - "VOICEBOX_URL=http://127.0.0.1:17493"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    disabled: false
+
   cafe-web-fetch:
     command: ./target/debug/cafe-web-fetch
     environment:
