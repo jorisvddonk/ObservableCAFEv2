@@ -6,15 +6,8 @@
 """
 End-to-end test for binary-ref chunk flow via the bus.
 
-Flow:
-1. Start cafe-bus + cafe-binary-store
-2. Create session via cafe-cli
-3. Publish BinaryRef chunk with --wait in the BACKGROUND
-4. Read write credentials from --wait's stdout (direct_to mutation)
-5. POST bytes to binary-store (while --wait is still running)
-6. Read read credentials from --wait's stdout (broadcast mutation)
-7. GET bytes back, verify match
-8. Delete
+Write credentials via direct_to mutation (--wait), read credentials
+from session history (non-transient broadcast mutation).
 
 Usage:
     cargo build --release
@@ -36,6 +29,11 @@ BUS_BIN = os.path.join(RELEASE_DIR, "cafe-bus")
 BINARY_BIN = os.path.join(RELEASE_DIR, "cafe-binary-store")
 
 
+def run(cmd, **kwargs):
+    print(f"  + {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
 def main():
     for name, path in [("cafe-bus", BUS_BIN), ("cafe-binary-store", BINARY_BIN), ("cafe-cli", CLI)]:
         if not os.path.exists(path):
@@ -45,7 +43,6 @@ def main():
     with tempfile.TemporaryDirectory() as tmpdir:
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
         binary_port = 49997
-        data_dir = os.path.join(tmpdir, "data")
 
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
@@ -56,7 +53,7 @@ def main():
 
         print("=== Starting cafe-binary-store ===", file=sys.stderr)
         binary_proc = subprocess.Popen(
-            [BINARY_BIN, "--bus-socket", bus_socket, "--port", str(binary_port), "--data-dir", data_dir],
+            [BINARY_BIN, "--bus-socket", bus_socket, "--port", str(binary_port), "--data-dir", tmpdir],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         time.sleep(1)
@@ -64,46 +61,31 @@ def main():
         try:
             urllib.request.urlopen(f"http://localhost:{binary_port}/health")
 
-            # Create session
-            print("=== Create session ===", file=sys.stderr)
-            r = subprocess.run(
-                [CLI, "--bus", bus_socket, "create-session", "--agent", "default"],
-                capture_output=True, text=True,
-            )
+            r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "default"])
             assert r.returncode == 0
             session_id = r.stdout.strip()
 
-            # Publish BinaryRef with --wait in BACKGROUND (30s timeout)
-            # This keeps the connection alive to receive BOTH the write mutation
-            # (published immediately) and the read mutation (published after POST).
-            print("=== Publish BinaryRef (background --wait) ===", file=sys.stderr)
-            wait_proc = subprocess.Popen(
-                [CLI, "--bus", bus_socket, "publish", session_id, "--binary-ref", "--mime", "text/plain", "--wait", "30"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            # Publish BinaryRef with --wait to capture write credentials via direct_to
+            print("=== Publish BinaryRef (--wait) ===", file=sys.stderr)
+            r = run(
+                [CLI, "--bus", bus_socket, "publish", session_id, "--binary-ref", "--mime", "text/plain", "--wait", "5"],
+                timeout=10,
             )
-            time.sleep(1)
-
-            # Read the write credentials mutation from --wait's stdout
+            mutations = [json.loads(l) for l in r.stdout.strip().split("\n") if l.strip()]
             write_url = write_token = None
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                line = wait_proc.stdout.readline()
-                if not line:
-                    continue
-                mut = json.loads(line.strip())
-                ann = mut.get("annotations", {})
+            for m in mutations:
+                ann = m.get("annotations", {})
                 if ann.get("binary.write_url"):
                     write_url = ann["binary.write_url"]
                     write_token = ann.get("binary.write_token", "")
-                    print(f"  got write credentials via direct_to ✅", file=sys.stderr)
-                    break
+                    print(f"  write credentials via direct_to ✅", file=sys.stderr)
 
-            if not write_url:
-                raise AssertionError("No write credentials received via direct_to")
+            assert write_url, "no write credentials in mutations"
+            chunk_id = write_url.rstrip("/").rsplit("/", 1)[-1]
 
-            # Upload bytes (while --wait is still running)
+            # Upload
             print("=== Upload bytes ===", file=sys.stderr)
-            test_data = b"Hello from binary-ref e2e!"
+            test_data = b"Hello from binary-ref!"
             req = urllib.request.Request(
                 f"{write_url}?token={write_token}&session_id={session_id}",
                 data=test_data, method="POST",
@@ -112,29 +94,30 @@ def main():
                 assert resp.status == 200
             print(f"  uploaded {len(test_data)} bytes", file=sys.stderr)
 
-            # Read the read credentials mutation from --wait's stdout
+            # Read credentials from session history (non-transient mutation)
+            print("=== Read credentials from history ===", file=sys.stderr)
+            r = run([CLI, "--bus", bus_socket, "history", session_id])
+            assert r.returncode == 0
+            chunks = [json.loads(l) for l in r.stdout.strip().split("\n") if l.strip()]
+
             read_url = read_token = None
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                line = wait_proc.stdout.readline()
-                if not line:
-                    continue
-                mut = json.loads(line.strip())
-                ann = mut.get("annotations", {})
-                if ann.get("binary.read_url"):
-                    read_url = ann["binary.read_url"]
-                    read_token = ann.get("binary.read_token", "")
-                    print(f"  got read credentials via broadcast mutation ✅", file=sys.stderr)
-                    break
+            for c in chunks:
+                if c.get("annotations", {}).get("mutates.target_id") == chunk_id:
+                    ru = c.get("annotations", {}).get("binary.read_url")
+                    rt = c.get("annotations", {}).get("binary.read_token")
+                    if ru:
+                        read_url = ru
+                    if rt:
+                        read_token = rt
 
-            if not read_url:
-                raise AssertionError("No read credentials received via bus")
+            assert read_url, "no read credentials in history"
+            print(f"  read credentials from history ✅", file=sys.stderr)
 
-            # Download bytes using read credentials
+            # Download
             print("=== Download bytes ===", file=sys.stderr)
             resp = urllib.request.urlopen(f"{read_url}?token={read_token}")
             downloaded = resp.read()
-            assert downloaded == test_data, f"mismatch: {len(downloaded)} vs {len(test_data)} bytes"
+            assert downloaded == test_data, f"mismatch: {len(downloaded)} vs {len(test_data)}"
             print(f"  downloaded {len(downloaded)} bytes — MATCH ✅", file=sys.stderr)
 
             # Delete
@@ -147,14 +130,10 @@ def main():
         finally:
             bus_proc.kill()
             binary_proc.kill()
-            try:
-                wait_proc.kill()
-            except: pass
             bus_proc.wait()
             binary_proc.wait()
 
-    print(file=sys.stderr)
-    print("=== ALL BINARY-REF E2E TESTS PASSED ===", file=sys.stderr)
+    print("\n=== ALL BINARY-REF E2E TESTS PASSED ===", file=sys.stderr)
 
 
 if __name__ == "__main__":

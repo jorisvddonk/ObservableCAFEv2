@@ -183,8 +183,7 @@ async fn write_handler(
             let mut mutation = cafe_sdk::Chunk::mutation(&chunk_id, "com.nominal.cafe-binary-store");
             mutation = mutation
                 .with_annotation(keys::BINARY_READ_URL, &read_url)
-                .with_annotation(keys::BINARY_READ_TOKEN, &read_token)
-                .as_transient();
+                .with_annotation(keys::BINARY_READ_TOKEN, &read_token);
             // Publish broadcast mutation (no direct_to — all subscribers see it)
             if let Err(e) = state._bus.publish(sid, mutation).await {
                 warn!("cafe-binary-store: failed to publish read credentials: {e}");
