@@ -165,7 +165,7 @@ impl PipelineExecutor {
                 continue;
             }
 
-            // Run built-in steps (no RPC, so no StepComplete to queue)
+            // Run built-in steps
             for step in &eligible {
                 if let StepType::BuiltIn(eval) = StepType::from_str(&step.step_type) {
                     match eval {
@@ -190,13 +190,23 @@ impl PipelineExecutor {
                             }
                         }
                         BuiltInEvaluator::ToolExecutor => {
-                            // Read tool.call chunks from history and dispatch each
                             match bus.get_history(&ctx.session_id).await {
                                 Ok(history) => {
-                                    for call in history.iter().rev().filter_map(|c| c.as_tool_call()) {
-                                        if let Err(e) = tool_executor::execute(&call, &ctx.session_id, bus).await {
-                                            warn!("executor: tool_executor error: {}", e);
+                                    let calls: Vec<_> = history.iter().rev().filter_map(|c| c.as_tool_call()).collect();
+                                    if !calls.is_empty() {
+                                        for call in &calls {
+                                            if let Err(e) = tool_executor::execute(call, &ctx.session_id, bus).await {
+                                                warn!("executor: tool_executor error: {}", e);
+                                            }
                                         }
+                                        // Queue StepComplete so follow-up steps fire
+                                        queue.push_back((
+                                            TriggerType::StepComplete(step.id.clone()),
+                                            PipelineContext {
+                                                depth: ctx.depth + 1,
+                                                ..context.clone()
+                                            },
+                                        ));
                                     }
                                 }
                                 Err(e) => warn!("executor: failed to get history for tool execution: {}", e),

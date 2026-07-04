@@ -1,6 +1,6 @@
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcRequest, ServerMessage, ToolCall, ToolResult};
+use cafe_sdk::{keys, roles, Chunk, JsonRpcRequest, ServerMessage, ToolCall, ToolResult};
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -61,6 +61,18 @@ pub async fn execute(
                     .as_transient()
                     .with_retain(60);
                 client.publish(session_id, result_chunk).await?;
+
+                // Publish a human-readable text chunk so the follow-up LLM step
+                // sees the tool result in conversation context.
+                let output_text = serde_json::to_string_pretty(&tool_result.output)
+                    .unwrap_or_else(|_| "{}".into());
+                let text = format!(
+                    "Tool call completed: {}\n```\n{}\n```",
+                    call.name, output_text
+                );
+                let text_chunk = Chunk::new_text(&text, "com.nominal.cafe-agent-runtime")
+                    .with_annotation(keys::CHAT_ROLE, "assistant");
+                client.publish(session_id, text_chunk).await?;
             } else {
                 let err = response.error.unwrap();
                 error!(
@@ -77,6 +89,12 @@ pub async fn execute(
                     .as_transient()
                     .with_retain(60);
                 client.publish(session_id, result_chunk).await?;
+
+                let err_text = tool_result.error.as_deref().unwrap_or("unknown error");
+                let text = format!("Tool call {} failed: {}", call.name, err_text);
+                let text_chunk = Chunk::new_text(&text, "com.nominal.cafe-agent-runtime")
+                    .with_annotation(keys::CHAT_ROLE, "assistant");
+                client.publish(session_id, text_chunk).await?;
             }
         }
         Ok(Err(e)) => {
@@ -92,10 +110,15 @@ pub async fn execute(
                 output: serde_json::Value::Null,
                 error: Some(format!("RPC timeout after {}s", rpc_timeout.as_secs())),
             };
-            let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-                .with_annotation(keys::TOOL_RESULT, &tool_result)
-                .as_transient();
+                let result_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
+                    .with_annotation(keys::TOOL_RESULT, &tool_result)
+                    .as_transient();
             client.publish(session_id, result_chunk).await?;
+
+            let text = format!("Tool call {} timed out", call.name);
+            let text_chunk = Chunk::new_text(&text, "com.nominal.cafe-agent-runtime")
+                .with_annotation(keys::CHAT_ROLE, "assistant");
+            client.publish(session_id, text_chunk).await?;
         }
     }
 

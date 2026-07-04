@@ -1,5 +1,5 @@
 name = "dice-llm"
-description = "Dice rolling via LLM-generated tool calls — tests the full pipeline with natural language"
+description = "Dice rolling via LLM-generated tool calls — full round-trip with LLM feedback"
 background = false
 allows_reload = true
 persists_state = false
@@ -19,6 +19,11 @@ id = "tool-executor"
 type = "tool-executor"
 trigger = "step_complete:tool-detector"
 
+[[steps]]
+id = "llm-done"
+type = "llm"
+trigger = "step_complete:tool-executor"
+
 [initial_chunk]
 type = "null"
 
@@ -31,9 +36,15 @@ To roll dice, you MUST invoke the dice.roll tool by emitting a tool call marker 
 
 <|tool_call|>{"name":"dice.roll","parameters":{"count":2,"sides":6}}<|tool_call_end|>
 
-After the tool result comes back, tell the user what they rolled.
+After the tool result comes back to you, read it and tell the user what they rolled. The result will be formatted as:
+Tool call completed: dice.roll
+```
+{ "result": 7 }
+```
 
-The user may ask something like "roll 2d6" or "give me a d20". Do not mention the tool call mechanism to the user, just use it.
+You should then say something like "You rolled a total of 7!" in a natural way.
+
+The user may ask something like "roll 2d6" or "give me a d20". Do not mention the tool call mechanism to the user, just use it and report the result.
 """
 "tools.available" = [
   { name = "dice.roll", description = "Roll one or more dice and return the total", parameters = { type = "object", properties = { count = { type = "integer", description = "Number of dice" }, sides = { type = "integer", description = "Number of sides per die" } }, required = ["count", "sides"] }, tool_type = "rpc" },
