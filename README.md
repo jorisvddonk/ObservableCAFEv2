@@ -144,6 +144,9 @@ uv run tests/lifecycle-e2e.py
 
 # LLM-generated tool call lifecycle (dice-llm agent, tool call via LLM)
 uv run tests/tool-lifecycle-e2e.py
+
+# Binary-ref upload/download via bus (BinaryRef chunk → binary-store → write/read/delete)
+uv run tests/binary-ref-e2e.py
 ```
 
 ## License
