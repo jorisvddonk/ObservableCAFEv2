@@ -466,9 +466,9 @@ async fn main() -> Result<()> {
                                         if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
                                             if let ServerMessage::Chunk { chunk, .. } = msg {
                                                 let ann = &chunk.annotations;
-                                                if ann.contains_key("binary.write_url") {
-                                                    write_url = ann.get("binary.write_url").and_then(|v| v.as_str().map(String::from));
-                                                    write_token = ann.get("binary.write_token").and_then(|v| v.as_str().map(String::from));
+                                                if ann.contains_key("cafe.binary.write_url") {
+                                                    write_url = ann.get("cafe.binary.write_url").and_then(|v| v.as_str().map(String::from));
+                                                    write_token = ann.get("cafe.binary.write_token").and_then(|v| v.as_str().map(String::from));
                                                     if write_url.is_some() && write_token.is_some() {
                                                         break;
                                                     }

@@ -75,6 +75,27 @@ pub mod keys {
     pub const BINARY_READ_URL: &str = "binary.read_url";
     pub const BINARY_READ_TOKEN: &str = "binary.read_token";
     pub const BINARY_BYTE_SIZE: &str = "binary.byte_size";
+
+    // ── Cafe-namespaced (preferred) ──
+    pub const CAFE_TRANSIENT: &str = "cafe.transient";
+    pub const CAFE_TRANSIENT_RETAIN_SECS: &str = "cafe.transient.retain_secs";
+    pub const CAFE_SOURCE_CONNECTION: &str = "cafe.source.connection";
+    pub const CAFE_DIRECT_TO: &str = "cafe.direct_to";
+    pub const CAFE_MUTATES_TARGET_ID: &str = "cafe.mutates.target_id";
+    pub const CAFE_JSONRPC_REQUEST: &str = "cafe.jsonrpc.request";
+    pub const CAFE_JSONRPC_RESPONSE: &str = "cafe.jsonrpc.response";
+    pub const CAFE_BINARY_WRITE_URL: &str = "cafe.binary.write_url";
+    pub const CAFE_BINARY_WRITE_TOKEN: &str = "cafe.binary.write_token";
+    pub const CAFE_BINARY_READ_URL: &str = "cafe.binary.read_url";
+    pub const CAFE_BINARY_READ_TOKEN: &str = "cafe.binary.read_token";
+    pub const CAFE_BINARY_BYTE_SIZE: &str = "cafe.binary.byte_size";
+    pub const CAFE_FLOW_SIGNAL: &str = "cafe.flow.signal";
+    pub const CAFE_FLOW_AGENT_ID: &str = "cafe.flow.agent_id";
+    pub const CAFE_FLOW_TOMBSTONE: &str = "cafe.flow.tombstone";
+    pub const CAFE_TOOL_CALL: &str = "cafe.tool.call";
+    pub const CAFE_TOOL_RESULT: &str = "cafe.tool.result";
+    pub const CAFE_ERROR_MESSAGE: &str = "cafe.error.message";
+    pub const CAFE_ERROR_CODE: &str = "cafe.error.code";
 }
 
 /// Standard chat role values.

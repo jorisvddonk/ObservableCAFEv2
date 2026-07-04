@@ -155,12 +155,12 @@ impl Chunk {
 
     /// If this chunk carries a JSON-RPC request, return it.
     pub fn as_rpc_request(&self) -> Option<crate::jsonrpc::JsonRpcRequest> {
-        self.get_annotation(crate::annotation::keys::JSONRPC_REQUEST)
+        self.get_annotation(crate::annotation::keys::CAFE_JSONRPC_REQUEST)
     }
 
     /// If this chunk carries a JSON-RPC response, return it.
     pub fn as_rpc_response(&self) -> Option<crate::jsonrpc::JsonRpcResponse> {
-        self.get_annotation(crate::annotation::keys::JSONRPC_RESPONSE)
+        self.get_annotation(crate::annotation::keys::CAFE_JSONRPC_RESPONSE)
     }
 
     /// True if this is a JSON-RPC response matching the given call id.
@@ -172,26 +172,26 @@ impl Chunk {
 
     /// If this chunk carries a tool.call annotation, return the ToolCall.
     pub fn as_tool_call(&self) -> Option<crate::tools::ToolCall> {
-        self.get_annotation(crate::annotation::keys::TOOL_CALL)
+        self.get_annotation(crate::annotation::keys::CAFE_TOOL_CALL)
     }
 
     /// If this chunk carries a tool.result annotation, return the ToolResult.
     pub fn as_tool_result(&self) -> Option<crate::tools::ToolResult> {
-        self.get_annotation(crate::annotation::keys::TOOL_RESULT)
+        self.get_annotation(crate::annotation::keys::CAFE_TOOL_RESULT)
     }
 
     /// Returns true if this chunk is transient — broadcast to live subscribers
     /// but not appended to history or persisted.
     pub fn is_transient(&self) -> bool {
         self.annotations
-            .get(crate::annotation::keys::TRANSIENT)
+            .get(crate::annotation::keys::CAFE_TRANSIENT)
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     }
 
     /// Returns a clone of self with `transient: true` set in annotations.
     pub fn as_transient(self) -> Self {
-        self.with_annotation(crate::annotation::keys::TRANSIENT, true)
+        self.with_annotation(crate::annotation::keys::CAFE_TRANSIENT, true)
     }
 
     /// Returns the retention period in seconds for this transient chunk.
@@ -201,14 +201,14 @@ impl Chunk {
             return None;
         }
         self.annotations
-            .get(crate::annotation::keys::TRANSIENT_RETAIN_SECS)
+            .get(crate::annotation::keys::CAFE_TRANSIENT_RETAIN_SECS)
             .and_then(|v| v.as_u64())
     }
 
     /// Mark this transient chunk as retained for the given number of seconds.
     /// Late subscribers will still receive it within that window.
     pub fn with_retain(self, secs: u64) -> Self {
-        self.with_annotation(crate::annotation::keys::TRANSIENT_RETAIN_SECS, secs)
+        self.with_annotation(crate::annotation::keys::CAFE_TRANSIENT_RETAIN_SECS, secs)
     }
 
     /// Returns true if this chunk announces a binary asset without inline data.
@@ -218,13 +218,13 @@ impl Chunk {
 
     /// Returns the target chunk ID if this chunk is a mutation.
     pub fn is_mutation(&self) -> Option<String> {
-        self.get_annotation(crate::annotation::keys::MUTATES_TARGET_ID)
+        self.get_annotation(crate::annotation::keys::CAFE_MUTATES_TARGET_ID)
     }
 
     /// Create a null chunk that mutates (adds annotations to) the given target.
     pub fn mutation(target_id: &str, producer: &str) -> Self {
         Chunk::new_null(producer)
-            .with_annotation(crate::annotation::keys::MUTATES_TARGET_ID, target_id)
+            .with_annotation(crate::annotation::keys::CAFE_MUTATES_TARGET_ID, target_id)
     }
 }
 
@@ -292,7 +292,7 @@ mod tests {
         let req = JsonRpcRequest::new("tts.invoke", serde_json::json!({"text": "hello"}));
         let call_id = req.id.clone();
 
-        let chunk = Chunk::new_null("com.test").with_annotation(keys::JSONRPC_REQUEST, &req);
+        let chunk = Chunk::new_null("com.test").with_annotation(keys::CAFE_JSONRPC_REQUEST, &req);
         let extracted = chunk.as_rpc_request().unwrap();
         assert_eq!(extracted.id, call_id);
         assert_eq!(extracted.method, "tts.invoke");
@@ -304,7 +304,7 @@ mod tests {
         use crate::annotation::keys;
 
         let resp = JsonRpcResponse::ok("my-call-id", serde_json::json!({"chunk_id": "xyz"}));
-        let chunk = Chunk::new_null("com.test").with_annotation(keys::JSONRPC_RESPONSE, &resp);
+        let chunk = Chunk::new_null("com.test").with_annotation(keys::CAFE_JSONRPC_RESPONSE, &resp);
 
         assert!(chunk.is_rpc_response_for("my-call-id"));
         assert!(!chunk.is_rpc_response_for("other-id"));
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn is_transient_true_when_annotation_is_true() {
         let chunk = Chunk::new_text("hello", "com.test")
-            .with_annotation(crate::annotation::keys::TRANSIENT, true);
+            .with_annotation(crate::annotation::keys::CAFE_TRANSIENT, true);
         assert!(chunk.is_transient());
     }
 
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn is_transient_false_when_annotation_is_false() {
         let chunk = Chunk::new_text("hello", "com.test")
-            .with_annotation(crate::annotation::keys::TRANSIENT, false);
+            .with_annotation(crate::annotation::keys::CAFE_TRANSIENT, false);
         assert!(!chunk.is_transient());
     }
 
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn is_mutation_true_when_present() {
         use crate::annotation::keys;
-        let chunk = Chunk::new_null("test").with_annotation(keys::MUTATES_TARGET_ID, "target-123");
+        let chunk = Chunk::new_null("test").with_annotation(keys::CAFE_MUTATES_TARGET_ID, "target-123");
         assert_eq!(chunk.is_mutation(), Some("target-123".into()));
     }
 

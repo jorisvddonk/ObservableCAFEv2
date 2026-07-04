@@ -1,4 +1,5 @@
 use crate::app::{App, AppMode};
+use cafe_sdk::keys;
 use cafe_sdk::ContentType;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -105,14 +106,14 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         }
     } else {
         for chunk in &app.messages {
-            let has_error = chunk.get_annotation::<String>("error.message").is_some();
+            let has_error = chunk.get_annotation::<String>(keys::CAFE_ERROR_MESSAGE).is_some();
 
             match chunk.content_type {
                 ContentType::Text => {
                     let role = chunk.role().unwrap_or("system");
                     let content = chunk.content.as_deref().unwrap_or("");
                     let error_text: Option<String> =
-                        chunk.get_annotation("error.message");
+                        chunk.get_annotation(keys::CAFE_ERROR_MESSAGE);
 
                     let (label, color) = if has_error {
                         ("Error", Color::Red)
@@ -147,7 +148,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                     let mime = chunk.mime_type.as_deref().unwrap_or("binary");
                     if has_error {
                         let error_text: Option<String> =
-                            chunk.get_annotation("error.message");
+                            chunk.get_annotation(keys::CAFE_ERROR_MESSAGE);
                         lines.push(Line::from(Span::styled(
                             format!("[Binary Error: {}]", mime),
                             Style::default().fg(Color::Red),
@@ -169,7 +170,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                 ContentType::Null => {
                     if has_error {
                         let error_text: Option<String> =
-                            chunk.get_annotation("error.message");
+                            chunk.get_annotation(keys::CAFE_ERROR_MESSAGE);
                         lines.push(Line::from(Span::styled(
                             "Error:",
                             Style::default()

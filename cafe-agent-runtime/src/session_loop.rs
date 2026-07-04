@@ -63,7 +63,7 @@ pub async fn run_session_loop(
             }
             // Scheduler tick → fire scheduler_tick
             _ if chunk
-                .get_annotation::<String>(keys::FLOW_SIGNAL)
+                .get_annotation::<String>(keys::CAFE_FLOW_SIGNAL)
                 .as_deref()
                 == Some("tick") =>
             {
@@ -118,7 +118,7 @@ pub async fn run_session_loop(
                 );
                 // Publish error chunk to session (non-transient, so it appears in history)
                 let err_chunk = cafe_sdk::Chunk::new_null("com.nominal.cafe-agent-runtime")
-                    .with_annotation(keys::ERROR_MESSAGE, e.to_string())
+                    .with_annotation(keys::CAFE_ERROR_MESSAGE, e.to_string())
                     .with_annotation("error.source", "pipeline");
                 if let Err(pub_err) = bus.publish(&session_id, err_chunk).await {
                     warn!(

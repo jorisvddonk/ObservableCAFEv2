@@ -88,7 +88,7 @@ impl BusClient {
         chunk: Chunk,
     ) -> Result<(), SdkError> {
         let chunk = chunk
-            .with_annotation(keys::DIRECT_TO, target_connection)
+            .with_annotation(keys::CAFE_DIRECT_TO, target_connection)
             .as_transient();
         let (_writer, _lines) = self
             .send(&ClientMessage::Publish {

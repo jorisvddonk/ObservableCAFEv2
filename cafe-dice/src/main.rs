@@ -61,7 +61,7 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
                         parameters: serde_json::json!({ "count": count, "sides": sides }),
                     };
                     let tc_chunk = Chunk::new_null("com.nominal.cafe-dice")
-                        .with_annotation(keys::TOOL_CALL, &tool_call);
+                        .with_annotation(keys::CAFE_TOOL_CALL, &tool_call);
                     let _ = client.publish(&session_id, tc_chunk).await;
 
                     info!("cafe-dice: detected !roll {}d{}", count, sides);
@@ -71,7 +71,7 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
                 };
 
                 let resp_chunk = Chunk::new_null("com.nominal.cafe-dice")
-                    .with_annotation(keys::JSONRPC_RESPONSE, &response)
+                    .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
                     .as_transient()
                     .with_retain(60);
                 let _ = client.publish(&session_id, resp_chunk).await;
@@ -89,7 +89,7 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
 
                 let response = JsonRpcResponse::ok(&call_id, serde_json::json!({"result": total}));
                 let resp_chunk = Chunk::new_null("com.nominal.cafe-dice")
-                    .with_annotation(keys::JSONRPC_RESPONSE, &response)
+                    .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
                     .as_transient()
                     .with_retain(60);
                 let _ = client.publish(&session_id, resp_chunk).await;

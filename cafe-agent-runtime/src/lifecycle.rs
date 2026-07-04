@@ -63,8 +63,8 @@ pub async fn create_agent_session(
 pub async fn reset_agent_session(socket_path: &str, agent_name: &str) -> Result<()> {
     let client = BusClient::new(socket_path);
     let chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-        .with_annotation(keys::FLOW_SIGNAL, "reset")
-        .with_annotation(keys::FLOW_AGENT_ID, agent_name);
+        .with_annotation(keys::CAFE_FLOW_SIGNAL, "reset")
+        .with_annotation(keys::CAFE_FLOW_AGENT_ID, agent_name);
     client.publish(agent_name, chunk).await?;
     Ok(())
 }
@@ -73,7 +73,7 @@ pub async fn reset_agent_session(socket_path: &str, agent_name: &str) -> Result<
 pub async fn tick_agent(socket_path: &str, agent_name: &str) -> Result<()> {
     let client = BusClient::new(socket_path);
     let chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-        .with_annotation(keys::FLOW_SIGNAL, "tick");
+        .with_annotation(keys::CAFE_FLOW_SIGNAL, "tick");
     client.publish(agent_name, chunk).await?;
     Ok(())
 }

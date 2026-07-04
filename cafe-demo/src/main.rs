@@ -47,8 +47,8 @@ async fn main() -> Result<()> {
 
     tracing::info!("cafe-demo: publishing error chunk");
     let error_chunk = Chunk::new_null(PRODUCER)
-        .with_annotation(cafe_sdk::keys::ERROR_MESSAGE, "This is a demo error — not a real problem")
-        .with_annotation(cafe_sdk::keys::ERROR_CODE, "DEMO_ERROR")
+        .with_annotation(cafe_sdk::keys::CAFE_ERROR_MESSAGE, "This is a demo error — not a real problem")
+        .with_annotation(cafe_sdk::keys::CAFE_ERROR_CODE, "DEMO_ERROR")
         .with_annotation(cafe_sdk::keys::CHAT_ROLE, "assistant");
     bus.publish(SESSION_ID, error_chunk).await?;
 

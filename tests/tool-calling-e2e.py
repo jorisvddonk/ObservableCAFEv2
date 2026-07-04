@@ -101,7 +101,7 @@ def main():
                     continue
                 try:
                     chunk = json.loads(line)
-                    rpc_resp = chunk.get("annotations", {}).get("jsonrpc.response")
+                    rpc_resp = chunk.get("annotations", {}).get("cafe.jsonrpc.response")
                     if rpc_resp and rpc_resp.get("result", {}).get("result") is not None:
                         result = rpc_resp["result"]["result"]
                         break

@@ -57,7 +57,7 @@ pub async fn run(
                 };
 
                 // Find source_connection for direct reply
-                let source_conn = chunk.get_annotation::<String>(keys::SOURCE_CONNECTION);
+                let source_conn = chunk.get_annotation::<String>(keys::CAFE_SOURCE_CONNECTION);
                 let reply_target = match source_conn {
                     Some(ref c) => c.clone(),
                     None => {
@@ -73,13 +73,13 @@ pub async fn run(
                 // Build mutation with write credentials
                 let mut mutation = cafe_sdk::Chunk::mutation(&chunk_id, "com.nominal.cafe-binary-store");
                 mutation = mutation
-                    .with_annotation(keys::BINARY_WRITE_URL, &write_url)
-                    .with_annotation(keys::BINARY_WRITE_TOKEN, &write_token)
+                    .with_annotation(keys::CAFE_BINARY_WRITE_URL, &write_url)
+                    .with_annotation(keys::CAFE_BINARY_WRITE_TOKEN, &write_token)
                     .as_transient();
 
                 // Also include the base read URL so the producer can construct it
                 let read_url = format!("http://0.0.0.0:{port}/api/binary/{chunk_id}");
-                mutation = mutation.with_annotation(keys::BINARY_READ_URL, &read_url);
+                mutation = mutation.with_annotation(keys::CAFE_BINARY_READ_URL, &read_url);
 
                 // Send direct mutation to the producer only
                 if let Err(e) = bus

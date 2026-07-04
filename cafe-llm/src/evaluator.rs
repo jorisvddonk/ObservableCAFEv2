@@ -80,7 +80,7 @@ pub async fn run_session(
             } if sid == session_id => {
                 // Check for abort signal
                 if chunk.content_type == ContentType::Null {
-                    if let Some(signal) = chunk.get_annotation::<String>(keys::FLOW_SIGNAL) {
+                    if let Some(signal) = chunk.get_annotation::<String>(keys::CAFE_FLOW_SIGNAL) {
                         if signal == "abort" {
                             let _ = abort_tx.send(true);
                             continue;
@@ -158,7 +158,7 @@ async fn handle_llm_response(
         Err(e) => {
             error!("cafe-llm: backend error: {}", e);
             let err_chunk = Chunk::new_null("com.nominal.cafe-llm")
-                .with_annotation(keys::ERROR_MESSAGE, e.to_string())
+                .with_annotation(keys::CAFE_ERROR_MESSAGE, e.to_string())
                 .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
                 .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
                 .with_annotation(keys::CHAT_FINISH_REASON, "error");
@@ -166,7 +166,7 @@ async fn handle_llm_response(
 
             let rpc_err = JsonRpcResponse::err(call_id, -1, &e.to_string());
             let err_resp_chunk = Chunk::new_null("com.nominal.cafe-llm")
-                .with_annotation(keys::JSONRPC_RESPONSE, &rpc_err)
+                .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &rpc_err)
                 .as_transient()
                 .with_retain(60);
             publish_chunk(writer, &session_id, err_resp_chunk).await;
@@ -228,7 +228,7 @@ async fn handle_llm_response(
     // Publish tombstone for all transient token chunks (before stream_complete
     // so SSE/UI consumers receive it before the stream ends)
     let tombstone = Chunk::new_null("com.nominal.cafe-llm")
-        .with_annotation(keys::FLOW_TOMBSTONE, &token_ids)
+        .with_annotation(keys::CAFE_FLOW_TOMBSTONE, &token_ids)
         .as_transient();
     publish_chunk(writer, &session_id, tombstone).await;
 
@@ -242,7 +242,7 @@ async fn handle_llm_response(
     // Publish RPC response so the pipeline's dispatch_rpc completes
     let rpc_resp = JsonRpcResponse::ok(call_id, serde_json::json!({"status": "ok"}));
     let rpc_chunk = Chunk::new_null("com.nominal.cafe-llm")
-        .with_annotation(keys::JSONRPC_RESPONSE, &rpc_resp)
+        .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &rpc_resp)
         .as_transient()
         .with_retain(60);
     publish_chunk(writer, &session_id, rpc_chunk).await;

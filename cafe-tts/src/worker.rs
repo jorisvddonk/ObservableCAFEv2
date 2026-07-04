@@ -76,7 +76,7 @@ async fn run_session_handler(
         };
 
         let resp_chunk = Chunk::new_null("com.nominal.cafe-tts")
-            .with_annotation(keys::JSONRPC_RESPONSE, &response)
+            .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
             .as_transient()
             .with_retain(60);
         let _ = client.publish(&session_id, resp_chunk).await;
@@ -103,7 +103,7 @@ async fn handle_tts_request(
 
     let chunk = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
-        .with_annotation(keys::BINARY_BYTE_SIZE, audio_bytes.len() as u64);
+        .with_annotation(keys::CAFE_BINARY_BYTE_SIZE, audio_bytes.len() as u64);
 
     let chunk_id = chunk.id.clone();
     client.publish(session_id, chunk).await?;

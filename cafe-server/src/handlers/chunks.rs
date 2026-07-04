@@ -87,7 +87,7 @@ pub async fn fetch_web(
                 let err_chunk = Chunk::new_null("com.nominal.cafe-server")
                     .with_annotation(keys::WEB_SOURCE_URL, &url)
                     .with_annotation(keys::WEB_ERROR, true)
-                    .with_annotation(keys::ERROR_MESSAGE, e.to_string());
+                    .with_annotation(keys::CAFE_ERROR_MESSAGE, e.to_string());
                 let _ = state2.bus.publish(&session_id2, err_chunk).await;
             }
         }
@@ -175,7 +175,7 @@ pub async fn delete_chunk(
 ) -> impl IntoResponse {
     // Publish a flow signal to mark the chunk as deleted
     let del_chunk = Chunk::new_null("com.nominal.cafe-server")
-        .with_annotation(keys::FLOW_SIGNAL, "delete")
+        .with_annotation(keys::CAFE_FLOW_SIGNAL, "delete")
         .with_annotation("flow.target_chunk_id", chunk_id);
 
     match state.bus.publish(&session_id, del_chunk).await {

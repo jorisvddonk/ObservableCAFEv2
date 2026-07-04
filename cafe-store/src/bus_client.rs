@@ -22,7 +22,7 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
         agents: None,
         content_types: None,
         annotations: Some(std::collections::HashMap::from([(
-            "transient".to_string(),
+            "cafe.transient".to_string(),
             serde_json::Value::Bool(false),
         )])),
     };

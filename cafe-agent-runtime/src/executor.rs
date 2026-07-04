@@ -176,7 +176,7 @@ impl PipelineExecutor {
                                 let (_, calls) = tool_detector::detect(text);
                                 for call in &calls {
                                     let chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-                                        .with_annotation(keys::TOOL_CALL, call);
+                                        .with_annotation(keys::CAFE_TOOL_CALL, call);
                                     if let Err(e) = bus.publish(&ctx.session_id, chunk).await {
                                         warn!("executor: failed to publish tool.call: {}", e);
                                     }
@@ -329,7 +329,7 @@ impl PipelineExecutor {
             })?;
 
         let req_chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
-            .with_annotation(keys::JSONRPC_REQUEST, &request)
+            .with_annotation(keys::CAFE_JSONRPC_REQUEST, &request)
             .as_transient()
             .with_retain(60);
         bus.publish(&context.session_id, req_chunk)

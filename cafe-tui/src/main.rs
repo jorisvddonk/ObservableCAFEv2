@@ -121,7 +121,7 @@ async fn run_app(
         // Drain incoming chunks from background streaming task
         while let Ok(chunk) = chunk_rx.try_recv() {
             // Handle tombstone: remove tombstoned transient chunks from messages
-            if let Some(ids) = chunk.get_annotation::<Vec<String>>("flow.tombstone") {
+            if let Some(ids) = chunk.get_annotation::<Vec<String>>(cafe_sdk::keys::CAFE_FLOW_TOMBSTONE) {
                 app.messages.retain(|m| !ids.contains(&m.id));
                 continue;
             }
@@ -142,7 +142,7 @@ async fn run_app(
             let is_complete = chunk
                 .get_annotation::<bool>("chat.stream_complete")
                 .unwrap_or(false);
-            let has_error = chunk.get_annotation::<String>("error.message").is_some();
+            let has_error = chunk.get_annotation::<String>(cafe_sdk::keys::CAFE_ERROR_MESSAGE).is_some();
             if chunk.content_type != ContentType::Null || is_complete || has_error {
                 app.push_message(chunk);
             }
@@ -401,7 +401,7 @@ async fn load_history(app: &mut App, client: &HttpClient) {
                         .filter(|c| {
                             c.content_type == ContentType::Text
                                 && (c.role() == Some("user") || c.role() == Some("assistant"))
-                                || c.get_annotation::<String>("error.message").is_some()
+                                || c.get_annotation::<String>(cafe_sdk::keys::CAFE_ERROR_MESSAGE).is_some()
                         })
                         .collect();
                 }

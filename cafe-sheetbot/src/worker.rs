@@ -75,7 +75,7 @@ async fn run_session_handler(
         };
 
         let resp_chunk = Chunk::new_null("com.nominal.cafe-sheetbot")
-            .with_annotation(keys::JSONRPC_RESPONSE, &response);
+            .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response);
         let _ = client.publish(&session_id, resp_chunk).await;
     }
 

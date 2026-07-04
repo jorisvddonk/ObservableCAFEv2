@@ -58,13 +58,13 @@ export const CHAT_MODEL = 'chat.model';
 export const CHAT_IS_STREAMING = 'chat.is_streaming';
 export const CHAT_STREAM_COMPLETE = 'chat.stream_complete';
 export const CHAT_FINISH_REASON = 'chat.finish_reason';
-export const ERROR_MESSAGE = 'error.message';
-export const FLOW_SIGNAL = 'flow.signal';
-export const FLOW_TOMBSTONE = 'flow.tombstone';
-export const MUTATES_TARGET_ID = 'mutates.target_id';
+export const ERROR_MESSAGE = 'cafe.error.message';
+export const FLOW_SIGNAL = 'cafe.flow.signal';
+export const FLOW_TOMBSTONE = 'cafe.flow.tombstone';
+export const MUTATES_TARGET_ID = 'cafe.mutates.target_id';
 export const SECURITY_TRUST_LEVEL = 'security.trust-level';
-export const BINARY_READ_URL = 'binary.read_url';
-export const BINARY_READ_TOKEN = 'binary.read_token';
+export const BINARY_READ_URL = 'cafe.binary.read_url';
+export const BINARY_READ_TOKEN = 'cafe.binary.read_token';
 
 /** Check if a chunk is a binary asset (full binary or binary-ref). */
 export function isMediaChunk(chunk: Chunk): boolean {

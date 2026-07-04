@@ -39,7 +39,7 @@ pub fn serialize_chunk(chunk: &Chunk, binary_refs: bool) -> Value {
         let byte_size: Option<u64> = if chunk.content_type == ContentType::Binary {
             chunk.data.as_ref().map(|d| d.len() as u64)
         } else {
-            chunk.get_annotation::<u64>(keys::BINARY_BYTE_SIZE)
+            chunk.get_annotation::<u64>(keys::CAFE_BINARY_BYTE_SIZE)
         };
         json!({
             "id":           chunk.id,
@@ -152,7 +152,7 @@ mod tests {
     fn binary_ref_chunk_with_byte_size() {
         use cafe_sdk::keys;
         let chunk = Chunk::new_binary_ref("audio/wav", "com.nominal.cafe-binary-store")
-            .with_annotation(keys::BINARY_BYTE_SIZE, 1024u64);
+            .with_annotation(keys::CAFE_BINARY_BYTE_SIZE, 1024u64);
         let val = serialize_chunk(&chunk, false);
         assert_eq!(val["content"]["byte_size"], 1024);
     }

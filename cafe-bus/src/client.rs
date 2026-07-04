@@ -143,10 +143,10 @@ async fn client_loop(
 
             ClientMessage::Publish { session_id, mut chunk } => {
                 // Tag with source connection for direct-to replies
-                chunk = chunk.with_annotation(keys::SOURCE_CONNECTION, &conn_id);
+                chunk = chunk.with_annotation(keys::CAFE_SOURCE_CONNECTION, &conn_id);
 
                 // Check for direct-to: route to specific connection instead of broadcast
-                if let Some(target_id) = chunk.get_annotation::<String>(keys::DIRECT_TO) {
+                if let Some(target_id) = chunk.get_annotation::<String>(keys::CAFE_DIRECT_TO) {
                     let conns = connections.read().await;
                     if let Some(target_writer) = conns.get(&target_id) {
                         send_msg(

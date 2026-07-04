@@ -75,9 +75,9 @@ def main():
             write_url = write_token = None
             for m in mutations:
                 ann = m.get("annotations", {})
-                if ann.get("binary.write_url"):
-                    write_url = ann["binary.write_url"]
-                    write_token = ann.get("binary.write_token", "")
+                if ann.get("cafe.binary.write_url"):
+                    write_url = ann["cafe.binary.write_url"]
+                    write_token = ann.get("cafe.binary.write_token", "")
                     print(f"  write credentials via direct_to ✅", file=sys.stderr)
 
             assert write_url, "no write credentials in mutations"
@@ -102,9 +102,9 @@ def main():
 
             read_url = read_token = None
             for c in chunks:
-                if c.get("annotations", {}).get("mutates.target_id") == chunk_id:
-                    ru = c.get("annotations", {}).get("binary.read_url")
-                    rt = c.get("annotations", {}).get("binary.read_token")
+                if c.get("annotations", {}).get("cafe.mutates.target_id") == chunk_id:
+                    ru = c.get("annotations", {}).get("cafe.binary.read_url")
+                    rt = c.get("annotations", {}).get("cafe.binary.read_token")
                     if ru:
                         read_url = ru
                     if rt:
