@@ -1,0 +1,40 @@
+name = "dice-llm"
+description = "Dice rolling via LLM-generated tool calls — tests the full pipeline with natural language"
+background = false
+allows_reload = true
+persists_state = false
+
+[[steps]]
+id = "llm"
+type = "llm"
+trigger = "user_message"
+
+[[steps]]
+id = "tool-detector"
+type = "tool-detector"
+trigger = "llm_complete"
+
+[[steps]]
+id = "tool-executor"
+type = "tool-executor"
+trigger = "step_complete:tool-detector"
+
+[initial_chunk]
+type = "null"
+
+[initial_chunk.annotations]
+"config.type" = "runtime"
+"config.llm.system_prompt" = """
+You are a helpful assistant with access to a dice-rolling tool.
+
+To roll dice, you MUST invoke the dice.roll tool by emitting a tool call marker in your response, like this:
+
+<|tool_call|>{"name":"dice.roll","parameters":{"count":2,"sides":6}}<|tool_call_end|>
+
+After the tool result comes back, tell the user what they rolled.
+
+The user may ask something like "roll 2d6" or "give me a d20". Do not mention the tool call mechanism to the user, just use it.
+"""
+"tools.available" = [
+  { name = "dice.roll", description = "Roll one or more dice and return the total", parameters = { type = "object", properties = { count = { type = "integer", description = "Number of dice" }, sides = { type = "integer", description = "Number of sides per die" } }, required = ["count", "sides"] }, tool_type = "rpc" },
+]
