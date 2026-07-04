@@ -141,6 +141,9 @@ uv run tests/tool-calling-e2e.py
 
 # Full lifecycle (start → chat → shutdown → restart → persist → delete)
 uv run tests/lifecycle-e2e.py
+
+# LLM-generated tool call lifecycle (dice-llm agent, tool call via LLM)
+uv run tests/tool-lifecycle-e2e.py
 ```
 
 ## License
