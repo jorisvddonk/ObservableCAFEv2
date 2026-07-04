@@ -72,7 +72,6 @@ impl Db {
             "INSERT INTO sessions (id, agent_id, is_background, ui_mode, created_at, updated_at)
              VALUES (?, ?, ?, 'chat', ?, ?)
              ON CONFLICT(id) DO UPDATE SET
-                 agent_id = excluded.agent_id,
                  updated_at = excluded.updated_at",
         )
         .bind(session_id)

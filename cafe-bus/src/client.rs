@@ -424,6 +424,8 @@ fn chunk_matches_filter(chunk: &Chunk, filter: &SubscribeFilter) -> bool {
         for (key, value) in annotations {
             match chunk.annotations.get(key) {
                 Some(v) if v == value => {}
+                // Boolean `false` matches both explicit false and absent
+                None if value == &serde_json::Value::Bool(false) => {}
                 _ => return false,
             }
         }

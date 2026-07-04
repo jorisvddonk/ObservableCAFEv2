@@ -155,10 +155,15 @@ async fn run_pipeline_subscriber(
             _ => continue,
         };
 
-        let Some(info) = agent_pipelines.get(&agent_id) else {
+        if !agent_pipelines.contains_key(&agent_id) {
+            info!(
+                "cafe-agent-runtime: ignoring session {} (agent {} not in pipeline map)",
+                session_id, agent_id
+            );
             continue;
-        };
+        }
 
+        let pipeline_info = agent_pipelines.get(&agent_id).unwrap();
         info!(
             "cafe-agent-runtime: attaching pipeline to session {} (agent {})",
             session_id, agent_id
@@ -166,17 +171,17 @@ async fn run_pipeline_subscriber(
 
         let sid = session_id.clone();
         let sp = socket_path.clone();
-        let agent_id = agent_id.clone();
+        let agent_id2 = agent_id.clone();
 
         // Publish the initial config chunk so resolve_session_config
         // picks up TTS/LLM settings for user-created sessions.
-        if info.initial_chunk_type == "null" && !info.initial_chunk_annotations.is_empty() {
-            let annotations = info.initial_chunk_annotations.clone();
+        if pipeline_info.initial_chunk_type == "null" && !pipeline_info.initial_chunk_annotations.is_empty() {
+            let annotations = pipeline_info.initial_chunk_annotations.clone();
             let client = client.clone();
             let sid2 = sid.clone();
             tokio::spawn(async move {
                 let mut chunk = cafe_sdk::Chunk::new_null(
-                    &format!("com.nominal.cafe-agent-runtime/{}", agent_id),
+                    &format!("com.nominal.cafe-agent-runtime/{}", agent_id2),
                 );
                 for (k, v) in annotations {
                     chunk = chunk.with_annotation(k, v);
@@ -191,9 +196,9 @@ async fn run_pipeline_subscriber(
         }
 
         let executor = Arc::new(PipelineExecutor::new(
-            info.steps.clone(),
-            Duration::from_secs(info.rpc_timeout_secs),
-            info.max_pipeline_depth,
+            pipeline_info.steps.clone(),
+            Duration::from_secs(pipeline_info.rpc_timeout_secs),
+            pipeline_info.max_pipeline_depth,
         ));
         tokio::spawn(async move {
             session_loop::run_session_loop(sid.clone(), sp, executor).await;

@@ -92,9 +92,15 @@ fn spawn_session(
 }
 
 async fn publish_model_registry(client: &BusClient, models: &[String]) -> anyhow::Result<()> {
-    client
+    if let Err(e) = client
         .create_session(REGISTRY_SESSION_ID, "_llm_registry", SessionConfig::default())
-        .await?;
+        .await
+    {
+        let msg = format!("{e:#}");
+        if !msg.contains("SESSION_EXISTS") {
+            return Err(e.into());
+        }
+    }
 
     let models_json = serde_json::to_string(models)?;
     let chunk = Chunk::new_null("com.nominal.cafe-llm")
