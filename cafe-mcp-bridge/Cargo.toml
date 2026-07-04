@@ -1,0 +1,21 @@
+[package]
+name = "cafe-mcp-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-mcp-bridge"
+path = "src/main.rs"
+
+[dependencies]
+cafe-sdk = { path = "../cafe-sdk", features = ["bus-client"] }
+tokio = { workspace = true, features = ["io-util", "sync", "net", "process"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { workspace = true }
+base64 = "0.22"
