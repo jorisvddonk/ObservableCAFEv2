@@ -1,24 +1,47 @@
 # ADR-109: Web fetch service
 
-**Status**: Implemented (`e6be9c1`) — cafe-web-fetch binary, agent TOML, process-compose entry. HTTP endpoint at `POST /api/sessions/:id/web` kept as-is.
+**Status**: Implemented (`fe841c7`)
 
-**Context**: `fetch_web` lives in `cafe-server/src/handlers/chunks.rs:62-130` as a synchronous HTTP handler. It accepts a URL, fetches it with `reqwest`, and publishes the result as a chunk with `web.source_url`, `web.content_type`, `web.fetch_time`, and optionally `web.error` annotations.
+## What was done
 
-This couples content fetching to the HTTP gateway. The endpoint cannot participate in agent pipelines — there's no way to configure a `!fetch` command that triggers a web fetch through the normal pipeline flow.
+A new standalone binary `cafe-web-fetch` was created (same pattern as `cafe-dice`):
 
-**Decision (deferred)**: Keep the HTTP endpoint at `POST /api/sessions/:id/web` for direct client use. Do not move it into a standalone service at this time. The annotation keys (`web.*`) remain unprefixed data annotations.
+- New crate: `cafe-web-fetch/` with `Cargo.toml` + `src/main.rs`
+- Handles `web-fetch.invoke` RPC dispatched by the pipeline
+- Parses `!fetch <url>` from user message text
+- Fetches the URL with `reqwest`, strips HTML, publishes a text chunk with `web.source_url`, `web.content_type`, `web.fetch_time`, `security.trust-level` annotations
+- 4 unit tests for `strip_html`
 
-**Future direction**: If `!fetch` functionality is desired in agent pipelines, a new step type `web-fetch` would be created (same pattern as `dice-detector` in cafe-dice):
-1. Step fires on `user_message`
-2. Dispatches `web-fetch.invoke` RPC with the message text
-3. A `cafe-web-fetch` service handles the RPC, parses `!fetch <url>`, fetches the URL, and publishes the result chunk
-4. Agents add `[[steps]] id = "web-fetch" type = "web-fetch" trigger = "user_message"` and `!fetch` naturally routes through the pipeline
+New agent TOML at `agents/fetch.toml`:
 
-For now, the HTTP endpoint remains the single path for server-side URL fetching.
+```toml
+[[steps]]
+id = "web-fetch"
+type = "web-fetch"
+trigger = "user_message"
+```
 
-**Consequences**:
-- No new binary to maintain
-- `POST /api/sessions/:id/web` continues to work for direct HTTP clients
+This lets any session created with `--agent fetch` handle `!fetch <url>` commands through the normal pipeline flow.
+
+Added to `process-compose.yml` with dependency on `cafe-bus`.
+
+## What was kept
+
+The existing HTTP endpoint `POST /api/sessions/:id/web` in `cafe-server/src/handlers/chunks.rs` is **unchanged**. It continues to work for direct HTTP clients that want to trigger a web fetch without going through a pipeline.
+
+## Context
+
+`fetch_web` originally lived only in `cafe-server/src/handlers/chunks.rs:62-130` as a synchronous HTTP handler. It accepted a URL, fetched it with `reqwest`, and published the result as a chunk. This coupled content fetching to the HTTP gateway — there was no way to trigger a web fetch through the agent pipeline.
+
+## Decision
+
+1. Extract the fetch logic into a standalone bus-connected binary `cafe-web-fetch`
+2. Create a corresponding pipeline step type `web-fetch` that dispatches `web-fetch.invoke` RPC
+3. Keep the HTTP endpoint for direct client use (no reason to remove it)
+
+## Consequences
+
+- `!fetch <url>` works naturally in the pipeline: create a session with the `fetch` agent, send a message
+- `POST /api/sessions/:id/web` still works for HTTP clients
 - `web.*` annotation keys stay unprefixed (they're data annotations, same as `chat.*`, `config.*`)
-- Agent pipelines cannot invoke web fetching as a step (deferred)
-- Future migration would extract the handler into a standalone `cafe-web-fetch` binary and add a pipeline step
+- No logic duplication: the HTTP endpoint and the bus handler share the same pattern but are independently maintained
