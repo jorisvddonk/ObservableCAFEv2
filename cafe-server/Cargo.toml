@@ -16,7 +16,7 @@ serde_json         = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
-axum               = { version = "0.7", features = ["multipart"] }
+axum               = { version = "0.7", features = ["multipart", "ws"] }
 tower-http         = { version = "0.5", features = ["cors", "trace"] }
 sqlx               = { version = "0.7", features = ["sqlite", "runtime-tokio"] }
 tokio-stream       = "0.1"
@@ -27,3 +27,4 @@ toml               = "0.8"
 argon2             = "0.5"
 rand               = { version = "0.8", features = ["std_rng"] }
 base64             = "0.22"
+futures-util       = { workspace = true }

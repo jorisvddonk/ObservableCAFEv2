@@ -7,3 +7,5 @@ pub mod proxy;
 pub mod quickies;
 pub mod sessions;
 pub mod stream;
+pub mod ws_handler;
+

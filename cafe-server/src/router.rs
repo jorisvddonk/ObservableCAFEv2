@@ -1,4 +1,4 @@
-use crate::handlers::{admin, agents, chat, chunks, models, proxy, quickies, sessions, stream};
+use crate::handlers::{admin, agents, chat, chunks, models, proxy, quickies, sessions, stream, ws_handler};
 use crate::AppState;
 use axum::routing::{any, delete, get, patch, post};
 use axum::Router;
@@ -34,6 +34,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sessions/:id/chunks/:chunk_id",
             delete(chunks::delete_chunk),
         )
+        .route("/api/sessions/:id/ws", get(ws_handler::ws_session))
         .route(
             "/api/sessions/:session_id/chunks/:chunk_id/binary",
             get(chunks::get_chunk_binary),
