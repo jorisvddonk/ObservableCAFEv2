@@ -282,9 +282,18 @@ fn build_rpc_params(namespace: &str, ctx: &PipelineContext) -> serde_json::Value
             "engine":  ctx.config.tts_engine,
         }),
         "stt" => {
-            serde_json::json!({
+            // Scan session history for the most recent binary_ref chunk with chat.role=user
+            // and pass its ID + mime_type so cafe-stt can find read credentials and transcribe.
+            let mut params = serde_json::json!({
                 "session_id": ctx.session_id,
-            })
+            });
+            // History is fetched by the caller before dispatch_rpc — we don't have it here.
+            // Instead, the RPC handler (cafe-stt) will scan history itself.
+            // We just need to ensure the binary_ref_id is available somehow.
+            // The simplest fix: pass the entire history's binary_ref info via the session.
+            // For now, cafe-stt handles scanning. This requires the binary_ref to be
+            // non-transient so cafe-stt can find it in history.
+            params
         }
         "comfy" => {
             let mut params = serde_json::json!({

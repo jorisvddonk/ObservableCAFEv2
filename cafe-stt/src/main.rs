@@ -130,7 +130,39 @@ async fn handle_stt(
         }
         resp.bytes().await?.to_vec()
     } else {
-        anyhow::bail!("missing audio (provide 'audio' base64 or 'binary_ref_id')");
+        // No explicit params — scan history for binary_ref chunks with chat.role=user
+        info!("cafe-stt: scanning history for binary_ref chunks");
+        let history = bus.get_history(session_id).await?;
+        let binary_refs: Vec<&Chunk> = history.iter()
+            .filter(|c| c.content_type == ContentType::BinaryRef
+                && c.role() == Some("user")
+                && c.annotations.get("cafe.binary.read_url").is_none())
+            .collect();
+
+        if binary_refs.is_empty() {
+            anyhow::bail!("no binary_ref chunks found in session history");
+        }
+
+        // Process the first unfetched binary_ref (most recent)
+        let ref_chunk = binary_refs.last().unwrap();
+        let binary_ref_id = &ref_chunk.id;
+        let mime = ref_chunk.mime_type.as_deref().unwrap_or("audio/wav");
+
+        let read_creds = find_read_credentials(&history, binary_ref_id)
+            .ok_or_else(|| anyhow::anyhow!("no read credentials found for binary_ref {}. Has the audio been uploaded yet?", binary_ref_id))?;
+        let read_url = read_creds["cafe.binary.read_url"].as_str().ok_or_else(|| anyhow::anyhow!("missing read_url"))?;
+        let read_token = read_creds["cafe.binary.read_token"].as_str().ok_or_else(|| anyhow::anyhow!("missing read_token"))?;
+
+        info!("cafe-stt: fetching audio from {}", read_url);
+        let resp = reqwest::Client::new()
+            .get(read_url)
+            .header("Authorization", format!("Bearer {}", read_token))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("binary-store returned {} for {}", resp.status(), read_url);
+        }
+        resp.bytes().await?.to_vec()
     };
 
     let (text, duration) = transcriber::transcribe(
