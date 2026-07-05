@@ -235,7 +235,7 @@ impl KnowledgeBase {
         let dummy: Vec<f32> = vec![0.0; self.dim];
         let stream = table
             .vector_search(dummy.as_slice())?
-            .limit(u32::MAX.try_into().unwrap())
+            .limit(i32::MAX as usize)
             .execute()
             .await?;
 
@@ -301,7 +301,7 @@ impl KnowledgeBase {
         let dummy: Vec<f32> = vec![0.0; self.dim];
         let results = table
             .vector_search(dummy.as_slice())?
-            .limit(u32::MAX.try_into().unwrap())
+            .limit(i32::MAX as usize)
             .execute()
             .await?;
 

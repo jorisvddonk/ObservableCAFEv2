@@ -330,29 +330,33 @@ async fn rpc_dispatch(
         .create_session(&session_id, "cafe-mcp-bridge", SessionConfig::default())
         .await?;
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wrap the core logic so session cleanup always runs
+    let result = async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let mut rx = client.subscribe(&session_id).await?;
-    drain_until_history(&mut rx).await;
+        let mut rx = client.subscribe(&session_id).await?;
+        drain_until_history(&mut rx).await;
 
-    let params = serde_json::to_value(args)?;
-    let call_id = Uuid::new_v4().to_string();
-    let rpc = JsonRpcRequest {
-        jsonrpc: "2.0".into(),
-        id: call_id.clone(),
-        method: rpc_method.into(),
-        params,
-    };
-    let chunk = Chunk::new_null("cafe-mcp-bridge")
-        .with_annotation(keys::CAFE_JSONRPC_REQUEST, &rpc)
-        .as_transient()
-        .with_retain(60);
-    client.publish(&session_id, chunk).await?;
+        let params = serde_json::to_value(args)?;
+        let call_id = Uuid::new_v4().to_string();
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: call_id.clone(),
+            method: rpc_method.into(),
+            params,
+        };
+        let chunk = Chunk::new_null("cafe-mcp-bridge")
+            .with_annotation(keys::CAFE_JSONRPC_REQUEST, &rpc)
+            .as_transient()
+            .with_retain(60);
+        client.publish(&session_id, chunk).await?;
 
-    let result = wait_for_rpc_response(&mut rx, &call_id).await?;
+        wait_for_rpc_response(&mut rx, &call_id).await
+    }
+    .await;
 
     let _ = client.delete_session(&session_id).await;
-    Ok(result)
+    result
 }
 
 async fn drain_until_history(rx: &mut tokio::sync::mpsc::Receiver<ServerMessage>) {

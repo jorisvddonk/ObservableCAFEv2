@@ -81,7 +81,11 @@ pub async fn execute(
                     .with_annotation(keys::CHAT_ROLE, "assistant");
                 client.publish(session_id, text_chunk).await?;
             } else {
-                let err = response.error.unwrap();
+                let err = response.error.unwrap_or(cafe_sdk::JsonRpcError {
+                    code: -1,
+                    message: "unknown error (no error detail in response)".into(),
+                    data: None,
+                });
                 error!(
                     "tool_executor: {} error call_id={}: [{}] {}",
                     call.name, call_id, err.code, err.message

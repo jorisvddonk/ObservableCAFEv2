@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use cafe_http_proxy_sdk::{parse_registration, parse_response, ProxyResponse as SdkProxyResponse, PROXY_SESSION};
+use cafe_http_proxy_sdk::{parse_registration, parse_response, PROXY_SESSION};
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{keys, ServerMessage};
 use config::Config;
 use db::Db;
-use handlers::proxy::{proxy_handler, ProxiedResponse, ProxyState};
+use handlers::proxy::{ProxiedResponse, ProxyState};
 use route_registry::{spawn_gc, RouteRegistryInner};
 use tokio::sync::{oneshot, RwLock};
 use tracing::{error, info, warn};

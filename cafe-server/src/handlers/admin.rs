@@ -51,11 +51,12 @@ pub async fn create_token(
         .create_token(body.description.as_deref(), body.admin.unwrap_or(false))
         .await
     {
-        Ok(t) => (
+        Ok((t, raw_token)) => (
             StatusCode::CREATED,
             Json(json!({
                 "id": t.id,
-                "token": t.token,
+                "token": raw_token,
+                "token_prefix": t.token_prefix,
                 "description": t.description,
                 "is_admin": t.is_admin,
             })),

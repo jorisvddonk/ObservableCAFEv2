@@ -1,4 +1,9 @@
 use anyhow::Result;
+use argon2::{
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use rand::rngs::OsRng;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
 use std::str::FromStr;
@@ -7,7 +12,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct TokenRow {
     pub id: String,
-    pub token: String,
+    /// First 8 chars of the raw token (for display/identification only).
+    pub token_prefix: String,
     pub description: Option<String>,
     pub is_admin: bool,
 }
@@ -42,10 +48,27 @@ impl Db {
     }
 
     pub async fn migrate(&self) -> Result<()> {
+        // Migration from old schema (plaintext `token` column) to new hashed schema.
+        // Check if the old schema exists and drop the table if so.
+        let has_old_schema: bool = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM pragma_table_info('tokens') WHERE name = 'token'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map(|r| r.get::<i64, _>("cnt") > 0)
+        .unwrap_or(false);
+
+        if has_old_schema {
+            sqlx::query("DROP TABLE IF EXISTS tokens")
+                .execute(&self.pool)
+                .await?;
+        }
+
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS tokens (
                 id          TEXT PRIMARY KEY,
-                token       TEXT NOT NULL UNIQUE,
+                token_hash  TEXT NOT NULL,
+                token_prefix TEXT NOT NULL,
                 description TEXT,
                 is_admin    INTEGER NOT NULL DEFAULT 0,
                 created_at  INTEGER NOT NULL
@@ -74,6 +97,26 @@ impl Db {
         Ok(())
     }
 
+    /// Hash a raw token string and return (hash, prefix).
+    fn hash_token(raw: &str) -> Result<(String, String)> {
+        let salt = SaltString::generate(&mut OsRng);
+        let hash = Argon2::default()
+            .hash_password(raw.as_bytes(), &salt)
+            .map_err(|e| anyhow::anyhow!("failed to hash token: {}", e))?
+            .to_string();
+        let prefix = raw.chars().take(8).collect();
+        Ok((hash, prefix))
+    }
+
+    /// Verify a raw token against a stored argon2 hash.
+    fn verify_token(raw: &str, hash: &str) -> Result<bool> {
+        let parsed = PasswordHash::new(hash)
+            .map_err(|e| anyhow::anyhow!("failed to parse token hash: {}", e))?;
+        Ok(Argon2::default()
+            .verify_password(raw.as_bytes(), &parsed)
+            .is_ok())
+    }
+
     /// Returns the admin token, creating one if the table is empty.
     pub async fn ensure_admin_token(&self, seed: Option<&str>) -> Result<String> {
         let count: i64 = sqlx::query("SELECT COUNT(*) FROM tokens")
@@ -83,26 +126,28 @@ impl Db {
             .unwrap_or(0);
 
         if count > 0 {
-            // Return existing admin token
-            let row = sqlx::query("SELECT token FROM tokens WHERE is_admin = 1 LIMIT 1")
-                .fetch_one(&self.pool)
-                .await?;
-            return Ok(row.get::<String, _>("token"));
+            let row =
+                sqlx::query("SELECT token_prefix FROM tokens WHERE is_admin = 1 LIMIT 1")
+                    .fetch_one(&self.pool)
+                    .await?;
+            let prefix: String = row.get("token_prefix");
+            return Ok(format!("admin token prefix: {}", prefix));
         }
 
-        // Generate or use seed token
         let token = seed
             .map(String::from)
             .unwrap_or_else(|| format!("cafe_adm_{}", Uuid::new_v4().simple()));
 
         let id = Uuid::new_v4().to_string();
+        let (hash, prefix) = Self::hash_token(&token)?;
         let now = now_ms();
         sqlx::query(
-            "INSERT INTO tokens (id, token, description, is_admin, created_at)
-             VALUES (?, ?, 'Initial admin token', 1, ?)",
+            "INSERT INTO tokens (id, token_hash, token_prefix, description, is_admin, created_at)
+             VALUES (?, ?, ?, 'Initial admin token', 1, ?)",
         )
         .bind(&id)
-        .bind(&token)
+        .bind(&hash)
+        .bind(&prefix)
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -110,31 +155,43 @@ impl Db {
         Ok(token)
     }
 
-    pub async fn lookup_token(&self, token: &str) -> Result<Option<TokenRow>> {
-        let row = sqlx::query(
-            "SELECT id, token, description, is_admin FROM tokens WHERE token = ?",
+    /// Verify a token and return the matching row. Returns None if not found.
+    pub async fn lookup_token(&self, raw: &str) -> Result<Option<TokenRow>> {
+        let prefix: String = raw.chars().take(8).collect();
+
+        let rows = sqlx::query(
+            "SELECT id, token_hash, token_prefix, description, is_admin
+             FROM tokens WHERE token_prefix = ?",
         )
-        .bind(token)
-        .fetch_optional(&self.pool)
+        .bind(&prefix)
+        .fetch_all(&self.pool)
         .await?;
 
-        Ok(row.map(|r| TokenRow {
-            id: r.get("id"),
-            token: r.get("token"),
-            description: r.get("description"),
-            is_admin: r.get::<i64, _>("is_admin") != 0,
-        }))
+        for row in rows {
+            let hash: String = row.get("token_hash");
+            if Self::verify_token(raw, &hash)? {
+                return Ok(Some(TokenRow {
+                    id: row.get("id"),
+                    token_prefix: row.get("token_prefix"),
+                    description: row.get("description"),
+                    is_admin: row.get::<i64, _>("is_admin") != 0,
+                }));
+            }
+        }
+
+        Ok(None)
     }
 
     pub async fn list_tokens(&self) -> Result<Vec<TokenRow>> {
-        let rows = sqlx::query("SELECT id, token, description, is_admin FROM tokens")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT id, token_prefix, description, is_admin FROM tokens")
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows
             .into_iter()
             .map(|r| TokenRow {
                 id: r.get("id"),
-                token: r.get("token"),
+                token_prefix: r.get("token_prefix"),
                 description: r.get("description"),
                 is_admin: r.get::<i64, _>("is_admin") != 0,
             })
@@ -145,27 +202,32 @@ impl Db {
         &self,
         description: Option<&str>,
         is_admin: bool,
-    ) -> Result<TokenRow> {
+    ) -> Result<(TokenRow, String)> {
         let id = Uuid::new_v4().to_string();
-        let token = format!("cafe_{}", Uuid::new_v4().simple());
+        let raw = format!("cafe_{}", Uuid::new_v4().simple());
+        let (hash, prefix) = Self::hash_token(&raw)?;
         let now = now_ms();
         sqlx::query(
-            "INSERT INTO tokens (id, token, description, is_admin, created_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO tokens (id, token_hash, token_prefix, description, is_admin, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
-        .bind(&token)
+        .bind(&hash)
+        .bind(&prefix)
         .bind(description)
         .bind(is_admin as i64)
         .bind(now)
         .execute(&self.pool)
         .await?;
-        Ok(TokenRow {
-            id,
-            token,
-            description: description.map(String::from),
-            is_admin,
-        })
+        Ok((
+            TokenRow {
+                id,
+                token_prefix: prefix,
+                description: description.map(String::from),
+                is_admin,
+            },
+            raw,
+        ))
     }
 
     pub async fn delete_token(&self, id: &str) -> Result<bool> {
@@ -175,6 +237,8 @@ impl Db {
             .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    // ── Quickies (unchanged) ──
 
     pub async fn list_quickies(&self) -> Result<Vec<Quickie>> {
         let rows = sqlx::query(
