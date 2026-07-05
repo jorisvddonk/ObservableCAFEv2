@@ -7,8 +7,9 @@ use axum::{
     },
     response::IntoResponse,
 };
+use cafe_sdk::bus::SessionSubscription;
 use cafe_sdk::{Chunk, ServerMessage};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -26,17 +27,16 @@ struct WsAction {
 ///
 /// `GET /api/sessions/:id/ws?token=<auth>`
 ///
-/// Once upgraded, the client receives session events as JSON messages:
+/// The client receives session events as JSON messages:
 ///   {"event":"chunk","chunk":{...}}
 ///   {"event":"history_complete","count":0}
 ///
-/// And can send actions back:
-///   {"op":"publish","chunk":{"content_type":"text","content":"hello"}}
+/// And can send actions:
+///   {"op":"publish","chunk":{"content_type":"binary_ref","mime_type":"audio/wav","annotations":{"chat.role":"user"}}}
 ///   {"op":"subscribe","session_id":"<new>"}
 ///
-/// Published chunks are tagged with the server's bus connection ID,
-/// so direct_to replies (e.g. binary-store write credentials) arrive
-/// here and are forwarded to the WebSocket client.
+/// Publishing reuses the subscription's bus connection, so `source.connection`
+/// stays alive for `direct_to` replies (binary-store write credentials).
 pub async fn ws_session(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -49,9 +49,10 @@ pub async fn ws_session(
 async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: String) {
     let mut current_session = initial_session.clone();
 
-    // Subscribe to the initial session
-    let mut bus_rx = match state.bus.subscribe(&current_session).await {
-        Ok(rx) => rx,
+    // Subscribe with a persistent connection — publish reuses the same
+    // connection so source.connection stays alive for direct_to replies.
+    let mut sub = match state.bus.subscribe_session(&current_session).await {
+        Ok(s) => s,
         Err(e) => {
             warn!("ws_handler: subscribe error: {}", e);
             return;
@@ -61,7 +62,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
     loop {
         tokio::select! {
             // ── Incoming from bus → forward to WebSocket ──
-            bus_msg = bus_rx.recv() => {
+            bus_msg = sub.rx.recv() => {
                 let payload = match bus_msg {
                     Some(ServerMessage::Chunk { chunk, .. }) => {
                         serde_json::to_string(&serde_json::json!({
@@ -105,7 +106,10 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                         match action.op.as_str() {
                             "publish" => {
                                 if let Some(chunk) = action.chunk {
-                                    if let Err(e) = state.bus.publish(&current_session, chunk).await {
+                                    // Publish through the subscription's connection,
+                                    // so source.connection points to a live connection
+                                    // that can receive direct_to replies.
+                                    if let Err(e) = sub.publish(chunk).await {
                                         warn!("ws_handler: publish error: {}", e);
                                     }
                                 }
@@ -114,8 +118,8 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                                 if let Some(new_sid) = action.session_id {
                                     info!("ws_handler: switching to session {}", new_sid);
                                     current_session = new_sid.clone();
-                                    match state.bus.subscribe(&new_sid).await {
-                                        Ok(new_rx) => bus_rx = new_rx,
+                                    match state.bus.subscribe_session(&new_sid).await {
+                                        Ok(new_sub) => sub = new_sub,
                                         Err(e) => {
                                             warn!("ws_handler: subscribe error: {}", e);
                                             break;

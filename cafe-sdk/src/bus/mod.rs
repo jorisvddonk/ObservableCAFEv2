@@ -22,6 +22,29 @@ pub struct BusClient {
     socket_path: Arc<String>,
 }
 
+/// A session subscription with a persistent connection.
+/// Publishing through this subscription uses the same bus connection,
+/// so `source.connection` points to a live connection that can
+/// receive `direct_to` replies (e.g. binary-store write credentials).
+pub struct SessionSubscription {
+    pub rx: mpsc::Receiver<ServerMessage>,
+    writer: tokio::net::unix::OwnedWriteHalf,
+    session_id: String,
+}
+
+impl SessionSubscription {
+    /// Publish a chunk on this subscription's connection.
+    pub async fn publish(&mut self, chunk: Chunk) -> Result<(), SdkError> {
+        let msg = ClientMessage::Publish {
+            session_id: self.session_id.clone(),
+            chunk,
+        };
+        let payload = serde_json::to_string(&msg)? + "\n";
+        self.writer.write_all(payload.as_bytes()).await?;
+        Ok(())
+    }
+}
+
 impl BusClient {
     /// Create a new bus client handle for the given socket path.
     pub fn new(socket_path: impl Into<String>) -> Self {
@@ -165,9 +188,49 @@ impl BusClient {
         Ok(chunks)
     }
 
+    /// Subscribe to a session, returning a `SessionSubscription` that
+    /// shares the same connection. Publishing via this subscription
+    /// reuses the connection, so `source.connection` stays alive for
+    /// `direct_to` replies.
+    pub async fn subscribe_session(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionSubscription, SdkError> {
+        let (writer, mut lines) = self
+            .send(&ClientMessage::Subscribe {
+                session_id: session_id.to_string(),
+            })
+            .await?;
+
+        let (tx, rx) = mpsc::channel::<ServerMessage>(256);
+        let sid = session_id.to_string();
+
+        // Spawn reader task — the writer stays in the calling task
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = lines.next_line().await {
+                match serde_json::from_str::<ServerMessage>(&line) {
+                    Ok(msg) => {
+                        if tx.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("cafe-sdk: invalid message from bus: {}", e);
+                    }
+                }
+            }
+        });
+
+        Ok(SessionSubscription {
+            rx,
+            writer,
+            session_id: sid,
+        })
+    }
+
     /// Subscribe to a session and return a channel receiver of
-    /// `ServerMessage` values. Spawns a background task that forwards
-    /// messages until the connection drops or the receiver is dropped.
+    /// `ServerMessage` values. (Legacy — prefer `subscribe_session`
+    /// for new code that needs to publish on the same connection.)
     pub async fn subscribe(
         &self,
         session_id: &str,
