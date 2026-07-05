@@ -105,6 +105,17 @@ impl Db {
         Ok(rows)
     }
 
+    /// Look up the session_id for a chunk. Returns None if not found.
+    pub async fn get_session_for_chunk(&self, chunk_id: &str) -> Result<Option<String>> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT session_id FROM assets WHERE chunk_id = ?",
+        )
+        .bind(chunk_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// GC: delete expired transient assets, return their chunk_ids.
     pub async fn gc_transient(&self, gc_ttl_secs: u64) -> Result<Vec<String>> {
         let cutoff = std::time::SystemTime::now()

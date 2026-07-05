@@ -192,20 +192,13 @@ async fn write_handler(
         }
     }
 
-    // Check if this is the final segment (connection is done — the body has been read)
-    let writing_path = {
-        let p = state.storage.chunk_path(&chunk_id);
-        let name = format!("{}.writing", p.file_name().unwrap().to_string_lossy());
-        let mut wpath = p;
-        wpath.set_file_name(name);
-        wpath
-    };
-    let still_writing = tokio::fs::metadata(&writing_path).await.is_ok();
-    if !still_writing && offset == 0 && !body.is_empty() {
+    // For single-shot writes (offset=0, data in body): finalize immediately.
+    // The `.writing` file was created by start_write() above and is removed by finalize().
+    if offset == 0 && !body.is_empty() {
         // Single-shot write (no resume, body already complete) — finalize
         let _ = state.storage.finalize(&chunk_id).await;
         let _ = state.db.update_file_size(&chunk_id, body.len() as u64).await;
-        publish_completion(&state, &chunk_id, &query.session_id).await;
+        publish_completion(&state._bus, &state.db, &chunk_id, &query.session_id).await;
 
         // Generate read JWT for this case too
         let read_token = jwt::sign_read(&chunk_id, &state.jwt_key).unwrap_or_default();
@@ -217,7 +210,7 @@ async fn write_handler(
         // Final segment
         let _ = state.storage.finalize(&chunk_id).await;
         let _ = state.db.update_file_size(&chunk_id, offset + body.len() as u64).await;
-        publish_completion(&state, &chunk_id, &query.session_id).await;
+        publish_completion(&state._bus, &state.db, &chunk_id, &query.session_id).await;
     }
 
     Json(serde_json::json!({"status": "ok"})).into_response()
@@ -308,11 +301,22 @@ async fn delete_handler(
 
 /// Publish a completion event after the upload finalizes.
 /// cafe-stt watches for this to know the audio is ready to transcribe.
-async fn publish_completion(state: &AppState, chunk_id: &str, session_id: &Option<String>) {
-    if let Some(ref sid) = session_id {
+/// Uses `session_id` from the query param if provided, otherwise falls back
+/// to the DB (stored when the BinaryRef chunk was received via the bus).
+async fn publish_completion(
+    bus: &BusClient,
+    db: &crate::db::Db,
+    chunk_id: &str,
+    session_id: &Option<String>,
+) {
+    let sid = match session_id {
+        Some(s) => Some(s.clone()),
+        None => db.get_session_for_chunk(chunk_id).await.unwrap_or(None),
+    };
+    if let Some(ref sid) = sid {
         let mutation = cafe_sdk::Chunk::mutation(chunk_id, "com.nominal.cafe-binary-store")
             .with_annotation("cafe.binary.completed", true);
-        if let Err(e) = state._bus.publish(sid, mutation).await {
+        if let Err(e) = bus.publish(sid, mutation).await {
             warn!("cafe-binary-store: failed to publish completion event: {e}");
         }
     }

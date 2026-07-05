@@ -1,6 +1,9 @@
 # LanceDB vector database (auto-generated)
 /knowledgebase.lance/
 
+# Binary-store data (auto-generated during tests)
+/data/binary-store/
+
 # TypeScript
 *.tsbuildinfo
 

@@ -141,21 +141,25 @@ async fn transcribe_binary_ref(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing read_token"))?;
 
-    info!("cafe-stt: fetching audio from {}", read_url);
+    let fetch_url = format!("{}?token={}", read_url, read_token);
+    info!("cafe-stt: fetching audio from {}", fetch_url);
     let resp = reqwest::Client::new()
-        .get(read_url)
-        .header("Authorization", format!("Bearer {}", read_token))
+        .get(&fetch_url)
         .send()
         .await?;
     if !resp.status().is_success() {
-        anyhow::bail!("binary-store returned {} for {}", resp.status(), read_url);
+        anyhow::bail!("binary-store returned {} for {}", resp.status(), fetch_url);
     }
     let audio = resp.bytes().await?.to_vec();
 
+    // Convert to WAV (ffmpeg handles any input format)
+    let wav = convert_to_wav(&audio).await?;
+    info!("cafe-stt: converted {} bytes to {} bytes WAV", audio.len(), wav.len());
+
     let (text, duration) = transcriber::transcribe(
         &config.voicebox_url,
-        &audio,
-        mime_type,
+        &wav,
+        "audio/wav",
         None, // language
         None, // model
     )
@@ -183,12 +187,12 @@ async fn handle_stt(
     bus: &cafe_sdk::bus::BusClient,
     session_id: &str,
 ) -> Result<(String, String, f64)> {
-    let mime_type = params["mime_type"].as_str().unwrap_or("audio/wav");
     let language = params["language"].as_str();
     let model = params["model"].as_str();
 
     let audio = if let Some(b64) = params["audio"].as_str() {
-        base64_decode(b64)?
+        let raw = base64_decode(b64)?;
+        convert_to_wav(&raw).await?
     } else if let Some(binary_ref_id) = params["binary_ref_id"].as_str() {
         // Scan session history for read credentials matching this binary_ref
         let history = bus.get_history(session_id).await?;
@@ -197,21 +201,22 @@ async fn handle_stt(
 
         let read_url = read_creds["cafe.binary.read_url"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing read_url in credentials"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing read_url"))?;
         let read_token = read_creds["cafe.binary.read_token"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing read_token in credentials"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing read_token"))?;
 
-        info!("cafe-stt: fetching audio from {}", read_url);
+        let fetch_url = format!("{}?token={}", read_url, read_token);
+        info!("cafe-stt: fetching audio from {}", fetch_url);
         let resp = reqwest::Client::new()
-            .get(read_url)
-            .header("Authorization", format!("Bearer {}", read_token))
+            .get(&fetch_url)
             .send()
             .await?;
         if !resp.status().is_success() {
-            anyhow::bail!("binary-store returned {} for {}", resp.status(), read_url);
+            anyhow::bail!("binary-store returned {} for {}", resp.status(), fetch_url);
         }
-        resp.bytes().await?.to_vec()
+        let raw = resp.bytes().await?.to_vec();
+        convert_to_wav(&raw).await?
     } else {
         // No explicit params — scan history for binary_ref chunks with chat.role=user
         info!("cafe-stt: scanning history for binary_ref chunks");
@@ -229,29 +234,29 @@ async fn handle_stt(
         // Process the first unfetched binary_ref (most recent)
         let ref_chunk = binary_refs.last().unwrap();
         let binary_ref_id = &ref_chunk.id;
-        let mime = ref_chunk.mime_type.as_deref().unwrap_or("audio/wav");
 
         let read_creds = find_read_credentials(&history, binary_ref_id)
             .ok_or_else(|| anyhow::anyhow!("no read credentials found for binary_ref {}. Has the audio been uploaded yet?", binary_ref_id))?;
         let read_url = read_creds["cafe.binary.read_url"].as_str().ok_or_else(|| anyhow::anyhow!("missing read_url"))?;
         let read_token = read_creds["cafe.binary.read_token"].as_str().ok_or_else(|| anyhow::anyhow!("missing read_token"))?;
 
-        info!("cafe-stt: fetching audio from {}", read_url);
+        let fetch_url = format!("{}?token={}", read_url, read_token);
+        info!("cafe-stt: fetching audio from {}", fetch_url);
         let resp = reqwest::Client::new()
-            .get(read_url)
-            .header("Authorization", format!("Bearer {}", read_token))
+            .get(&fetch_url)
             .send()
             .await?;
         if !resp.status().is_success() {
-            anyhow::bail!("binary-store returned {} for {}", resp.status(), read_url);
+            anyhow::bail!("binary-store returned {} for {}", resp.status(), fetch_url);
         }
-        resp.bytes().await?.to_vec()
+        let raw = resp.bytes().await?.to_vec();
+        convert_to_wav(&raw).await?
     };
 
     let (text, duration) = transcriber::transcribe(
         &config.voicebox_url,
         &audio,
-        mime_type,
+        "audio/wav",
         language,
         model,
     )
@@ -290,6 +295,41 @@ fn find_read_credentials<'a>(
         }
     }
     None
+}
+
+/// Convert audio bytes to WAV format using ffmpeg.
+/// Handles any input format (MP4, MP3, etc.) by converting to 16kHz mono PCM WAV.
+async fn convert_to_wav(input: &[u8]) -> Result<Vec<u8>> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-y", "-i", "pipe:0",
+            "-f", "wav",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            "pipe:1",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("ffmpeg not found: {}", e))?;
+
+    // Write input, close stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input).await?;
+        stdin.flush().await?;
+        drop(stdin);
+    }
+
+    // Wait for output
+    let output = child.wait_with_output().await?;
+    if !output.status.success() {
+        anyhow::bail!("ffmpeg conversion failed (exit={})", output.status);
+    }
+    Ok(output.stdout)
 }
 
 fn base64_decode(encoded: &str) -> Result<Vec<u8>> {
