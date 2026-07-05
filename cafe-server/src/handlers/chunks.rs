@@ -6,6 +6,7 @@ use axum::{
     Json,
 };
 use cafe_sdk::{keys, Chunk, ContentType};
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -14,6 +15,8 @@ use std::collections::HashMap;
 pub struct SendChunkRequest {
     pub content_type: String,
     pub content: Option<String>,
+    pub data: Option<String>,
+    pub mime_type: Option<String>,
     pub annotations: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -34,6 +37,22 @@ pub async fn send_chunk(
             "com.nominal.cafe-server",
         ),
         "null" => Chunk::new_null("com.nominal.cafe-server"),
+        "binary" => {
+            let raw = match body.data.as_ref().and_then(|d| {
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, d).ok()
+            }) {
+                Some(b) => b,
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "Invalid base64 data" })),
+                    )
+                        .into_response()
+                }
+            };
+            let mime = body.mime_type.clone().unwrap_or_else(|| "application/octet-stream".into());
+            Chunk::new_binary(raw, mime, "com.nominal.cafe-server")
+        }
         _ => {
             return (
                 StatusCode::BAD_REQUEST,

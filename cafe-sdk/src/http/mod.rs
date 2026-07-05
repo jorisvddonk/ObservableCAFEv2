@@ -205,6 +205,42 @@ impl HttpClient {
         Ok(models)
     }
 
+    /// Publish a chunk to a session (POST /api/sessions/:id/chunks).
+    /// `base64_data` is the base64-encoded binary payload (for binary chunks).
+    pub async fn publish_chunk(
+        &self,
+        session_id: &str,
+        content_type: &str,
+        content: Option<&str>,
+        data: Option<&str>,
+        mime_type: Option<&str>,
+        annotations: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<(), SdkError> {
+        let mut body = json!({
+            "content_type": content_type,
+        });
+        if let Some(c) = content {
+            body["content"] = json!(c);
+        }
+        if let Some(d) = data {
+            body["data"] = json!(d);
+        }
+        if let Some(m) = mime_type {
+            body["mime_type"] = json!(m);
+        }
+        if let Some(a) = annotations {
+            body["annotations"] = json!(a);
+        }
+        self.client
+            .post(self.url(&format!("/api/sessions/{}/chunks", session_id)))
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     /// List available agents.
     pub async fn list_agents(&self) -> Result<Vec<AgentInfo>, SdkError> {
         let resp = self

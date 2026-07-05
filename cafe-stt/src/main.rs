@@ -2,7 +2,7 @@ mod config;
 mod transcriber;
 
 use anyhow::Result;
-use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, JsonRpcResponse, ServerMessage};
 use config::Config;
 use tracing::{info, warn};
 
@@ -64,7 +64,7 @@ async fn run_session(
 
         info!("cafe-stt: handling stt.invoke call_id={}", call_id);
 
-        let response = match handle_stt(&config, &request.params).await {
+        let response = match handle_stt(&config, &request.params, &client, &session_id).await {
             Ok((chunk_id, text, duration)) => JsonRpcResponse::ok(
                 &call_id,
                 serde_json::json!({
@@ -89,10 +89,12 @@ async fn run_session(
     Ok(())
 }
 
-/// Handle an stt.invoke RPC: decode audio, transcribe, publish result chunk.
+/// Handle an stt.invoke RPC: decode audio, transcribe, publish result and assistant chunk.
 async fn handle_stt(
     config: &Config,
     params: &serde_json::Value,
+    bus: &cafe_sdk::bus::BusClient,
+    session_id: &str,
 ) -> Result<(String, String, f64)> {
     let audio_b64 = params["audio"]
         .as_str()
@@ -114,14 +116,13 @@ async fn handle_stt(
     )
     .await?;
 
-    // The RPC response is returned to the caller via the bus.
-    // The caller (tool-executor or pipeline) handles publishing the
-    // result chunk. We don't publish to the session ourselves here —
-    // that's the caller's responsibility.
-    //
-    // We generate a chunk_id for the transcription so it can be
-    // referenced if needed.
     let chunk_id = uuid::Uuid::new_v4().to_string();
+
+    // Publish the transcription as an assistant text chunk so it
+    // appears in conversation without an LLM step.
+    let text_chunk = Chunk::new_text(&text, "com.nominal.cafe-stt")
+        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
+    let _ = bus.publish(session_id, text_chunk).await;
 
     Ok((chunk_id, text, duration))
 }
