@@ -2,7 +2,7 @@ mod config;
 mod transcriber;
 
 use anyhow::Result;
-use cafe_sdk::{keys, roles, Chunk, JsonRpcResponse, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, ContentType, JsonRpcResponse, ServerMessage};
 use config::Config;
 use tracing::{info, warn};
 
@@ -89,23 +89,49 @@ async fn run_session(
     Ok(())
 }
 
-/// Handle an stt.invoke RPC: decode audio, transcribe, publish result and assistant chunk.
+/// Handle an stt.invoke RPC: transcribe audio and publish result.
+///
+/// Supports two input modes:
+/// - `audio` (base64) — direct audio data in the params
+/// - `binary_ref_id` — scan session history for read credentials, download from binary-store
 async fn handle_stt(
     config: &Config,
     params: &serde_json::Value,
     bus: &cafe_sdk::bus::BusClient,
     session_id: &str,
 ) -> Result<(String, String, f64)> {
-    let audio_b64 = params["audio"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing audio (base64)"))?;
-    let mime_type = params["mime_type"]
-        .as_str()
-        .unwrap_or("audio/wav");
+    let mime_type = params["mime_type"].as_str().unwrap_or("audio/wav");
     let language = params["language"].as_str();
     let model = params["model"].as_str();
 
-    let audio = base64_decode(audio_b64)?;
+    let audio = if let Some(b64) = params["audio"].as_str() {
+        base64_decode(b64)?
+    } else if let Some(binary_ref_id) = params["binary_ref_id"].as_str() {
+        // Scan session history for read credentials matching this binary_ref
+        let history = bus.get_history(session_id).await?;
+        let read_creds = find_read_credentials(&history, binary_ref_id)
+            .ok_or_else(|| anyhow::anyhow!("no read credentials found for binary_ref {}", binary_ref_id))?;
+
+        let read_url = read_creds["cafe.binary.read_url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing read_url in credentials"))?;
+        let read_token = read_creds["cafe.binary.read_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing read_token in credentials"))?;
+
+        info!("cafe-stt: fetching audio from {}", read_url);
+        let resp = reqwest::Client::new()
+            .get(read_url)
+            .header("Authorization", format!("Bearer {}", read_token))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("binary-store returned {} for {}", resp.status(), read_url);
+        }
+        resp.bytes().await?.to_vec()
+    } else {
+        anyhow::bail!("missing audio (provide 'audio' base64 or 'binary_ref_id')");
+    };
 
     let (text, duration) = transcriber::transcribe(
         &config.voicebox_url,
@@ -125,6 +151,30 @@ async fn handle_stt(
     let _ = bus.publish(session_id, text_chunk).await;
 
     Ok((chunk_id, text, duration))
+}
+
+/// Scan session history for a mutation chunk containing binary read credentials
+/// matching the given binary_ref chunk_id.
+fn find_read_credentials<'a>(
+    history: &'a [Chunk],
+    binary_ref_id: &str,
+) -> Option<&'a std::collections::HashMap<String, serde_json::Value>> {
+    for chunk in history {
+        if chunk.content_type != cafe_sdk::ContentType::Null {
+            continue;
+        }
+        let ann = &chunk.annotations;
+        if ann.get("cafe.mutates.target_id")
+            .and_then(|v| v.as_str())
+            != Some(binary_ref_id)
+        {
+            continue;
+        }
+        if ann.contains_key("cafe.binary.read_url") && ann.contains_key("cafe.binary.read_token") {
+            return Some(ann);
+        }
+    }
+    None
 }
 
 fn base64_decode(encoded: &str) -> Result<Vec<u8>> {

@@ -281,6 +281,11 @@ fn build_rpc_params(namespace: &str, ctx: &PipelineContext) -> serde_json::Value
             "profile": ctx.config.tts_profile,
             "engine":  ctx.config.tts_engine,
         }),
+        "stt" => {
+            serde_json::json!({
+                "session_id": ctx.session_id,
+            })
+        }
         "comfy" => {
             let mut params = serde_json::json!({
                 "prompt": ctx.assembled_llm_text.as_deref().unwrap_or(""),

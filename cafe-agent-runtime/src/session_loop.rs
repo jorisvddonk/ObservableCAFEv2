@@ -49,8 +49,12 @@ pub async fn run_session_loop(
 
         // Determine trigger type from the chunk
         let trigger = match () {
-            // User message → fire user_message trigger
+            // User message (text or binary_ref) → fire user_message trigger
             _ if chunk.content_type == ContentType::Text && chunk.role() == Some(roles::USER) => {
+                Some(TriggerType::UserMessage)
+            }
+            _ if chunk.content_type == ContentType::BinaryRef && chunk.role() == Some(roles::USER) =>
+            {
                 Some(TriggerType::UserMessage)
             }
             // LLM final chunk (stream_complete, non-transient, assistant) → fire llm_complete
