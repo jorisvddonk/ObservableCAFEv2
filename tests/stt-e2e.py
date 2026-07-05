@@ -89,8 +89,16 @@ def main():
         time.sleep(1)
 
         print("=== Starting cafe-stt ===", file=sys.stderr)
-        stt_proc = subprocess.Popen([STT_BIN], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(2)
+        stt_log = os.path.join(tmpdir, "stt.log")
+        stt_out = os.path.join(tmpdir, "stt.out")
+        stt_err = open(stt_log, "w", buffering=1)
+        stt_proc = subprocess.Popen([STT_BIN], env=env, stdout=open(stt_out, "w"), stderr=stt_err)
+        time.sleep(4)
+
+        # Check if stt is still alive
+        if stt_proc.poll() is not None:
+            with open(stt_log) as f:
+                print(f"STT exited with code {stt_proc.returncode}, log: {f.read()[:200]}", file=sys.stderr)
 
         try:
             print("=== Create session ===", file=sys.stderr)
@@ -158,7 +166,7 @@ def main():
 
             # Read response on the subscriber connection
             print("=== Reading response ===", file=sys.stderr)
-            sub_sock.settimeout(15)
+            sub_sock.settimeout(60)
             result = None
             text = None
             try:
@@ -205,6 +213,25 @@ def main():
             run([CLI, "--bus", bus_socket, "delete-session", session_id])
 
         finally:
+            # Print STT logs before killing
+            try:
+                stt_log_path = os.path.join(tmpdir, "stt.log")
+                if os.path.exists(stt_log_path):
+                    with open(stt_log_path) as f:
+                        stt_log = f.read()
+                    print("=== STT STDERR ===", file=sys.stderr)
+                    for line in stt_log.strip().split("\n")[-30:]:
+                        print(f"  {line}", file=sys.stderr)
+                stt_out_path = os.path.join(tmpdir, "stt.out")
+                if os.path.exists(stt_out_path):
+                    with open(stt_out_path) as f:
+                        stt_out = f.read()
+                    if stt_out.strip():
+                        print("=== STT STDOUT ===", file=sys.stderr)
+                        for line in stt_out.strip().split("\n")[-10:]:
+                            print(f"  {line}", file=sys.stderr)
+            except Exception as e:
+                print(f"=== STT LOG ERROR: {e} ===", file=sys.stderr)
             for p in [bus_proc, stt_proc]:
                 p.kill()
             for p in [bus_proc, stt_proc]:

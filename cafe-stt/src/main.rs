@@ -63,9 +63,8 @@ async fn run_session(
         if let Some(request) = chunk.as_rpc_request() {
             if request.method == "stt.invoke" {
                 let call_id = request.id.clone();
-                info!("cafe-stt: handling stt.invoke call_id={}", call_id);
-
-                let response = match handle_stt(&config, &request.params, &client, &session_id).await {
+        info!("cafe-stt: transcribing (call_id={})", call_id);
+        let response = match handle_stt(&config, &request.params, &client, &session_id).await {
                     Ok((chunk_id, text, duration)) => JsonRpcResponse::ok(
                         &call_id,
                         serde_json::json!({
@@ -177,10 +176,6 @@ async fn transcribe_binary_ref(
 }
 
 /// Handle an stt.invoke RPC: transcribe audio and publish result.
-///
-/// Supports two input modes:
-/// - `audio` (base64) — direct audio data in the params
-/// - `binary_ref_id` — scan session history for read credentials, download from binary-store
 async fn handle_stt(
     config: &Config,
     params: &serde_json::Value,
@@ -297,39 +292,43 @@ fn find_read_credentials<'a>(
     None
 }
 
-/// Convert audio bytes to WAV format using ffmpeg.
-/// Handles any input format (MP4, MP3, etc.) by converting to 16kHz mono PCM WAV.
+/// Convert audio bytes to 16kHz mono PCM WAV via ffmpeg.
 async fn convert_to_wav(input: &[u8]) -> Result<Vec<u8>> {
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::process::Command;
 
-    let mut child = tokio::process::Command::new("ffmpeg")
-        .args([
-            "-y", "-i", "pipe:0",
-            "-f", "wav",
-            "-acodec", "pcm_s16le",
-            "-ar", "16000",
-            "-ac", "1",
-            "pipe:1",
-        ])
+    let mut child = Command::new("ffmpeg")
+        .args(["-y", "-i", "pipe:0", "-f", "wav", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:1"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| anyhow::anyhow!("ffmpeg not found: {}", e))?;
 
-    // Write input, close stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input).await?;
-        stdin.flush().await?;
-        drop(stdin);
-    }
+    let mut stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("no stdin"))?;
+    let mut stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("no stdout"))?;
 
-    // Wait for output
-    let output = child.wait_with_output().await?;
-    if !output.status.success() {
-        anyhow::bail!("ffmpeg conversion failed (exit={})", output.status);
+    // Spawn stdout reader in background, write stdin in foreground
+    let output = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await?;
+        Ok::<_, anyhow::Error>(buf)
+    });
+
+    stdin.write_all(input).await?;
+    stdin.flush().await?;
+    drop(stdin);
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), output)
+        .await
+        .map_err(|_| anyhow::anyhow!("ffmpeg timed out"))?
+        .map_err(|e| anyhow::anyhow!("ffmpeg read error: {}", e))?;
+
+    let status = child.wait().await?;
+    if !status.success() {
+        anyhow::bail!("ffmpeg failed (exit={:?})", status.code());
     }
-    Ok(output.stdout)
+    result
 }
 
 fn base64_decode(encoded: &str) -> Result<Vec<u8>> {

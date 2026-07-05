@@ -22,6 +22,7 @@ members = [
     "cafe-binary-store",
     "cafe-mcp-bridge",
     "cafe-mcp-client",
+    "cafe-rot13",
     "cafe-stt",
 ]
 

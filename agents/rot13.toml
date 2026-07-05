@@ -1,0 +1,10 @@
+name = "rot13"
+description = "ROT13 cipher: repeats all text with ROT13 rotation"
+background = false
+allows_reload = true
+persists_state = false
+
+[[steps]]
+id = "rot13"
+type = "rot13"
+trigger = "user_message"
