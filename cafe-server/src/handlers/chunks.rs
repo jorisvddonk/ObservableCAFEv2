@@ -53,6 +53,10 @@ pub async fn send_chunk(
             let mime = body.mime_type.clone().unwrap_or_else(|| "application/octet-stream".into());
             Chunk::new_binary(raw, mime, "com.nominal.cafe-server")
         }
+        "binary_ref" => {
+            let mime = body.mime_type.clone().unwrap_or_else(|| "application/octet-stream".into());
+            Chunk::new_binary_ref(mime, "com.nominal.cafe-server")
+        }
         _ => {
             return (
                 StatusCode::BAD_REQUEST,

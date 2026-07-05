@@ -134,6 +134,33 @@ impl HttpClient {
         Ok(())
     }
 
+    /// Subscribe to live session events (SSE stream).
+    /// Sends all live chunks through the channel until the stream ends.
+    pub async fn subscribe_session(
+        &self,
+        session_id: &str,
+        tx: mpsc::Sender<Chunk>,
+    ) -> Result<(), SdkError> {
+        let mut stream = self
+            .client
+            .get(self.url(&format!("/api/sessions/{}/stream", session_id)))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .bytes_stream();
+
+        let mut buffer = String::new();
+
+        while let Some(bytes) = stream.next().await {
+            let text = String::from_utf8_lossy(&bytes?).to_string();
+            buffer.push_str(&text);
+            while let Some(chunk) = try_parse_sse_chunk(&mut buffer) {
+                tx.send(chunk).await.ok();
+            }
+        }
+        Ok(())
+    }
+
     /// Set the system prompt for a session (injects a config chunk).
     pub async fn set_system_prompt(&self, session_id: &str, prompt: &str) -> Result<(), SdkError> {
         self.client
