@@ -27,6 +27,7 @@ bus (`cafe-bus`) over a Unix socket.
 | `cafe-knowledgebase-index` | Rust | CLI for indexing documents into knowledgebase |
 | `cafe-mcp-bridge` | Rust | MCP server — exposes bus tools via stdio/HTTP+SSE |
 | `cafe-mcp-client` | Rust | MCP client — forwards tool calls to external MCP servers |
+| `cafe-telegram` | Go | Telegram bot bridge |
 | `cafe-http-proxy-sdk` | Rust (lib) | SDK for dynamic HTTP route registration over bus |
 | `cafe-binary-store` | Rust | Streaming binary asset storage (HTTP, JWT auth) |
 | `cafe-cli` | Rust | Command-line bus client for debugging and e2e tests |
