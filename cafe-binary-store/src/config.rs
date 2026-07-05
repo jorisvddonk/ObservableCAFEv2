@@ -31,4 +31,10 @@ pub struct Config {
     /// Max bytes per chunk (default: 1 GB)
     #[arg(long, default_value_t = 1073741824)]
     pub max_chunk_bytes: u64,
+
+    /// Public hostname/IP for URLs advertised to clients (e.g., in write credentials).
+    /// Clients connect here, so this must be reachable from their network.
+    /// Default: auto-detect via hostname.
+    #[arg(long)]
+    pub public_host: Option<String>,
 }

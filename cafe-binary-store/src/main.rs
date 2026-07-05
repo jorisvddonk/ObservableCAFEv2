@@ -176,9 +176,14 @@ async fn write_handler(
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
                 }
             };
+            let host = state.config.public_host.clone().unwrap_or_else(|| {
+                hostname::get()
+                    .map(|h| h.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "localhost".into())
+            });
             let read_url = format!(
-                "http://0.0.0.0:{}/api/binary/{}",
-                state.config.port, chunk_id
+                "http://{}:{}/api/binary/{}",
+                host, state.config.port, chunk_id
             );
             let mut mutation = cafe_sdk::Chunk::mutation(&chunk_id, "com.nominal.cafe-binary-store");
             mutation = mutation

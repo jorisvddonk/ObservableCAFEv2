@@ -14,7 +14,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
+uuid               = { version = "1", features = ["v4"] }
+hostname           = "0.4"
 clap = { version = "4", features = ["derive"] }
 jsonwebtoken = "9"
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }

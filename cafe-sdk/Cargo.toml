@@ -14,7 +14,7 @@ thiserror    = { workspace = true }
 
 reqwest      = { workspace = true, default-features = false, features = ["json", "stream"], optional = true }
 futures-util = { workspace = true, optional = true }
-tokio-tungstenite = { version = "0.24", features = ["native-tls"], optional = true }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "__rustls-tls"], optional = true }
 
 [features]
 default      = []

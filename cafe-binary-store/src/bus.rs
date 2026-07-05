@@ -66,8 +66,9 @@ pub async fn run(
                     }
                 };
 
+                let host = resolve_host(cfg.public_host.clone());
                 let port = cfg.port;
-                let base_url = format!("http://0.0.0.0:{port}/api/binary/{chunk_id}");
+                let base_url = format!("http://{host}:{port}/api/binary/{chunk_id}");
                 let write_url = format!("{base_url}");
 
                 // Build mutation with write credentials
@@ -78,7 +79,7 @@ pub async fn run(
                     .as_transient();
 
                 // Also include the base read URL so the producer can construct it
-                let read_url = format!("http://0.0.0.0:{port}/api/binary/{chunk_id}");
+                let read_url = format!("http://{host}:{port}/api/binary/{chunk_id}");
                 mutation = mutation.with_annotation(keys::CAFE_BINARY_READ_URL, &read_url);
 
                 // Send direct mutation to the producer only
@@ -108,4 +109,15 @@ pub async fn run(
             _ => {}
         }
     }
+}
+
+/// Resolve the hostname to advertise in URLs.
+/// Uses `--public-host` CLI flag if set, otherwise auto-detects the machine's hostname.
+fn resolve_host(public_host: Option<String>) -> String {
+    if let Some(ref host) = public_host {
+        return host.clone();
+    }
+    hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "localhost".into())
 }
