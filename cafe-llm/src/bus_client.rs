@@ -1,10 +1,13 @@
-use crate::backends::LlmBackend;
-use crate::evaluator::run_session;
-use cafe_sdk::bus::BusClient;
-use cafe_sdk::{Chunk, ServerMessage, SessionConfig};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+
+use cafe_sdk::bus::BusClient;
+use cafe_sdk::{Chunk, ServerMessage, SessionConfig};
 use tracing::{info, warn};
+
+use crate::backends::LlmBackend;
+use crate::evaluator::run_session;
 
 const REGISTRY_SESSION_ID: &str = "_cafe_llm_registry";
 
@@ -31,12 +34,20 @@ async fn connect_and_run(
 
     let client = BusClient::new(socket_path);
 
+    // Accumulated set of all models ever discovered.
+    // llama-swap kills backends when swapping, so /v1/models only shows the active one.
+    // We accumulate so models from swapped-out backends (e.g. lemond's 27 aliases) persist.
+    let mut all_models: HashSet<String> = HashSet::new();
+
+    // Seed with the default model so it's always available regardless of backend state
+    all_models.insert(default_model.to_string());
+
     if let Ok(models) = backend.list_models().await {
-        if !models.is_empty() {
-            info!("cafe-llm: discovered {} models", models.len());
-        }
-        publish_model_registry(&client, &models).await?;
+        all_models.extend(models);
     }
+    let v: Vec<_> = all_models.iter().cloned().collect();
+    info!("cafe-llm: {} models (initial, default seeded)", v.len());
+    publish_model_registry(&client, &v).await?;
 
     // Subscribe to all sessions — snapshot replays history + sends SessionCreated for existing sessions,
     // and the event listener forwards SessionCreated for new sessions created later.
@@ -64,7 +75,13 @@ async fn connect_and_run(
                 if model_tick >= 30 {
                     model_tick = 0;
                     if let Ok(models) = backend.list_models().await {
-                        publish_model_registry(&client, &models).await?;
+                        let before = all_models.len();
+                        all_models.extend(models);
+                        if all_models.len() > before {
+                            let v: Vec<_> = all_models.iter().cloned().collect();
+                            info!("cafe-llm: {} models (added {}, total {})", v.len(), all_models.len() - before, all_models.len());
+                            publish_model_registry(&client, &v).await?;
+                        }
                     }
                 }
             }
