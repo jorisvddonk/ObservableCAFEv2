@@ -176,11 +176,7 @@ async fn write_handler(
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
                 }
             };
-            let host = state.config.public_host.clone().unwrap_or_else(|| {
-                hostname::get()
-                    .map(|h| h.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| "localhost".into())
-            });
+            let host = state.config.public_host.clone().unwrap_or_else(|| "localhost".into());
             let read_url = format!(
                 "http://{}:{}/api/binary/{}",
                 host, state.config.port, chunk_id
@@ -209,6 +205,7 @@ async fn write_handler(
         // Single-shot write (no resume, body already complete) — finalize
         let _ = state.storage.finalize(&chunk_id).await;
         let _ = state.db.update_file_size(&chunk_id, body.len() as u64).await;
+        publish_completion(&state, &chunk_id, &query.session_id).await;
 
         // Generate read JWT for this case too
         let read_token = jwt::sign_read(&chunk_id, &state.jwt_key).unwrap_or_default();
@@ -220,6 +217,7 @@ async fn write_handler(
         // Final segment
         let _ = state.storage.finalize(&chunk_id).await;
         let _ = state.db.update_file_size(&chunk_id, offset + body.len() as u64).await;
+        publish_completion(&state, &chunk_id, &query.session_id).await;
     }
 
     Json(serde_json::json!({"status": "ok"})).into_response()
@@ -306,4 +304,16 @@ async fn delete_handler(
     let _ = state.storage.delete(&chunk_id).await;
     let _ = state.db.delete_asset(&chunk_id).await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Publish a completion event after the upload finalizes.
+/// cafe-stt watches for this to know the audio is ready to transcribe.
+async fn publish_completion(state: &AppState, chunk_id: &str, session_id: &Option<String>) {
+    if let Some(ref sid) = session_id {
+        let mutation = cafe_sdk::Chunk::mutation(chunk_id, "com.nominal.cafe-binary-store")
+            .with_annotation("cafe.binary.completed", true);
+        if let Err(e) = state._bus.publish(sid, mutation).await {
+            warn!("cafe-binary-store: failed to publish completion event: {e}");
+        }
+    }
 }

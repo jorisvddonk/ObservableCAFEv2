@@ -56,6 +56,8 @@ pub async fn run(
                     }
                 };
 
+                info!("cafe-binary-store: received BinaryRef chunk {} from session {}", chunk_id, session_id);
+
                 // Find source_connection for direct reply
                 let source_conn = chunk.get_annotation::<String>(keys::CAFE_SOURCE_CONNECTION);
                 let reply_target = match source_conn {
@@ -83,11 +85,14 @@ pub async fn run(
                 mutation = mutation.with_annotation(keys::CAFE_BINARY_READ_URL, &read_url);
 
                 // Send direct mutation to the producer only
+                info!("cafe-binary-store: sending write credentials for {} via direct_to {}", chunk_id, reply_target);
                 if let Err(e) = bus
                     .publish_direct(&reply_target, &session_id, mutation)
                     .await
                 {
                     warn!("cafe-binary-store: failed to publish write credentials: {e}");
+                } else {
+                    info!("cafe-binary-store: write credentials sent successfully for {}", chunk_id);
                 }
 
                 // The read JWT will be published when the POST starts (in main.rs via channel)
@@ -112,12 +117,7 @@ pub async fn run(
 }
 
 /// Resolve the hostname to advertise in URLs.
-/// Uses `--public-host` CLI flag if set, otherwise auto-detects the machine's hostname.
+/// Uses `--public-host` CLI flag if set, otherwise falls back to "localhost".
 fn resolve_host(public_host: Option<String>) -> String {
-    if let Some(ref host) = public_host {
-        return host.clone();
-    }
-    hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "localhost".into())
+    public_host.unwrap_or_else(|| "localhost".into())
 }

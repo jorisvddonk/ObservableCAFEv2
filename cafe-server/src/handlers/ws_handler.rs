@@ -86,6 +86,10 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                     Some(_) => continue,
                     None => break, // bus disconnected
                 };
+                // Debug: log when forwarding write credentials
+                if payload.contains("cafe.binary.write_url") {
+                    info!("ws_handler: forwarding write credentials to WebSocket client");
+                }
                 if socket.send(Message::Text(payload.into())).await.is_err() {
                     break;
                 }

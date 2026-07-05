@@ -27,7 +27,7 @@ processes:
         condition: process_healthy
 
   cafe-binary-store:
-    command: ./target/debug/cafe-binary-store --port 4002 --bus-socket /tmp/cafe-bus.sock
+    command: ./target/debug/cafe-binary-store --port 4002 --bus-socket /tmp/cafe-bus.sock --public-host 100.89.166.119
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
