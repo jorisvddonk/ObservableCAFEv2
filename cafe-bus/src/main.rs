@@ -12,9 +12,33 @@ use tokio::net::UnixListener;
 use tokio::sync::{Notify, RwLock};
 use tracing::info;
 
+/// Raise the per-process file descriptor limit so we don't hit "Too many open files".
+fn raise_fd_limit() {
+    let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    let getret = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) };
+
+    // Log current limits for debugging
+    info!("FD limit: soft={} hard={} (getret={})", lim.rlim_cur, lim.rlim_max, getret);
+
+    // On macOS from launchd: soft=256, hard=unlimited (18446744073709551615)
+    // We try to set soft to the system max (92160) — this works if hard >= 92160.
+    let target = 65536u64;
+    if getret == 0 && lim.rlim_cur < target && lim.rlim_max >= target {
+        lim.rlim_cur = target;
+        let setret = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim) };
+        info!("FD limit set attempt: target={} setret={}", target, setret);
+    } else if getret == 0 && lim.rlim_cur < target {
+        // Hard limit is lower than target — try setting to hard limit
+        lim.rlim_cur = lim.rlim_max;
+        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim); }
+        info!("FD limit set to hard limit: {}", lim.rlim_max);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+    raise_fd_limit();
 
     let config = Config::from_env();
 

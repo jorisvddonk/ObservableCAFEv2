@@ -28,7 +28,8 @@ pub struct BusClient {
 /// receive `direct_to` replies (e.g. binary-store write credentials).
 pub struct SessionSubscription {
     pub rx: mpsc::Receiver<ServerMessage>,
-    writer: tokio::net::unix::OwnedWriteHalf,
+    writer: Option<tokio::net::unix::OwnedWriteHalf>,
+    _reader_handle: tokio::task::JoinHandle<()>,
     session_id: String,
 }
 
@@ -40,8 +41,19 @@ impl SessionSubscription {
             chunk,
         };
         let payload = serde_json::to_string(&msg)? + "\n";
-        self.writer.write_all(payload.as_bytes()).await?;
+        if let Some(ref mut writer) = self.writer {
+            writer.write_all(payload.as_bytes()).await?;
+        }
         Ok(())
+    }
+}
+
+impl Drop for SessionSubscription {
+    fn drop(&mut self) {
+        self._reader_handle.abort();
+        if let Some(writer) = self.writer.take() {
+            drop(writer);
+        }
     }
 }
 
@@ -205,8 +217,8 @@ impl BusClient {
         let (tx, rx) = mpsc::channel::<ServerMessage>(256);
         let sid = session_id.to_string();
 
-        // Spawn reader task — the writer stays in the calling task
-        tokio::spawn(async move {
+        // Spawn reader task — the writer stays in the SessionSubscription
+        let reader_handle = tokio::spawn(async move {
             while let Ok(Some(line)) = lines.next_line().await {
                 match serde_json::from_str::<ServerMessage>(&line) {
                     Ok(msg) => {
@@ -223,7 +235,8 @@ impl BusClient {
 
         Ok(SessionSubscription {
             rx,
-            writer,
+            writer: Some(writer),
+            _reader_handle: reader_handle,
             session_id: sid,
         })
     }
