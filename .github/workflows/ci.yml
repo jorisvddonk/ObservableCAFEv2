@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Run unit tests
+        run: cargo test --release --workspace
+
+      - name: Run benchmarks (smoke test)
+        run: cargo bench --no-run -p cafe-types -p cafe-bus
+
+      - name: Build E2E dependencies
+        run: cargo build --release -p cafe-bus -p cafe-store -p cafe-cli
+
+      - name: Run E2E bus tests
+        run: |
+          uv run tests/bus-filters-e2e.py
+          uv run tests/source-connection-e2e.py
