@@ -368,6 +368,37 @@ mod tests {
     }
 
     #[test]
+    fn retained_chunk_expires_after_deadline() {
+        // A chunk with retain_secs=0 expires immediately, so drain_retained
+        // should not return it (deadline = Instant::now() + 0 <= Instant::now()).
+        run_proptest(any_chunk(), |chunk: Chunk| {
+            let expired = chunk.as_transient().with_retain(0_u64);
+            let mut state = SessionState::new("test".into(), "test".into());
+            state.publish(expired);
+            // History must be empty (transient)
+            assert!(state.history.is_empty());
+            // drain_retained should NOT return it (expired immediately)
+            let drained = state.drain_retained();
+            assert!(drained.is_empty(), "expected expired chunk to be absent from drain");
+            // The internal retained list should have been pruned too
+            let drained_again = state.drain_retained();
+            assert!(drained_again.is_empty());
+        });
+    }
+
+    #[test]
+    fn retained_chunk_with_nonzero_secs_survives() {
+        run_proptest(any_chunk(), |chunk: Chunk| {
+            let retained = chunk.as_transient().with_retain(3600_u64);
+            let mut state = SessionState::new("test".into(), "test".into());
+            state.publish(retained);
+            // Should still be in the retained buffer (not expired yet)
+            let drained = state.drain_retained();
+            assert_eq!(drained.len(), 1);
+        });
+    }
+
+    #[test]
     fn retained_transient_available_across_drain() {
         run_proptest(retained_chunk(), |chunk: Chunk| {
             let mut state = SessionState::new("test".into(), "test".into());

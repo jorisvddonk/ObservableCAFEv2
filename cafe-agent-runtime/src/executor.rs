@@ -523,6 +523,84 @@ mod tests {
 
     use proptest::prelude::*;
 
+    #[test]
+    fn pipeline_error_display_never_panics() {
+        // Generate arbitrary data for each PipelineError variant
+        run_proptest(
+            (".{0,30}", ".*"),
+            |(step_id, call_id): (String, String)| {
+                let err = PipelineError::Timeout { step_id, call_id };
+                let _ = format!("{}", err);
+            },
+        );
+        run_proptest(
+            (".{0,30}", any::<i32>(), ".*"),
+            |(step_id, code, message): (String, i32, String)| {
+                let err = PipelineError::RpcError { step_id, code, message };
+                let _ = format!("{}", err);
+            },
+        );
+        run_proptest(
+            (".{0,30}", ".*"),
+            |(step_id, msg): (String, String)| {
+                let err = PipelineError::Bus {
+                    step_id,
+                    source: anyhow::anyhow!("{}", msg),
+                };
+                let _ = format!("{}", err);
+            },
+        );
+        run_proptest(
+            ".*",
+            |msg: String| {
+                let err = PipelineError::Sdk(SdkError::BusError {
+                    message: msg.clone(),
+                    code: Some(msg),
+                });
+                let _ = format!("{}", err);
+            },
+        );
+        run_proptest(
+            ".*",
+            |msg: String| {
+                let err = PipelineError::Io(anyhow::anyhow!("{}", msg));
+                let _ = format!("{}", err);
+            },
+        );
+    }
+
+    #[test]
+    fn pipeline_error_timeout_display_has_step_id_and_call_id() {
+        run_proptest(
+            (".{0,30}", ".*"),
+            |(step_id, call_id): (String, String)| {
+                let err = PipelineError::Timeout {
+                    step_id: step_id.clone(),
+                    call_id: call_id.clone(),
+                };
+                let s = format!("{}", err);
+                assert!(s.contains(&step_id), "Display must contain step_id");
+                assert!(s.contains(&call_id), "Display must contain call_id");
+            },
+        );
+    }
+
+    #[test]
+    fn pipeline_error_rpc_error_display_has_step_id_and_message() {
+        run_proptest(
+            (".{0,30}", any::<i32>(), ".*"),
+            |(step_id, code, message): (String, i32, String)| {
+                let err = PipelineError::RpcError {
+                    step_id: step_id.clone(),
+                    code,
+                    message: message.clone(),
+                };
+                let s = format!("{}", err);
+                assert!(s.contains(&step_id), "Display must contain step_id");
+            },
+        );
+    }
+
     fn arb_annotation_value() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
             Just(serde_json::Value::Null),

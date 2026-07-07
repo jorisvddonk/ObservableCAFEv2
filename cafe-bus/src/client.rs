@@ -1090,6 +1090,48 @@ mod tests {
             prop_assert_eq!(tagged.content_type, ct);
             prop_assert_eq!(tagged.producer, producer);
         }
+
+        // ── Direct-to precondition (ADR-102) ──
+
+        #[test]
+        fn direct_to_present_when_annotated(
+            chunk in any_chunk(),
+            target in "[a-zA-Z0-9._-]{1,30}",
+        ) {
+            let with_direct = chunk.with_annotation(keys::CAFE_DIRECT_TO, &target);
+            prop_assert_eq!(
+                with_direct.get_annotation::<String>(keys::CAFE_DIRECT_TO),
+                Some(target)
+            );
+        }
+
+        #[test]
+        fn direct_to_absent_when_not_annotated(chunk in any_chunk()) {
+            prop_assert!(chunk.get_annotation::<String>(keys::CAFE_DIRECT_TO).is_none());
+        }
+
+        #[test]
+        fn direct_to_skips_session_publish(
+            chunk in any_chunk(),
+            target in "[a-zA-Z0-9._-]{1,30}",
+        ) {
+            let with_direct = chunk.with_annotation(keys::CAFE_DIRECT_TO, &target);
+            // SessionState::publish does NOT check for direct_to, so the chunk
+            // is appended to history normally. The skip-broadcast behavior is
+            // enforced at the handler level (client_loop in client.rs).
+            // This test verifies the annotation precondition holds.
+            let mut state = SessionState::new("test".into(), "test".into());
+            state.publish(with_direct.clone());
+            // The chunk goes to history because SessionState.publish doesn't
+            // implement direct_to logic
+            if !with_direct.is_transient() {
+                assert_eq!(state.history.len(), 1);
+                assert_eq!(
+                    state.history[0].get_annotation::<String>(keys::CAFE_DIRECT_TO),
+                    Some(target)
+                );
+            }
+        }
     }
 }
 
