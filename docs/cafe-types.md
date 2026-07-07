@@ -40,6 +40,7 @@ use uuid::Uuid;
 pub enum ContentType {
     Text,
     Binary,
+    BinaryRef,
     Null,
 }
 
@@ -59,7 +60,9 @@ pub struct Chunk {
 impl Chunk {
     pub fn new_text(content: impl Into<String>, producer: impl Into<String>) -> Self { ... }
     pub fn new_binary(data: Vec<u8>, mime_type: impl Into<String>, producer: impl Into<String>) -> Self { ... }
+    pub fn new_binary_ref(mime_type: impl Into<String>, producer: impl Into<String>) -> Self { ... }
     pub fn new_null(producer: impl Into<String>) -> Self { ... }
+    pub fn is_binary_ref(&self) -> bool { ... }
 
     /// Returns a clone of self with an additional annotation.
     pub fn with_annotation(self, key: impl Into<String>, value: impl Serialize) -> Self { ... }
@@ -107,6 +110,23 @@ pub mod keys {
     pub const TOOL_CALL: &str = "tool.call";
     pub const TOOL_RESULT: &str = "tool.result";
     pub const FLOW_SIGNAL: &str = "flow.signal";
+
+    // Binary asset keys
+    pub const BINARY_WRITE_URL: &str = "cafe.binary.write_url";
+    pub const BINARY_WRITE_TOKEN: &str = "cafe.binary.write_token";
+    pub const BINARY_READ_URL: &str = "cafe.binary.read_url";
+    pub const BINARY_READ_TOKEN: &str = "cafe.binary.read_token";
+    pub const BINARY_BYTE_SIZE: &str = "cafe.binary.byte_size";
+    pub const BINARY_COMPLETED: &str = "cafe.binary.completed";
+
+    // Bus routing keys
+    pub const SOURCE_CONNECTION: &str = "cafe.source.connection";
+    pub const DIRECT_TO: &str = "cafe.direct_to";
+    pub const MUTATES_TARGET_ID: &str = "cafe.mutates.target_id";
+
+    // Transient keys
+    pub const TRANSIENT: &str = "cafe.transient";
+    pub const TRANSIENT_RETAIN_SECS: &str = "cafe.transient.retain_secs";
 }
 
 pub mod roles {
@@ -126,6 +146,7 @@ pub mod roles {
 pub enum ClientMessage {
     Subscribe { session_id: String },
     SubscribeAll,
+    SubscribeFiltered { session_id: String, filter: SubscribeFilter },
     Publish { session_id: String, chunk: Chunk },
     CreateSession { session_id: String, agent_id: String, config: SessionConfig },
     DeleteSession { session_id: String },
@@ -136,6 +157,7 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ServerMessage {
+    Connected { connection_id: String },
     Chunk { session_id: String, chunk: Chunk },
     SessionCreated { session_id: String, agent_id: String },
     SessionDeleted { session_id: String },
@@ -143,6 +165,11 @@ pub enum ServerMessage {
     HistoryComplete { session_id: String, count: usize },
     Error { session_id: Option<String>, message: String, code: String },
     Pong,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubscribeFilter {
+    pub content_types: Option<Vec<ContentType>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

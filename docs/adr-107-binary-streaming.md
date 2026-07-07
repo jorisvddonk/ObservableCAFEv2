@@ -1,6 +1,6 @@
 # ADR-107: Binary streaming via binary-ref chunks
 
-**Status**: Design complete, not yet implemented
+**Status**: Implemented — `de1c6fb`, `a1899ca`
 
 **Context**: Binary assets (audio, images, video) are currently published as full `ContentType::Binary` chunks with base64-encoded data. This requires the entire asset to be generated before publishing, bloats bus messages, and prevents streaming playback. TTS audio, progressive images, and long video clips can't start playing until the file is fully generated and transferred.
 

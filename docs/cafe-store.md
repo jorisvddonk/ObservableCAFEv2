@@ -10,7 +10,7 @@ writes chunks + session metadata to SQLite. Also serves history to cafe-bus on r
 ## What it does
 
 - Connects to cafe-bus with `subscribe_all`
-- Persists every chunk to SQLite as it arrives
+- Persists every chunk to SQLite as it arrives (including `ContentType::BinaryRef`)
 - Persists session create/delete events
 - Exposes a secondary Unix socket for direct history queries by cafe-bus
   (so the bus can replay history to new subscribers without holding it all in memory)

@@ -3,7 +3,7 @@
 **Role:** HTTP gateway. Translates REST + SSE HTTP requests into bus operations.
 Handles authentication. No business logic — it is purely a protocol bridge.
 
-**Build after:** `cafe-types`, `cafe-bus` (needs a running bus to be useful)
+**Build after:** `cafe-types`, `cafe-bus`, `cafe-store`
 
 ---
 
@@ -12,8 +12,9 @@ Handles authentication. No business logic — it is purely a protocol bridge.
 - Exposes the HTTP API documented in `docs/spec-http-api.md`
 - Validates bearer tokens
 - Translates HTTP requests into `ClientMessage` ops on the bus
-- Streams chunks back to HTTP clients as SSE
+- Streams chunks back to HTTP clients as SSE (with `?binaryRefs=1` support for binary-ref substitution)
 - Manages tokens and quickies in SQLite
+- Proxies binary chunk downloads to `cafe-binary-store`
 
 ---
 
@@ -93,6 +94,16 @@ impl BusClient {
 
 > Because each SSE stream needs its own bus subscription (its own broadcast receiver),
 > open a fresh Unix socket connection per SSE stream. Connections are cheap.
+
+---
+
+## Binary-ref SSE serialization (binary_ref.rs)
+
+Chunks are serialized to SSE with an optional `?binaryRefs=1` query parameter.
+When enabled, `ContentType::Binary` chunks are serialized as binary-ref (metadata
+only, no base64 data). `ContentType::BinaryRef` chunks always use this shape.
+
+See `docs/spec-http-api.md` for the binary download endpoint.
 
 ---
 
@@ -186,5 +197,5 @@ Use `tower_http::cors::CorsLayer`.
 |--------------------|--------------|-------------------------------------|
 | `CAFE_BUS_SOCKET`  | `/tmp/cafe-bus.sock` | Bus socket               |
 | `CAFE_DB_PATH`     | `./cafe.db`  | SQLite path (shared with cafe-store)|
-| `PORT`             | `3000`       | HTTP listen port                   |
+| `PORT`             | `4000`       | HTTP listen port                   |
 | `CAFE_ADMIN_TOKEN` | *(generated)*| Seed admin token                   |

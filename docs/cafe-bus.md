@@ -14,6 +14,10 @@ All other services connect to cafe-bus; they do not talk to each other directly.
 - When a chunk is published to a session, broadcasts it to all subscribers
 - Replays session history to new subscribers
 - Accepts session create/delete commands
+- Supports filtered subscriptions (`subscribe_filtered`) — used by `cafe-binary-store`
+- Assigns connection IDs on connect, used for `cafe.direct_to` private routing
+- Adds `cafe.source.connection` annotation to every published chunk
+- Retains transient chunks for a configurable TTL (via `cafe.transient.retain_secs`)
 - Does NOT call LLM backends, does NOT persist to disk (that's cafe-store)
 
 ---

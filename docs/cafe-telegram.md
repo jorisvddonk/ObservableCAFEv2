@@ -14,7 +14,7 @@ and forwards session chunks back to users via Telegram.
 - Maps Telegram users to sessions (one default session per user + named sessions)
 - Forwards user messages to cafe-server
 - Streams LLM responses back as Telegram messages (editing a single message for streaming)
-- Supports `/sessions`, `/new`, `/join <id>`, `/share`, `/subscribe <id>`
+- Supports `/start`, `/sessions`, `/new`, `/join <id>`, `/id`, `/subscribe <id>`, `/unsubscribe <id>`, `/subscriptions`
 - Delivers binary chunks (images, audio) as Telegram media messages
 - Persists subscriptions across restarts (in a local SQLite file)
 
@@ -47,7 +47,7 @@ cafe-telegram/
 ```go
 type Config struct {
     TelegramToken  string // TELEGRAM_TOKEN
-    CafeServerURL  string // CAFE_SERVER_URL, default http://localhost:3000
+    CafeServerURL  string // CAFE_SERVER_URL, default http://localhost:4000
     CafeToken      string // CAFE_TOKEN
     DBPath         string // TELEGRAM_DB_PATH, default ./telegram.db
     TrustedUsers   []string // TELEGRAM_TRUSTED_USERS, comma-separated
@@ -143,9 +143,9 @@ func (b *Bot) streamToTelegram(chatID int64, sessionID, userMessage string) {
 
 ## Trust model
 
-Only users listed in `TELEGRAM_TRUSTED_USERS` (or added via admin API) can use the bot.
-Untrusted users receive a rejection message. The trusted user list is stored in the
-cafe-server's admin DB and synced on startup.
+Only users listed in `TELEGRAM_TRUSTED_USERS` (comma-separated Telegram user IDs or
+usernames) can use the bot. If the list is empty, all users are allowed.
+Untrusted users receive a rejection message.
 
 ---
 
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 | Variable                | Default                    | Description                      |
 |-------------------------|----------------------------|----------------------------------|
 | `TELEGRAM_TOKEN`        | *(required)*               | Bot token from @BotFather        |
-| `CAFE_SERVER_URL`       | `http://localhost:3000`    | cafe-server base URL             |
+| `CAFE_SERVER_URL`       | `http://localhost:4000`    | cafe-server base URL             |
 | `CAFE_TOKEN`            | *(required)*               | API token                        |
 | `TELEGRAM_DB_PATH`      | `./telegram.db`            | SQLite path                      |
 | `TELEGRAM_TRUSTED_USERS`| *(empty)*                  | Comma-separated user IDs/names   |

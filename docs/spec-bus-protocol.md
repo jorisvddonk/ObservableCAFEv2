@@ -91,6 +91,20 @@ Create a new session. Returns a `session_created` event.
 { "op": "list_sessions" }
 ```
 
+#### subscribe_filtered
+
+Subscribe to chunks matching a filter on a session. Used by `cafe-binary-store`.
+
+```json
+{
+  "op": "subscribe_filtered",
+  "session_id": "abc123",
+  "content_types": ["BinaryRef"]
+}
+```
+
+Supported filter fields: `content_types` (array of content type strings).
+
 #### ping
 
 Keep-alive. Bus responds with `pong`.
@@ -102,6 +116,16 @@ Keep-alive. Bus responds with `pong`.
 ---
 
 ### Bus → Client messages
+
+#### connected
+
+Sent immediately after connecting, carrying the client's assigned connection ID.
+
+```json
+{ "event": "connected", "connection_id": "conn-42" }
+```
+
+The connection ID is used for `direct_to` routing (see `cafe.direct_to` annotation).
 
 #### chunk
 
@@ -151,6 +175,15 @@ A chunk being delivered to a subscriber.
   "message": "Agent not found: foobar",
   "code": "AGENT_NOT_FOUND"
 }
+```
+
+#### history_complete
+
+Sent to a subscriber after all historical chunks have been replayed and live
+streaming begins.
+
+```json
+{ "event": "history_complete", "session_id": "abc123", "count": 42 }
 ```
 
 #### pong

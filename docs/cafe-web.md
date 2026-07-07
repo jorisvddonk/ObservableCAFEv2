@@ -3,7 +3,7 @@
 **Role:** Browser frontend. React SPA that connects to cafe-server's HTTP API.
 
 **Language:** TypeScript + React + Vite  
-**Build after:** `cafe-server` is running
+**Depends on:** `cafe-web-sdk` (shared types + API client), `cafe-server`
 
 ---
 
@@ -11,11 +11,12 @@
 
 - Session sidebar (list, create, rename, delete, switch)
 - Chat interface: send messages, stream responses token by token
-- Renders text, images, and audio chunks appropriately
+- Renders text, images, and audio chunks appropriately (binary-ref chunks streamed via `cafe-binary-store`)
 - Trust/untrust UI for web-fetched content
 - Quickies panel (one-click agent presets)
 - URL hash sync (`#session-id`)
 - PWA manifest for installability
+- Mutations: merges `cafe.mutates.target_id` annotations into target chunks
 
 ---
 
@@ -25,7 +26,9 @@
 {
   "dependencies": {
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "cafe-web-sdk": "file:../cafe-web-sdk",
+    "zustand": "^4"
   },
   "devDependencies": {
     "typescript": "^5",
@@ -35,10 +38,6 @@
   }
 }
 ```
-
-Add these as needed:
-- `zustand` — lightweight state management
-- `@tanstack/react-query` — server state / API calls
 
 ---
 
@@ -55,7 +54,7 @@ cafe-web/src/
 Mirror the Rust types from cafe-types exactly:
 
 ```typescript
-export type ContentType = 'text' | 'binary' | 'null';
+export type ContentType = 'text' | 'binary' | 'binary-ref' | 'null';
 
 export interface Chunk {
   id: string;
@@ -122,12 +121,15 @@ Note: `EventSource` only supports GET. For the POST-based chat endpoint, use
 
 ```tsx
 function Message({ chunk }: { chunk: Chunk }) {
-  if (chunk.content_type === 'binary') {
+  if (chunk.content_type === 'binary' || chunk.content_type === 'binary-ref') {
+    const src = chunk.content_type === 'binary-ref'
+      ? getBinaryUrl(chunk)  // URL from cafe-binary-store
+      : `data:${chunk.mime_type};base64,${chunk.data}`;
     if (chunk.mime_type?.startsWith('image/')) {
-      return <img src={`data:${chunk.mime_type};base64,${chunk.data}`} />;
+      return <img src={src} />;
     }
     if (chunk.mime_type?.startsWith('audio/')) {
-      return <audio controls src={`data:${chunk.mime_type};base64,${chunk.data}`} />;
+      return <audio controls src={src} />;
     }
   }
 
@@ -182,7 +184,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:3000',  // dev proxy to cafe-server
+      '/api': 'http://localhost:4000',  // dev proxy to cafe-server
     },
   },
 });

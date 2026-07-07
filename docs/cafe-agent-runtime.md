@@ -15,6 +15,8 @@ for background agents.
 - Monitors agent files for changes and hot-reloads changed agents
 - Runs cron schedules defined by background agents
 - Exposes an internal API for cafe-server's `/api/admin/agents` endpoint (via bus signals)
+- Dispatches tool calls via MCP (through `cafe-mcp-client`) and built-in tool executors
+- Filters out `BinaryRef` chunks from LLM context (handled externally by `cafe-binary-store`)
 
 ---
 
@@ -71,7 +73,8 @@ with these built-in evaluators:
 | `trust-filter`  | Drops untrusted chunks before they reach the LLM         |
 | `role-annotator`| Sets `chat.role: user` if not already set                |
 | `rss-fetch`     | Fetches RSS feed URL, emits one chunk per item           |
-| `tool-detector` | Scans LLM output for `<|tool_call|>` syntax, dispatches |
+| `tool-detector` | Scans LLM output for tool call syntax, dispatches        |
+| `tool-executor` | Executes tool calls via MCP client or built-in handlers  |
 
 Future evaluators can be added as TOML-declarable plugins.
 
