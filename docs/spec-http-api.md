@@ -3,7 +3,7 @@
 `cafe-server` exposes this REST + SSE API. All clients (cafe-web, cafe-tui, cafe-telegram)
 use this API exclusively — they do not connect to cafe-bus directly.
 
-Base URL: `http://localhost:$PORT` (default port 3000)
+Base URL: `http://localhost:$PORT` (default port 4000)
 
 ---
 
@@ -157,6 +157,19 @@ Response `200` with the updated chunk.
 `DELETE /api/sessions/:id/chunks/:chunk_id`
 
 Response `204`.
+
+### Get binary chunk content (proxied)
+`GET /api/sessions/:id/chunks/:chunk_id/binary`
+
+Proxies to `cafe-binary-store` using the chunk's `binary.read_url` annotation.
+
+```json
+{
+  "url": "http://binary-store:4002/api/binary/<chunk_id>?token=<read_jwt>"
+}
+```
+
+The client follows the redirect (or uses the URL directly for `<audio>`/`<img>` tags).
 
 ---
 

@@ -58,14 +58,19 @@ Tests: `cafe-types` unit tests for `is_mutation()` and `mutation()`.
 
 Tests: `cafe-types` unit tests for `retain_secs()` / `with_retain()`.
 
-## BinaryRef *(not yet implemented)*
+## BinaryRef
 
 | Layer | What | Status |
 |---|---|---|
-| **cafe-types** | `ContentType::BinaryRef` variant | Pending |
-| **cafe-binary-store** | New binary — HTTP API, disk storage, JWT credentials | Pending |
-| **cafe-tts** | Publish binary-ref + stream via binary-store | Pending |
-| **cafe-web** | Mutation merging for read credentials | Pending |
+| **cafe-types** | `ContentType::BinaryRef` variant, annotation keys | Done |
+| **cafe-binary-store** | Axum HTTP API, disk storage, JWT auth, GC | Done |
+| **cafe-server** | `serialize_chunk` for BinaryRef SSE shape | Done |
+| **cafe-sdk** | `publish_direct()`, `subscribe_filtered()` | Done |
+| **cafe-tts** | Publish BinaryRef + `binary.byte_size` annotation | Done |
+| **cafe-web-sdk / cafe-web** | `BinaryRefContent` type, mutation merging, `getBinaryUrl()` | Done |
+| **cafe-stt** | Auto-transcribe BinaryRef chunks from binary-store | Done |
+| **process-compose** | `cafe-binary-store` process | Done |
+| **E2E tests** | `binary-ref-e2e.py` — full write/read flow | Done |
 
 ## Summary: feature boundaries
 
