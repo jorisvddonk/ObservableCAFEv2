@@ -2,12 +2,14 @@ use crate::registry::SessionRegistry;
 use crate::session::SessionState;
 use anyhow::Result;
 use cafe_types::{
-    keys, Chunk, ClientMessage, ServerMessage, SessionConfig, SubscribeFilter,
+    keys, BusCodec, BusCodecError, Chunk, ClientMessage, JsonLineCodec, ServerMessage,
+    SessionConfig, SubscribeFilter,
 };
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, warn};
@@ -16,10 +18,47 @@ const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024; // 16 MB
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A framing reader that uses a `BusCodec` to extract messages from a byte stream.
+struct Frames<C: BusCodec> {
+    reader: BufReader<OwnedReadHalf>,
+    buf: Vec<u8>,
+    _codec: PhantomData<C>,
+}
+
+impl<C: BusCodec> Frames<C> {
+    fn new(reader: OwnedReadHalf) -> Self {
+        Self {
+            reader: BufReader::new(reader),
+            buf: Vec::new(),
+            _codec: PhantomData,
+        }
+    }
+
+    /// Read the next framed message, blocking until a complete frame arrives.
+    async fn next_msg<M: serde::de::DeserializeOwned>(&mut self) -> Result<Option<M>, BusCodecError> {
+        loop {
+            if let Some((msg, consumed)) = C::decode(&self.buf)? {
+                self.buf.drain(..consumed);
+                return Ok(Some(msg));
+            }
+            let mut tmp = [0u8; 8192];
+            let n = self.reader.read(&mut tmp).await?;
+            if n == 0 {
+                if let Some((msg, consumed)) = C::decode(&self.buf)? {
+                    self.buf.drain(..consumed);
+                    return Ok(Some(msg));
+                }
+                return Ok(None);
+            }
+            self.buf.extend_from_slice(&tmp[..n]);
+        }
+    }
+}
+
 /// Shared registry of active connections, keyed by connection ID.
 pub type ConnectionRegistry = Arc<RwLock<HashMap<String, Arc<Mutex<OwnedWriteHalf>>>>>;
 
-pub async fn handle_client(
+pub async fn handle_client<C: BusCodec>(
     stream: tokio::net::UnixStream,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
@@ -29,56 +68,44 @@ pub async fn handle_client(
 
     let conn_id = format!("c-{}", NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed));
     connections.write().await.insert(conn_id.clone(), writer.clone());
-    send_msg(&writer, &ServerMessage::Connected { connection_id: conn_id.clone() }).await;
+    let payload = match C::encode(&ServerMessage::Connected { connection_id: conn_id.clone() }) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("failed to encode Connected message: {}", e);
+            return;
+        }
+    };
+    send_bytes(&writer, &payload).await;
 
     let conns = connections.clone();
-    if let Err(e) = client_loop(reader, writer, registry, conns, conn_id.clone()).await {
+    if let Err(e) = client_loop::<C>(reader, writer, registry, conns, conn_id.clone()).await {
         debug!("client {} disconnected: {}", conn_id, e);
     }
 
     connections.write().await.remove(&conn_id);
 }
 
-async fn client_loop(
+async fn client_loop<C: BusCodec>(
     reader: OwnedReadHalf,
     writer: Arc<Mutex<OwnedWriteHalf>>,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
     conn_id: String,
 ) -> Result<()> {
-    let mut lines = BufReader::new(reader).lines();
+    let mut frames = Frames::<C>::new(reader);
 
-    while let Some(line) = lines.next_line().await? {
-        if line.len() > MAX_MESSAGE_BYTES {
-            send_error(
-                &writer,
-                None,
-                "Payload too large",
-                "PAYLOAD_TOO_LARGE",
-            )
-            .await;
-            continue;
-        }
-
-        let msg: ClientMessage = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("invalid message: {}", e);
-                send_error(&writer, None, &format!("Invalid JSON: {}", e), "INVALID_MESSAGE")
-                    .await;
-                continue;
-            }
-        };
+    while let Some(msg) = frames.next_msg::<ClientMessage>().await? {
+        let msg = msg;
 
         match msg {
             ClientMessage::Ping => {
-                send_msg(&writer, &ServerMessage::Pong).await;
+                send_msg::<C>(&writer, &ServerMessage::Pong).await;
             }
 
             ClientMessage::ListSessions => {
                 let reg = registry.read().await;
                 let sessions = reg.list();
-                send_msg(&writer, &ServerMessage::SessionsList { sessions }).await;
+                send_msg::<C>(&writer, &ServerMessage::SessionsList { sessions }).await;
             }
 
             ClientMessage::CreateSession {
@@ -88,7 +115,7 @@ async fn client_loop(
             } => {
                 let mut reg = registry.write().await;
                 if reg.contains(&session_id) {
-                    send_error(
+                    send_error::<C>(
                         &writer,
                         Some(&session_id),
                         &format!("Session already exists: {}", session_id),
@@ -107,7 +134,7 @@ async fn client_loop(
                     }
                     reg.insert(state);
                     drop(reg);
-                    send_msg(
+                    send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
                             session_id,
@@ -122,7 +149,7 @@ async fn client_loop(
                 let mut reg = registry.write().await;
                 if reg.remove(&session_id) {
                     drop(reg);
-                    send_msg(
+                    send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionDeleted {
                             session_id,
@@ -131,7 +158,7 @@ async fn client_loop(
                     .await;
                 } else {
                     drop(reg);
-                    send_error(
+                    send_error::<C>(
                         &writer,
                         Some(&session_id),
                         &format!("Session not found: {}", session_id),
@@ -149,7 +176,7 @@ async fn client_loop(
                 if let Some(target_id) = chunk.get_annotation::<String>(keys::CAFE_DIRECT_TO) {
                     let conns = connections.read().await;
                     if let Some(target_writer) = conns.get(&target_id) {
-                        send_msg(
+                        send_msg::<C>(
                             target_writer,
                             &ServerMessage::Chunk {
                                 session_id,
@@ -158,7 +185,7 @@ async fn client_loop(
                         )
                         .await;
                     } else {
-                        send_error(
+                        send_error::<C>(
                             &writer,
                             Some(&session_id),
                             &format!("Target connection not found: {}", target_id),
@@ -174,7 +201,7 @@ async fn client_loop(
                     session.publish(chunk);
                 } else {
                     drop(reg);
-                    send_error(
+                    send_error::<C>(
                         &writer,
                         Some(&session_id),
                         &format!("Session not found: {}", session_id),
@@ -195,7 +222,7 @@ async fn client_loop(
                         }
                         None => {
                             drop(reg);
-                            send_error(
+                            send_error::<C>(
                                 &writer,
                                 Some(&session_id),
                                 &format!("Session not found: {}", session_id),
@@ -210,7 +237,7 @@ async fn client_loop(
                 // Replay history (oldest first)
                 let count = history.len() + retained.len();
                 for chunk in history {
-                    send_msg(
+                    send_msg::<C>(
                         &writer,
                         &ServerMessage::Chunk {
                             session_id: session_id.clone(),
@@ -221,7 +248,7 @@ async fn client_loop(
                 }
                 // Retained transient chunks, in chronological order after history
                 for chunk in retained {
-                    send_msg(
+                    send_msg::<C>(
                         &writer,
                         &ServerMessage::Chunk {
                             session_id: session_id.clone(),
@@ -230,7 +257,7 @@ async fn client_loop(
                     )
                     .await;
                 }
-                send_msg(
+                send_msg::<C>(
                     &writer,
                     &ServerMessage::HistoryComplete {
                         session_id: session_id.clone(),
@@ -246,7 +273,7 @@ async fn client_loop(
                     loop {
                         match rx.recv().await {
                             Ok(chunk) => {
-                                send_msg(
+                                send_msg::<C>(
                                     &writer2,
                                     &ServerMessage::Chunk {
                                         session_id: sid.clone(),
@@ -257,7 +284,7 @@ async fn client_loop(
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 warn!("subscriber lagged by {} messages on session {}", n, sid);
-                                send_error(
+                                send_error::<C>(
                                     &writer2,
                                     Some(&sid),
                                     "Subscriber lagged; re-subscribe to get full history",
@@ -293,7 +320,7 @@ async fn client_loop(
 
                 // Announce + replay for existing sessions
                 for (sid, agent_id, history, retained, rx) in sessions_snapshot {
-                    send_msg(
+                    send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
                             session_id: sid.clone(),
@@ -301,7 +328,7 @@ async fn client_loop(
                         },
                     )
                     .await;
-                    replay_and_forward(&writer, sid, history, retained, rx, None).await;
+                    replay_and_forward::<C>(&writer, sid, history, retained, rx, None).await;
                 }
 
                 // Listen for new sessions via registry events
@@ -311,7 +338,7 @@ async fn client_loop(
                     let mut event_rx = event_rx;
                     while let Ok(event) = event_rx.recv().await {
                         // Forward registry event (SessionCreated / SessionDeleted)
-                        send_msg(&writer3, &event).await;
+                        send_msg::<C>(&writer3, &event).await;
                         // For new sessions, also replay history + forward live chunks
                         if let ServerMessage::SessionCreated { session_id, .. } = &event {
                             let maybe = {
@@ -320,7 +347,7 @@ async fn client_loop(
                                     .map(|s| (s.history.clone(), s.drain_retained(), s.subscribe()))
                             };
                             if let Some((history, retained, rx)) = maybe {
-                                replay_and_forward(
+                                replay_and_forward::<C>(
                                     &writer3,
                                     session_id.clone(),
                                     history,
@@ -359,7 +386,7 @@ async fn client_loop(
 
                 // Announce + replay for existing sessions
                 for (sid, agent_id, history, retained, rx) in sessions_snapshot {
-                    send_msg(
+                    send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
                             session_id: sid.clone(),
@@ -367,7 +394,7 @@ async fn client_loop(
                         },
                     )
                     .await;
-                    replay_and_forward(&writer, sid, history, retained, rx, Some(filter.clone())).await;
+                    replay_and_forward::<C>(&writer, sid, history, retained, rx, Some(filter.clone())).await;
                 }
 
                 // Listen for new sessions via registry events
@@ -389,8 +416,8 @@ async fn client_loop(
                             };
                             if let Some((history, retained, rx)) = maybe {
                                 // Forward SessionCreated before replay
-                                send_msg(&writer3, &event).await;
-                                replay_and_forward(
+                                send_msg::<C>(&writer3, &event).await;
+                                replay_and_forward::<C>(
                                     &writer3,
                                     session_id.clone(),
                                     history,
@@ -402,7 +429,7 @@ async fn client_loop(
                             }
                         } else {
                             // Forward SessionDeleted etc.
-                            send_msg(&writer3, &event).await;
+                            send_msg::<C>(&writer3, &event).await;
                         }
                     }
                 });
@@ -450,7 +477,7 @@ pub fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) 
     true
 }
 
-async fn replay_and_forward(
+async fn replay_and_forward<C: BusCodec>(
     writer: &Arc<Mutex<OwnedWriteHalf>>,
     session_id: String,
     history: Vec<Chunk>,
@@ -460,7 +487,7 @@ async fn replay_and_forward(
 ) {
     for chunk in history {
         if filter.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
-            send_msg(
+            send_msg::<C>(
                 writer,
                 &ServerMessage::Chunk {
                     session_id: session_id.clone(),
@@ -472,7 +499,7 @@ async fn replay_and_forward(
     }
     for chunk in retained {
         if filter.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
-            send_msg(
+            send_msg::<C>(
                 writer,
                 &ServerMessage::Chunk {
                     session_id: session_id.clone(),
@@ -491,7 +518,7 @@ async fn replay_and_forward(
             match rx.recv().await {
                 Ok(chunk) => {
                     if filter2.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
-                        send_msg(
+                        send_msg::<C>(
                             &writer2,
                             &ServerMessage::Chunk {
                                 session_id: sid2.clone(),
@@ -507,34 +534,33 @@ async fn replay_and_forward(
     });
 }
 
-async fn send_msg(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMessage) {
-    match serde_json::to_string(msg) {
-        Ok(mut json) => {
-            json.push('\n');
-            let mut w = writer.lock().await;
-            if let Err(e) = w.write_all(json.as_bytes()).await {
-                debug!("write error: {}", e);
-            }
-        }
-        Err(e) => error!("failed to serialize message: {}", e),
+async fn send_bytes(writer: &Arc<Mutex<OwnedWriteHalf>>, payload: &[u8]) {
+    let mut w = writer.lock().await;
+    if let Err(e) = w.write_all(payload).await {
+        debug!("write error: {}", e);
     }
 }
 
-async fn send_error(
+async fn send_msg<C: BusCodec>(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMessage) {
+    if let Ok(payload) = C::encode(msg) {
+        send_bytes(writer, &payload).await;
+    }
+}
+
+async fn send_error<C: BusCodec>(
     writer: &Arc<Mutex<OwnedWriteHalf>>,
     session_id: Option<&str>,
     message: &str,
     code: &str,
 ) {
-    send_msg(
-        writer,
-        &ServerMessage::Error {
-            session_id: session_id.map(String::from),
-            message: message.to_string(),
-            code: code.to_string(),
-        },
-    )
-    .await;
+    let msg = ServerMessage::Error {
+        session_id: session_id.map(String::from),
+        message: message.to_string(),
+        code: code.to_string(),
+    };
+    if let Ok(payload) = C::encode(&msg) {
+        send_bytes(writer, &payload).await;
+    }
 }
 
 #[cfg(test)]

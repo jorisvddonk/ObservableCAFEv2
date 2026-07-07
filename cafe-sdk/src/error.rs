@@ -11,6 +11,9 @@ pub enum SdkError {
     #[error("bus protocol error: {0}")]
     BusProtocol(String),
 
+    #[error("bus codec error: {0}")]
+    BusCodec(#[from] cafe_types::BusCodecError),
+
     #[error("bus returned error: {message} (code: {code:?})")]
     BusError { message: String, code: Option<String> },
 

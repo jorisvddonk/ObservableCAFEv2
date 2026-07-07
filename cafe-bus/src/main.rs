@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
                     Ok((stream, _)) => {
                         let reg = registry.clone();
                         let conns = connections.clone();
-                        tokio::spawn(client::handle_client(stream, reg, conns));
+                        tokio::spawn(client::handle_client::<cafe_types::JsonLineCodec>(stream, reg, conns));
                     }
                     Err(e) => {
                         tracing::error!("accept error: {}", e);

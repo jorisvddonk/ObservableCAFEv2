@@ -4,13 +4,51 @@ mod wait;
 pub use reconnect::run_with_reconnect;
 pub use wait::wait_for_bus;
 
-use crate::error::SdkError;
+use bytes::BytesMut;
+use cafe_types::{BusCodec, BusCodecError, JsonLineCodec};
 use cafe_types::{keys, Chunk, ClientMessage, ServerMessage, SessionConfig, SessionInfo};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use crate::error::SdkError;
+
+/// Framed reader that uses a `BusCodec` to extract messages from a byte stream.
+pub struct BusReader<C: BusCodec, R: tokio::io::AsyncRead + Unpin> {
+    reader: BufReader<R>,
+    buf: BytesMut,
+    _codec: std::marker::PhantomData<C>,
+}
+
+impl<C: BusCodec, R: tokio::io::AsyncRead + Unpin> BusReader<C, R> {
+    fn new(reader: R) -> Self {
+        Self {
+            reader: BufReader::new(reader),
+            buf: BytesMut::new(),
+            _codec: std::marker::PhantomData,
+        }
+    }
+
+    /// Read the next framed message, blocking until a complete frame arrives.
+    pub async fn read_msg<M: serde::de::DeserializeOwned>(&mut self) -> Result<Option<M>, BusCodecError> {
+        loop {
+            if let Some((msg, consumed)) = C::decode(&self.buf)? {
+                let _ = self.buf.split_to(consumed);
+                return Ok(Some(msg));
+            }
+            let n = self.reader.read_buf(&mut self.buf).await?;
+            if n == 0 {
+                if let Some((msg, consumed)) = C::decode(&self.buf)? {
+                    let _ = self.buf.split_to(consumed);
+                    return Ok(Some(msg));
+                }
+                return Ok(None);
+            }
+        }
+    }
+}
 
 /// A handle to the cafe-bus Unix socket.
 ///
@@ -26,29 +64,30 @@ pub struct BusClient {
 /// Publishing through this subscription uses the same bus connection,
 /// so `source.connection` points to a live connection that can
 /// receive `direct_to` replies (e.g. binary-store write credentials).
-pub struct SessionSubscription {
+pub struct SessionSubscription<C: BusCodec = JsonLineCodec> {
     pub rx: mpsc::Receiver<ServerMessage>,
     writer: Option<tokio::net::unix::OwnedWriteHalf>,
     _reader_handle: tokio::task::JoinHandle<()>,
     session_id: String,
+    _codec: std::marker::PhantomData<C>,
 }
 
-impl SessionSubscription {
+impl<C: BusCodec> SessionSubscription<C> {
     /// Publish a chunk on this subscription's connection.
     pub async fn publish(&mut self, chunk: Chunk) -> Result<(), SdkError> {
         let msg = ClientMessage::Publish {
             session_id: self.session_id.clone(),
             chunk,
         };
-        let payload = serde_json::to_string(&msg)? + "\n";
+        let payload = C::encode(&msg)?;
         if let Some(ref mut writer) = self.writer {
-            writer.write_all(payload.as_bytes()).await?;
+            writer.write_all(&payload).await?;
         }
         Ok(())
     }
 }
 
-impl Drop for SessionSubscription {
+impl<C: BusCodec> Drop for SessionSubscription<C> {
     fn drop(&mut self) {
         self._reader_handle.abort();
         if let Some(writer) = self.writer.take() {
@@ -70,43 +109,51 @@ impl BusClient {
         &self.socket_path
     }
 
-    /// Open a fresh connection to the bus and skip the initial Connected message.
-    async fn connect(
+    /// Open a fresh connection, skip the initial Connected message.
+    async fn connect<C: BusCodec>(
         &self,
     ) -> Result<
-        (tokio::net::unix::OwnedWriteHalf, tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>),
+        (tokio::net::unix::OwnedWriteHalf, BusReader<C, tokio::net::unix::OwnedReadHalf>),
         SdkError,
     > {
         let stream = UnixStream::connect(self.socket_path.as_str())
             .await
             .map_err(|e| SdkError::BusConnect(e.into()))?;
         let (reader, writer) = stream.into_split();
-        let mut lines = BufReader::new(reader).lines();
-        // Skip the initial Connected message
-        if let Ok(Some(line)) = lines.next_line().await {
-            let _ = serde_json::from_str::<ServerMessage>(&line);
+        let mut bus_reader = BusReader::<C, _>::new(reader);
+
+        match bus_reader.read_msg::<ServerMessage>().await? {
+            Some(ServerMessage::Connected { .. }) => {}
+            Some(other) => warn!("expected Connected, got: {:?}", other),
+            None => warn!("bus closed before sending Connected"),
         }
-        Ok((writer, lines))
+
+        Ok((writer, bus_reader))
     }
 
-    /// Write a single `ClientMessage` to the bus. Returns the write half.
-    async fn send(
+    /// Write a single `ClientMessage` to the bus. Returns the write half and reader.
+    async fn send<C: BusCodec>(
         &self,
         msg: &ClientMessage,
     ) -> Result<
-        (tokio::net::unix::OwnedWriteHalf, tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>),
+        (tokio::net::unix::OwnedWriteHalf, BusReader<C, tokio::net::unix::OwnedReadHalf>),
         SdkError,
     > {
-        let (mut writer, lines) = self.connect().await?;
-        let payload = serde_json::to_string(msg)? + "\n";
-        writer.write_all(payload.as_bytes()).await?;
-        Ok((writer, lines))
+        let (mut writer, reader) = self.connect::<C>().await?;
+        let payload = C::encode(msg)?;
+        writer.write_all(&payload).await?;
+        Ok((writer, reader))
     }
 
-    /// Publish a chunk to a session.
+    /// Publish a chunk to a session using the default JSON codec.
     pub async fn publish(&self, session_id: &str, chunk: Chunk) -> Result<(), SdkError> {
-        let (_writer, _lines) = self
-            .send(&ClientMessage::Publish {
+        self.publish_with_codec::<JsonLineCodec>(session_id, chunk).await
+    }
+
+    /// Publish a chunk with a specific codec.
+    pub async fn publish_with_codec<C: BusCodec>(&self, session_id: &str, chunk: Chunk) -> Result<(), SdkError> {
+        let (_writer, _reader) = self
+            .send::<C>(&ClientMessage::Publish {
                 session_id: session_id.to_string(),
                 chunk,
             })
@@ -115,8 +162,17 @@ impl BusClient {
     }
 
     /// Publish a chunk directly to a specific connection (private message over bus).
-    /// Automatically marks the chunk as transient so it's never persisted.
     pub async fn publish_direct(
+        &self,
+        target_connection: &str,
+        session_id: &str,
+        chunk: Chunk,
+    ) -> Result<(), SdkError> {
+        self.publish_direct_with_codec::<JsonLineCodec>(target_connection, session_id, chunk).await
+    }
+
+    /// Publish a chunk directly with a specific codec.
+    pub async fn publish_direct_with_codec<C: BusCodec>(
         &self,
         target_connection: &str,
         session_id: &str,
@@ -125,8 +181,8 @@ impl BusClient {
         let chunk = chunk
             .with_annotation(keys::CAFE_DIRECT_TO, target_connection)
             .as_transient();
-        let (_writer, _lines) = self
-            .send(&ClientMessage::Publish {
+        let (_writer, _reader) = self
+            .send::<C>(&ClientMessage::Publish {
                 session_id: session_id.to_string(),
                 chunk,
             })
@@ -134,15 +190,25 @@ impl BusClient {
         Ok(())
     }
 
-    /// Create a new session.
+    /// Create a new session using the default JSON codec.
     pub async fn create_session(
         &self,
         session_id: &str,
         agent_id: &str,
         config: SessionConfig,
     ) -> Result<(), SdkError> {
-        let (_writer, _lines) = self
-            .send(&ClientMessage::CreateSession {
+        self.create_session_with_codec::<JsonLineCodec>(session_id, agent_id, config).await
+    }
+
+    /// Create a new session with a specific codec.
+    pub async fn create_session_with_codec<C: BusCodec>(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        config: SessionConfig,
+    ) -> Result<(), SdkError> {
+        let (_writer, _reader) = self
+            .send::<C>(&ClientMessage::CreateSession {
                 session_id: session_id.to_string(),
                 agent_id: agent_id.to_string(),
                 config,
@@ -151,23 +217,33 @@ impl BusClient {
         Ok(())
     }
 
-    /// Delete a session.
+    /// Delete a session using the default JSON codec.
     pub async fn delete_session(&self, session_id: &str) -> Result<(), SdkError> {
-        let (_writer, _lines) = self
-            .send(&ClientMessage::DeleteSession {
+        self.delete_session_with_codec::<JsonLineCodec>(session_id).await
+    }
+
+    /// Delete a session with a specific codec.
+    pub async fn delete_session_with_codec<C: BusCodec>(&self, session_id: &str) -> Result<(), SdkError> {
+        let (_writer, _reader) = self
+            .send::<C>(&ClientMessage::DeleteSession {
                 session_id: session_id.to_string(),
             })
             .await?;
         Ok(())
     }
 
-    /// List all sessions from the bus.
+    /// List all sessions from the bus using the default JSON codec.
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>, SdkError> {
-        let (_writer, mut lines) = self.send(&ClientMessage::ListSessions).await?;
-        while let Ok(Some(line)) = lines.next_line().await {
-            match serde_json::from_str::<ServerMessage>(&line) {
-                Ok(ServerMessage::SessionsList { sessions }) => return Ok(sessions),
-                Ok(ServerMessage::Error { message, code, .. }) => {
+        self.list_sessions_with_codec::<JsonLineCodec>().await
+    }
+
+    /// List all sessions with a specific codec.
+    pub async fn list_sessions_with_codec<C: BusCodec>(&self) -> Result<Vec<SessionInfo>, SdkError> {
+        let (_writer, mut reader) = self.send::<C>(&ClientMessage::ListSessions).await?;
+        while let Some(msg) = reader.read_msg::<ServerMessage>().await? {
+            match msg {
+                ServerMessage::SessionsList { sessions } => return Ok(sessions),
+                ServerMessage::Error { message, code, .. } => {
                     return Err(SdkError::BusError { message, code: Some(code) });
                 }
                 _ => {}
@@ -176,22 +252,25 @@ impl BusClient {
         Ok(vec![])
     }
 
-    /// Fetch the full history of a session by subscribing and draining
-    /// until `HistoryComplete`. Returns an error if the session does not
-    /// exist.
+    /// Fetch the full history of a session using the default JSON codec.
     pub async fn get_history(&self, session_id: &str) -> Result<Vec<Chunk>, SdkError> {
-        let (_writer, mut lines) = self
-            .send(&ClientMessage::Subscribe {
+        self.get_history_with_codec::<JsonLineCodec>(session_id).await
+    }
+
+    /// Fetch session history with a specific codec.
+    pub async fn get_history_with_codec<C: BusCodec>(&self, session_id: &str) -> Result<Vec<Chunk>, SdkError> {
+        let (_writer, mut reader) = self
+            .send::<C>(&ClientMessage::Subscribe {
                 session_id: session_id.to_string(),
             })
             .await?;
 
         let mut chunks = Vec::new();
-        while let Ok(Some(line)) = lines.next_line().await {
-            match serde_json::from_str::<ServerMessage>(&line) {
-                Ok(ServerMessage::Chunk { chunk, .. }) => chunks.push(chunk),
-                Ok(ServerMessage::HistoryComplete { .. }) => break,
-                Ok(ServerMessage::Error { message, code, .. }) => {
+        while let Some(msg) = reader.read_msg::<ServerMessage>().await? {
+            match msg {
+                ServerMessage::Chunk { chunk, .. } => chunks.push(chunk),
+                ServerMessage::HistoryComplete { .. } => break,
+                ServerMessage::Error { message, code, .. } => {
                     return Err(SdkError::BusError { message, code: Some(code) });
                 }
                 _ => {}
@@ -200,16 +279,21 @@ impl BusClient {
         Ok(chunks)
     }
 
-    /// Subscribe to a session, returning a `SessionSubscription` that
-    /// shares the same connection. Publishing via this subscription
-    /// reuses the connection, so `source.connection` stays alive for
-    /// `direct_to` replies.
+    /// Subscribe to a session using the default JSON codec.
     pub async fn subscribe_session(
         &self,
         session_id: &str,
-    ) -> Result<SessionSubscription, SdkError> {
-        let (writer, mut lines) = self
-            .send(&ClientMessage::Subscribe {
+    ) -> Result<SessionSubscription<JsonLineCodec>, SdkError> {
+        self.subscribe_session_with_codec::<JsonLineCodec>(session_id).await
+    }
+
+    /// Subscribe to a session with a specific codec.
+    pub async fn subscribe_session_with_codec<C: BusCodec>(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionSubscription<C>, SdkError> {
+        let (writer, mut reader) = self
+            .send::<C>(&ClientMessage::Subscribe {
                 session_id: session_id.to_string(),
             })
             .await?;
@@ -217,17 +301,18 @@ impl BusClient {
         let (tx, rx) = mpsc::channel::<ServerMessage>(256);
         let sid = session_id.to_string();
 
-        // Spawn reader task — the writer stays in the SessionSubscription
         let reader_handle = tokio::spawn(async move {
-            while let Ok(Some(line)) = lines.next_line().await {
-                match serde_json::from_str::<ServerMessage>(&line) {
-                    Ok(msg) => {
+            loop {
+                match reader.read_msg::<ServerMessage>().await {
+                    Ok(Some(msg)) => {
                         if tx.send(msg).await.is_err() {
                             break;
                         }
                     }
+                    Ok(None) => break,
                     Err(e) => {
-                        warn!("cafe-sdk: invalid message from bus: {}", e);
+                        warn!("cafe-sdk: bus decode error: {}", e);
+                        break;
                     }
                 }
             }
@@ -238,18 +323,25 @@ impl BusClient {
             writer: Some(writer),
             _reader_handle: reader_handle,
             session_id: sid,
+            _codec: std::marker::PhantomData,
         })
     }
 
-    /// Subscribe to a session and return a channel receiver of
-    /// `ServerMessage` values. (Legacy — prefer `subscribe_session`
-    /// for new code that needs to publish on the same connection.)
+    /// Subscribe to a session and return a channel receiver. (Default JSON codec.)
     pub async fn subscribe(
         &self,
         session_id: &str,
     ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
-        let (writer, mut lines) = self
-            .send(&ClientMessage::Subscribe {
+        self.subscribe_with_codec::<JsonLineCodec>(session_id).await
+    }
+
+    /// Subscribe to a session with a specific codec.
+    pub async fn subscribe_with_codec<C: BusCodec>(
+        &self,
+        session_id: &str,
+    ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
+        let (writer, mut reader) = self
+            .send::<C>(&ClientMessage::Subscribe {
                 session_id: session_id.to_string(),
             })
             .await?;
@@ -258,15 +350,17 @@ impl BusClient {
 
         tokio::spawn(async move {
             let _writer = writer;
-            while let Ok(Some(line)) = lines.next_line().await {
-                match serde_json::from_str::<ServerMessage>(&line) {
-                    Ok(msg) => {
+            loop {
+                match reader.read_msg::<ServerMessage>().await {
+                    Ok(Some(msg)) => {
                         if tx.send(msg).await.is_err() {
                             break;
                         }
                     }
+                    Ok(None) => break,
                     Err(e) => {
-                        warn!("cafe-sdk: invalid message from bus: {}", e);
+                        warn!("cafe-sdk: bus decode error: {}", e);
+                        break;
                     }
                 }
             }
@@ -275,28 +369,38 @@ impl BusClient {
         Ok(rx)
     }
 
-    /// Subscribe to all sessions matching a filter.
+    /// Subscribe to all sessions matching a filter. (Default JSON codec.)
     pub async fn subscribe_filtered(
         &self,
         filter: cafe_types::SubscribeFilter,
     ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
-        let (writer, mut lines) = self
-            .send(&ClientMessage::SubscribeFiltered { filter })
+        self.subscribe_filtered_with_codec::<JsonLineCodec>(filter).await
+    }
+
+    /// Subscribe to all sessions matching a filter with a specific codec.
+    pub async fn subscribe_filtered_with_codec<C: BusCodec>(
+        &self,
+        filter: cafe_types::SubscribeFilter,
+    ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
+        let (writer, mut reader) = self
+            .send::<C>(&ClientMessage::SubscribeFiltered { filter })
             .await?;
 
         let (tx, rx) = mpsc::channel::<ServerMessage>(1024);
 
         tokio::spawn(async move {
             let _writer = writer;
-            while let Ok(Some(line)) = lines.next_line().await {
-                match serde_json::from_str::<ServerMessage>(&line) {
-                    Ok(msg) => {
+            loop {
+                match reader.read_msg::<ServerMessage>().await {
+                    Ok(Some(msg)) => {
                         if tx.send(msg).await.is_err() {
                             break;
                         }
                     }
+                    Ok(None) => break,
                     Err(e) => {
-                        warn!("cafe-sdk: invalid message from bus: {}", e);
+                        warn!("cafe-sdk: bus decode error: {}", e);
+                        break;
                     }
                 }
             }
@@ -305,23 +409,30 @@ impl BusClient {
         Ok(rx)
     }
 
-    /// Subscribe to all sessions.
+    /// Subscribe to all sessions. (Default JSON codec.)
     pub async fn subscribe_all(&self) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
-        let (writer, mut lines) = self.send(&ClientMessage::SubscribeAll).await?;
+        self.subscribe_all_with_codec::<JsonLineCodec>().await
+    }
+
+    /// Subscribe to all sessions with a specific codec.
+    pub async fn subscribe_all_with_codec<C: BusCodec>(&self) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
+        let (writer, mut reader) = self.send::<C>(&ClientMessage::SubscribeAll).await?;
 
         let (tx, rx) = mpsc::channel::<ServerMessage>(1024);
 
         tokio::spawn(async move {
             let _writer = writer;
-            while let Ok(Some(line)) = lines.next_line().await {
-                match serde_json::from_str::<ServerMessage>(&line) {
-                    Ok(msg) => {
+            loop {
+                match reader.read_msg::<ServerMessage>().await {
+                    Ok(Some(msg)) => {
                         if tx.send(msg).await.is_err() {
                             break;
                         }
                     }
+                    Ok(None) => break,
                     Err(e) => {
-                        warn!("cafe-sdk: invalid message from bus: {}", e);
+                        warn!("cafe-sdk: bus decode error: {}", e);
+                        break;
                     }
                 }
             }
@@ -330,14 +441,16 @@ impl BusClient {
         Ok(rx)
     }
 
-    /// Send a ping to the bus and wait for a pong.
+    /// Send a ping to the bus and wait for a pong. (Default JSON codec.)
     pub async fn ping(&self) -> Result<(), SdkError> {
-        let (_writer, mut lines) = self.send(&ClientMessage::Ping).await?;
-        while let Ok(Some(line)) = lines.next_line().await {
-            if matches!(
-                serde_json::from_str::<ServerMessage>(&line),
-                Ok(ServerMessage::Pong)
-            ) {
+        self.ping_with_codec::<JsonLineCodec>().await
+    }
+
+    /// Ping with a specific codec.
+    pub async fn ping_with_codec<C: BusCodec>(&self) -> Result<(), SdkError> {
+        let (_writer, mut reader) = self.send::<C>(&ClientMessage::Ping).await?;
+        while let Some(msg) = reader.read_msg::<ServerMessage>().await? {
+            if matches!(msg, ServerMessage::Pong) {
                 return Ok(());
             }
         }

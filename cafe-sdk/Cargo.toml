@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bytes        = "1"
 cafe-types   = { path = "../cafe-types" }
 tokio        = { workspace = true, features = ["net", "io-util", "sync"] }
 serde        = { workspace = true }

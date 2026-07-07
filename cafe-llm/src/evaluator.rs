@@ -1,12 +1,10 @@
 use crate::backends::{LlmBackend, LlmParams};
 use crate::context::{build_messages, extract_config};
 use anyhow::Result;
-use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, roles, Chunk, ClientMessage, ContentType, JsonRpcResponse, ServerMessage};
+use cafe_sdk::bus::{BusClient, SessionSubscription};
+use cafe_sdk::{keys, roles, Chunk, ContentType, JsonRpcResponse, ServerMessage};
 use futures_util::StreamExt;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
@@ -52,27 +50,12 @@ pub async fn run_session(
     backend: Arc<dyn LlmBackend>,
     default_model: String,
 ) -> Result<()> {
-    let stream = UnixStream::connect(&socket_path).await?;
-    let (reader, mut writer) = stream.into_split();
+    let client = BusClient::new(&socket_path);
+    let mut sub = client.subscribe_session(&session_id).await?;
 
-    // Subscribe to the session
-    let sub = serde_json::to_string(&ClientMessage::Subscribe {
-        session_id: session_id.clone(),
-    })? + "\n";
-    writer.write_all(sub.as_bytes()).await?;
-
-    let mut lines = BufReader::new(reader).lines();
     let (abort_tx, _abort_rx) = watch::channel(false);
 
-    while let Some(line) = lines.next_line().await? {
-        let msg: ServerMessage = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("cafe-llm: invalid message: {}", e);
-                continue;
-            }
-        };
-
+    while let Some(msg) = sub.rx.recv().await {
         match msg {
             ServerMessage::Chunk {
                 session_id: sid,
@@ -91,8 +74,7 @@ pub async fn run_session(
                 // Handle llm.invoke RPC requests
                 if let Some(rpc) = chunk.as_rpc_request() {
                     if rpc.method == "llm.invoke" {
-                        let bus = BusClient::new(&socket_path);
-                        let history = match bus.get_history(&session_id).await {
+                        let history = match client.get_history(&session_id).await {
                             Ok(h) => h,
                             Err(e) => {
                                 warn!("cafe-llm: failed to get history for {}: {}", session_id, e);
@@ -118,8 +100,7 @@ pub async fn run_session(
                         let _ = abort_tx.send(false);
 
                         handle_llm_response(
-                            session_id.clone(),
-                            &mut writer,
+                            &mut sub,
                             &backend,
                             &default_model,
                             messages,
@@ -143,8 +124,7 @@ pub async fn run_session(
 }
 
 async fn handle_llm_response(
-    session_id: String,
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    sub: &mut SessionSubscription,
     backend: &Arc<dyn LlmBackend>,
     _default_model: &str,
     messages: Vec<crate::backends::LlmMessage>,
@@ -162,14 +142,14 @@ async fn handle_llm_response(
                 .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
                 .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
                 .with_annotation(keys::CHAT_FINISH_REASON, "error");
-            publish_chunk(writer, &session_id, err_chunk).await;
+            let _ = sub.publish(err_chunk).await;
 
             let rpc_err = JsonRpcResponse::err(call_id, -1, &e.to_string());
             let err_resp_chunk = Chunk::new_null("com.nominal.cafe-llm")
                 .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &rpc_err)
                 .as_transient()
                 .with_retain(60);
-            publish_chunk(writer, &session_id, err_resp_chunk).await;
+            let _ = sub.publish(err_resp_chunk).await;
             return;
         }
     };
@@ -180,7 +160,7 @@ async fn handle_llm_response(
         .with_annotation(keys::CHAT_IS_STREAMING, true)
         .as_transient()
         .with_retain(5);
-    publish_chunk(writer, &session_id, start_chunk).await;
+    let _ = sub.publish(start_chunk).await;
 
     let mut finish_reason = "stop".to_string();
     let (_abort_tx, mut abort_rx) = watch::channel(false);
@@ -198,7 +178,7 @@ async fn handle_llm_response(
                             .with_annotation(keys::CHAT_IS_STREAMING, true)
                             .as_transient();
                         token_ids.push(token_chunk.id.clone());
-                        publish_chunk(writer, &session_id, token_chunk).await;
+                        let _ = sub.publish(token_chunk).await;
                     }
                     Some(Err(e)) => {
                         error!("cafe-llm: stream error: {}", e);
@@ -222,22 +202,21 @@ async fn handle_llm_response(
             .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
             .with_annotation(keys::CHAT_IS_STREAMING, true)
             .with_annotation(keys::CHAT_MODEL, &model);
-        publish_chunk(writer, &session_id, response_chunk).await;
+        let _ = sub.publish(response_chunk).await;
     }
 
-    // Publish tombstone for all transient token chunks (before stream_complete
-    // so SSE/UI consumers receive it before the stream ends)
+    // Publish tombstone for all transient token chunks
     let tombstone = Chunk::new_null("com.nominal.cafe-llm")
         .with_annotation(keys::CAFE_FLOW_TOMBSTONE, &token_ids)
         .as_transient();
-    publish_chunk(writer, &session_id, tombstone).await;
+    let _ = sub.publish(tombstone).await;
 
     // Publish stream_complete with assistant role so LlmComplete trigger fires
     let done_chunk = Chunk::new_null("com.nominal.cafe-llm")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         .with_annotation(keys::CHAT_STREAM_COMPLETE, true)
         .with_annotation(keys::CHAT_FINISH_REASON, &finish_reason);
-    publish_chunk(writer, &session_id, done_chunk).await;
+    let _ = sub.publish(done_chunk).await;
 
     // Publish RPC response so the pipeline's dispatch_rpc completes
     let rpc_resp = JsonRpcResponse::ok(call_id, serde_json::json!({"status": "ok"}));
@@ -245,22 +224,5 @@ async fn handle_llm_response(
         .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &rpc_resp)
         .as_transient()
         .with_retain(60);
-    publish_chunk(writer, &session_id, rpc_chunk).await;
-}
-
-async fn publish_chunk(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    session_id: &str,
-    chunk: Chunk,
-) {
-    let msg = ClientMessage::Publish {
-        session_id: session_id.to_string(),
-        chunk,
-    };
-    if let Ok(mut json) = serde_json::to_string(&msg) {
-        json.push('\n');
-        if let Err(e) = writer.write_all(json.as_bytes()).await {
-            error!("cafe-llm: write error: {}", e);
-        }
-    }
+    let _ = sub.publish(rpc_chunk).await;
 }

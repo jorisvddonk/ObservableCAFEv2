@@ -46,7 +46,8 @@ pub struct Chunk {
     pub id: String,
     pub content_type: ContentType,
     pub content: Option<String>,
-    #[serde(with = "base64_option")]
+    #[cfg_attr(feature = "raw-binary-data", serde(with = "crate::codec::raw_bytes_option"))]
+    #[cfg_attr(not(feature = "raw-binary-data"), serde(with = "base64_option"))]
     pub data: Option<Vec<u8>>,
     pub mime_type: Option<String>,
     pub producer: String,
