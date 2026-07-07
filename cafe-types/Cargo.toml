@@ -10,5 +10,10 @@ uuid        = { version = "1", features = ["v4", "serde"] }
 thiserror   = "1"
 base64      = "0.22"
 
+[[bench]]
+name = "serialization"
+harness = false
+
 [dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1"

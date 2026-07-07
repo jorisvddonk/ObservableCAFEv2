@@ -414,7 +414,8 @@ async fn client_loop(
 }
 
 /// Returns true if a chunk matches the chunk-level filters (content_types, annotations).
-fn chunk_matches_filter(chunk: &Chunk, filter: &SubscribeFilter) -> bool {
+#[doc(hidden)]
+pub fn chunk_matches_filter(chunk: &Chunk, filter: &SubscribeFilter) -> bool {
     if let Some(ref types) = filter.content_types {
         if !types.contains(&chunk.content_type) {
             return false;
@@ -434,7 +435,8 @@ fn chunk_matches_filter(chunk: &Chunk, filter: &SubscribeFilter) -> bool {
 }
 
 /// Returns true if a session-level filter matches (sessions, agents).
-fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) -> bool {
+#[doc(hidden)]
+pub fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) -> bool {
     if let Some(ref sessions) = filter.sessions {
         if !sessions.contains(&session.session_id) {
             return false;

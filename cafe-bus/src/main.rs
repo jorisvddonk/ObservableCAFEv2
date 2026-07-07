@@ -1,11 +1,7 @@
-mod client;
-mod config;
-mod registry;
-mod session;
-
 use anyhow::Result;
-use config::Config;
-use registry::SessionRegistry;
+use cafe_bus::client;
+use cafe_bus::config::Config;
+use cafe_bus::registry::SessionRegistry;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use tokio::net::UnixListener;
