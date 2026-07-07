@@ -143,4 +143,226 @@ mod tests {
             _ => panic!("wrong variant"),
         }
     }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn any_content_type() -> impl Strategy<Value = ContentType> {
+        prop_oneof![
+            Just(ContentType::Text),
+            Just(ContentType::Binary),
+            Just(ContentType::BinaryRef),
+            Just(ContentType::Null),
+        ]
+    }
+
+    fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn annotation_map() -> impl Strategy<Value = std::collections::HashMap<String, serde_json::Value>> {
+        prop::collection::hash_map("[a-z._-]{1,15}", arb_json_value(), 0..5)
+    }
+
+    fn any_chunk() -> impl Strategy<Value = Chunk> {
+        (
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            any_content_type(),
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(prop::collection::vec(any::<u8>(), 0..50)),
+            proptest::option::of("[a-z/._-]{0,30}"),
+            "[a-zA-Z0-9._-]{1,30}",
+            annotation_map(),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(id, content_type, content, data, mime_type, producer, annotations, timestamp)| {
+                    Chunk {
+                        id,
+                        content_type,
+                        content,
+                        data,
+                        mime_type,
+                        producer,
+                        annotations,
+                        timestamp,
+                    }
+                },
+            )
+    }
+
+    fn any_session_config() -> impl Strategy<Value = SessionConfig> {
+        (
+            proptest::option::of(".{0,30}"),
+            proptest::option::of(".{0,30}"),
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(-10.0f32..10.0f32),
+            proptest::option::of(any::<u32>()),
+        )
+            .prop_map(
+                |(backend, model, system_prompt, temperature, max_tokens)| SessionConfig {
+                    backend,
+                    model,
+                    system_prompt,
+                    temperature,
+                    max_tokens,
+                },
+            )
+    }
+
+    fn any_subscribe_filter() -> impl Strategy<Value = SubscribeFilter> {
+        (
+            proptest::option::of(prop::collection::vec(".{0,20}", 0..5)),
+            proptest::option::of(prop::collection::vec(".{0,20}", 0..5)),
+            proptest::option::of(prop::collection::vec(any_content_type(), 0..4)),
+            proptest::option::of(annotation_map()),
+        )
+            .prop_map(
+                |(sessions, agents, content_types, annotations)| SubscribeFilter {
+                    sessions,
+                    agents,
+                    content_types,
+                    annotations,
+                },
+            )
+    }
+
+    fn any_session_info() -> impl Strategy<Value = SessionInfo> {
+        (
+            ".{0,20}",
+            ".{0,20}",
+            proptest::option::of(".{0,30}"),
+            any::<bool>(),
+            ".{0,20}",
+            any::<usize>(),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(session_id, agent_id, display_name, is_background, ui_mode, message_count, created_at)| {
+                    SessionInfo {
+                        session_id,
+                        agent_id,
+                        display_name,
+                        is_background,
+                        ui_mode,
+                        message_count,
+                        created_at,
+                    }
+                },
+            )
+    }
+
+    fn any_client_message() -> impl Strategy<Value = ClientMessage> {
+        prop_oneof![
+            ".{0,20}".prop_map(|session_id| ClientMessage::Subscribe { session_id }),
+            Just(ClientMessage::SubscribeAll),
+            any_subscribe_filter()
+                .prop_map(|filter| ClientMessage::SubscribeFiltered { filter }),
+            (".{0,20}", any_chunk())
+                .prop_map(|(session_id, chunk)| ClientMessage::Publish { session_id, chunk }),
+            (".{0,20}", ".{0,20}", any_session_config()).prop_map(
+                |(session_id, agent_id, config)| ClientMessage::CreateSession {
+                    session_id,
+                    agent_id,
+                    config,
+                },
+            ),
+            ".{0,20}"
+                .prop_map(|session_id| ClientMessage::DeleteSession { session_id }),
+            Just(ClientMessage::Ping),
+        ]
+    }
+
+    fn any_server_message() -> impl Strategy<Value = ServerMessage> {
+        prop_oneof![
+            ".{0,20}"
+                .prop_map(|connection_id| ServerMessage::Connected { connection_id }),
+            (".{0,20}", any_chunk())
+                .prop_map(|(session_id, chunk)| ServerMessage::Chunk { session_id, chunk }),
+            (".{0,20}", ".{0,20}").prop_map(
+                |(session_id, agent_id)| ServerMessage::SessionCreated {
+                    session_id,
+                    agent_id,
+                },
+            ),
+            ".{0,20}"
+                .prop_map(|session_id| ServerMessage::SessionDeleted { session_id }),
+            prop::collection::vec(any_session_info(), 0..5)
+                .prop_map(|sessions| ServerMessage::SessionsList { sessions }),
+            (".{0,20}", any::<usize>()).prop_map(
+                |(session_id, count)| ServerMessage::HistoryComplete {
+                    session_id,
+                    count,
+                },
+            ),
+            (proptest::option::of(".{0,20}"), ".{0,20}", ".{0,20}").prop_map(
+                |(session_id, message, code)| ServerMessage::Error {
+                    session_id,
+                    message,
+                    code,
+                },
+            ),
+            Just(ServerMessage::Pong),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn client_message_serde_roundtrip(msg in any_client_message()) {
+            let json = serde_json::to_string(&msg).unwrap();
+            let back: ClientMessage = serde_json::from_str(&json).unwrap();
+            let orig_val = serde_json::to_value(&msg).unwrap();
+            let back_val = serde_json::to_value(&back).unwrap();
+            prop_assert_eq!(orig_val, back_val);
+        }
+
+        #[test]
+        fn server_message_serde_roundtrip(msg in any_server_message()) {
+            let json = serde_json::to_string(&msg).unwrap();
+            let back: ServerMessage = serde_json::from_str(&json).unwrap();
+            let orig_val = serde_json::to_value(&msg).unwrap();
+            let back_val = serde_json::to_value(&back).unwrap();
+            prop_assert_eq!(orig_val, back_val);
+        }
+
+        #[test]
+        fn subscribe_filter_serde_roundtrip(filter in any_subscribe_filter()) {
+            let json = serde_json::to_string(&filter).unwrap();
+            let back: SubscribeFilter = serde_json::from_str(&json).unwrap();
+            let orig_val = serde_json::to_value(&filter).unwrap();
+            let back_val = serde_json::to_value(&back).unwrap();
+            prop_assert_eq!(orig_val, back_val);
+        }
+
+        #[test]
+        fn session_config_serde_roundtrip(config in any_session_config()) {
+            let json = serde_json::to_string(&config).unwrap();
+            let back: SessionConfig = serde_json::from_str(&json).unwrap();
+            let orig_val = serde_json::to_value(&config).unwrap();
+            let back_val = serde_json::to_value(&back).unwrap();
+            prop_assert_eq!(orig_val, back_val);
+        }
+
+        #[test]
+        fn client_message_serde_has_correct_tag(msg in any_client_message()) {
+            let json = serde_json::to_string(&msg).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let op = parsed.get("op").and_then(|v| v.as_str());
+            prop_assert!(op.is_some(), "client message must have 'op' tag");
+        }
+
+        #[test]
+        fn server_message_serde_has_correct_tag(msg in any_server_message()) {
+            let json = serde_json::to_string(&msg).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let event = parsed.get("event").and_then(|v| v.as_str());
+            prop_assert!(event.is_some(), "server message must have 'event' tag");
+        }
+    }
 }

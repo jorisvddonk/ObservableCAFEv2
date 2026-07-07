@@ -9,3 +9,6 @@ serde_json  = { workspace = true }
 uuid        = { version = "1", features = ["v4", "serde"] }
 thiserror   = "1"
 base64      = "0.22"
+
+[dev-dependencies]
+proptest = "1"

@@ -642,6 +642,304 @@ mod tests {
         };
         assert!(!session_matches_filter(&s, &f2));
     }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn any_content_type() -> impl Strategy<Value = ContentType> {
+        prop_oneof![
+            Just(ContentType::Text),
+            Just(ContentType::Binary),
+            Just(ContentType::BinaryRef),
+            Just(ContentType::Null),
+        ]
+    }
+
+    fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn annotation_map() -> impl Strategy<Value = HashMap<String, serde_json::Value>> {
+        prop::collection::hash_map("[a-z._-]{1,15}", arb_json_value(), 0..5)
+    }
+
+    fn any_chunk() -> impl Strategy<Value = Chunk> {
+        (
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            any_content_type(),
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(prop::collection::vec(any::<u8>(), 0..50)),
+            proptest::option::of("[a-z/._-]{0,30}"),
+            "[a-zA-Z0-9._-]{1,30}",
+            annotation_map(),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(id, content_type, content, data, mime_type, producer, annotations, timestamp)| {
+                    Chunk {
+                        id,
+                        content_type,
+                        content,
+                        data,
+                        mime_type,
+                        producer,
+                        annotations,
+                        timestamp,
+                    }
+                },
+            )
+    }
+
+    fn any_session_state() -> impl Strategy<Value = SessionState> {
+        (".{0,20}", ".{0,20}")
+            .prop_map(|(session_id, agent_id)| SessionState::new(session_id, agent_id))
+    }
+
+    proptest! {
+        // ── chunk_matches_filter properties ──
+
+        #[test]
+        fn chunk_filter_empty_matches_all(chunk in any_chunk()) {
+            let filter = SubscribeFilter::default();
+            prop_assert!(chunk_matches_filter(&chunk, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_content_type_present(chunk in any_chunk()) {
+            let ct = chunk.content_type.clone();
+            let filter = SubscribeFilter {
+                content_types: Some(vec![ct]),
+                ..Default::default()
+            };
+            prop_assert!(chunk_matches_filter(&chunk, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_content_type_rejects_other(
+            chunk in any_chunk(),
+            other_ct in any_content_type(),
+        ) {
+            prop_assume!(chunk.content_type != other_ct);
+            let filter = SubscribeFilter {
+                content_types: Some(vec![other_ct]),
+                ..Default::default()
+            };
+            prop_assert!(!chunk_matches_filter(&chunk, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_empty_types_rejects_all(chunk in any_chunk()) {
+            let filter = SubscribeFilter {
+                content_types: Some(vec![]),
+                ..Default::default()
+            };
+            prop_assert!(!chunk_matches_filter(&chunk, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_annotation_match(
+            chunk in any_chunk(),
+            key in "[a-z._-]{1,10}",
+            value in arb_json_value(),
+        ) {
+            let annotated = chunk.clone().with_annotation(&key, &value);
+            let mut ann_map = HashMap::new();
+            ann_map.insert(key, value);
+            let filter = SubscribeFilter {
+                annotations: Some(ann_map),
+                ..Default::default()
+            };
+            prop_assert!(chunk_matches_filter(&annotated, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_annotation_rejects_when_missing(
+            chunk in any_chunk(),
+            key in "[a-z._-]{1,10}",
+            value in arb_json_value(),
+        ) {
+            // Skip cases where the chunk coincidentally has the annotation
+            prop_assume!(chunk.annotations.get(&key) != Some(&value));
+            // Also skip false — false is special (matches absent)
+            prop_assume!(value != serde_json::Value::Bool(false));
+
+            let mut ann_map = HashMap::new();
+            ann_map.insert(key, value);
+            let filter = SubscribeFilter {
+                annotations: Some(ann_map),
+                ..Default::default()
+            };
+            prop_assert!(!chunk_matches_filter(&chunk, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_annotation_false_matches_absent(
+            chunk in any_chunk(),
+            key in "[a-z._-]{1,10}",
+        ) {
+            prop_assume!(!chunk.annotations.contains_key(&key));
+            let mut ann_map = HashMap::new();
+            ann_map.insert(key, serde_json::Value::Bool(false));
+            let filter = SubscribeFilter {
+                annotations: Some(ann_map),
+                ..Default::default()
+            };
+            prop_assert!(chunk_matches_filter(&chunk, &filter));
+        }
+
+        #[test]
+        fn chunk_filter_and_semantics(
+            chunk in any_chunk(),
+            other_type in any_content_type(),
+            key in "[a-z._-]{1,10}",
+            value in arb_json_value(),
+        ) {
+            // Both content_type and annotation must fail independently
+            prop_assume!(chunk.content_type != other_type);
+            prop_assume!(!chunk.annotations.contains_key(&key));
+
+            let mut ann_map = HashMap::new();
+            ann_map.insert(key, value);
+            let filter = SubscribeFilter {
+                content_types: Some(vec![other_type]),
+                annotations: Some(ann_map),
+                ..Default::default()
+            };
+            prop_assert!(!chunk_matches_filter(&chunk, &filter));
+
+            // type matches but annotation fails
+            let mut ann_map2 = HashMap::new();
+            ann_map2.insert("nonexistent.key".to_string(), serde_json::Value::String("x".into()));
+            let filter2 = SubscribeFilter {
+                content_types: Some(vec![chunk.content_type.clone()]),
+                annotations: Some(ann_map2),
+                ..Default::default()
+            };
+            prop_assert!(!chunk_matches_filter(&chunk, &filter2));
+        }
+
+        // ── session_matches_filter properties ──
+
+        #[test]
+        fn session_filter_empty_matches_all(s in any_session_state()) {
+            let filter = SubscribeFilter::default();
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_by_id_match(s in any_session_state()) {
+            let sid = s.session_id.clone();
+            let filter = SubscribeFilter {
+                sessions: Some(vec![sid]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_by_id_no_match(
+            s in any_session_state(),
+            other_id in ".{0,20}",
+        ) {
+            prop_assume!(s.session_id != other_id);
+            let filter = SubscribeFilter {
+                sessions: Some(vec![other_id]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_by_agent_match(s in any_session_state()) {
+            let aid = s.agent_id.clone();
+            let filter = SubscribeFilter {
+                agents: Some(vec![aid]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_by_agent_no_match(
+            s in any_session_state(),
+            other_agent in ".{0,20}",
+        ) {
+            prop_assume!(s.agent_id != other_agent);
+            let filter = SubscribeFilter {
+                agents: Some(vec![other_agent]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_and_semantics(
+            s in any_session_state(),
+            other_id in ".{0,20}",
+            other_agent in ".{0,20}",
+        ) {
+            // Both sessions and agents must match (AND semantics)
+            prop_assume!(s.session_id != other_id);
+            prop_assume!(s.agent_id != other_agent);
+
+            // Neither matches → fail
+            let filter = SubscribeFilter {
+                sessions: Some(vec![other_id.clone()]),
+                agents: Some(vec![other_agent.clone()]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+
+            // Sessions matches, agents doesn't → fail (AND)
+            let filter2 = SubscribeFilter {
+                sessions: Some(vec![s.session_id.clone()]),
+                agents: Some(vec![other_agent.clone()]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter2));
+
+            // Agents matches, sessions doesn't → fail (AND)
+            let filter3 = SubscribeFilter {
+                sessions: Some(vec![other_id.clone()]),
+                agents: Some(vec![s.agent_id.clone()]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter3));
+
+            // Both match → pass
+            let filter4 = SubscribeFilter {
+                sessions: Some(vec![s.session_id.clone()]),
+                agents: Some(vec![s.agent_id.clone()]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter4));
+        }
+
+        #[test]
+        fn session_filter_empty_vecs_are_empty(
+            s in any_session_state(),
+        ) {
+            // Empty sessions vec → nothing matches sessions filter
+            let filter = SubscribeFilter {
+                sessions: Some(vec![]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+
+            // Empty agents vec → nothing matches agents filter
+            let filter2 = SubscribeFilter {
+                agents: Some(vec![]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter2));
+        }
+    }
 }
 
 fn make_config_chunk(config: &SessionConfig) -> Chunk {

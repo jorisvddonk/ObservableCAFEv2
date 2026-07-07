@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 29fa41843239cbe16ac993dde2d5b9146875c0621330d953199f01a9028795fc # shrinks to msg = SubscribeFiltered { filter: SubscribeFilter { sessions: None, agents: None, content_types: None, annotations: Some({"-": Number(-9.332684485376645e+29)}) } }
+cc ad92b5486b9a27e78575f0900415dd1ebf6cb6c04cb6db22dbc4ed55fdcb1f29 # shrinks to filter = SubscribeFilter { sessions: None, agents: Some(["*'\u{2fe8d}:\u{b}:🕴\0;\u{dd38c}\r'{@\u{71bf9}\u{eb1b1}?=柖\u{c544a}", "/\u{b7ebf}\u{e4564}.-🕴\\'\u{5d2db}=\u{dafa3}\u{96aa0}\0<t&'\u{7ffee}\u{5496c}[", "$\u{4}\r"]), content_types: Some([Text, BinaryRef]), annotations: Some({"zgi-_qymvd--": String("\u{10c5eb}=\"\u{84}\u{feff}\u{adc31}.\\\u{dd274}\u{deb6e}\u{202e}q\":𗹛\u{202e}�u/"), "i_-_": String("\u{4}\u{84adb}\u{feff}s{\u{71d83}\u{feff}?\t\u{53205}`*?Ѩ"), "_._-__._-x..p.": Null, "x_": Number(6.1592155083213695e+29)}) }
+cc bbcd9aa3bd0990d665d95f6e847b74724c5e2d763d6187059577aaad68678e61 # shrinks to msg = Chunk { session_id: "ᝠA", chunk: Chunk { id: "010a0e0a-0a0a-0aa0-00c0-a00a200b0300", content_type: Text, content: None, data: None, mime_type: None, producer: "_", annotations: {"_c_zp._g.f.l_": Null, "_._r_pcw_": Null}, timestamp: -3490649040245455047 } }

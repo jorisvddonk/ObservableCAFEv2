@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c3bd3a170be7257e579f9a35735e6425f9a774dcb0c1fa4a490d074327924bb5 # shrinks to chunk = Chunk { id: "00aa0a00-0a00-000a-00a0-a0a0aa000aa0", content_type: Text, content: None, data: None, mime_type: None, producer: "_", annotations: {}, timestamp: 0 }, key = "a", value = Number(-3.6334642024068836e+29)
+cc 02e78024e64bf98c8ec738cf03429c2e49ae2b98713fa004cd64c4b3510da362 # shrinks to chunk = Chunk { id: "a0a000aa-00aa-00aa-0aaa-a000000aaa0a", content_type: Text, content: None, data: None, mime_type: None, producer: "0", annotations: {"-": Number(-9.179145352300907e+29)}, timestamp: 0 }

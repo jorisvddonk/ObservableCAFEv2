@@ -375,9 +375,131 @@ mod tests {
 
     #[test]
     fn mutation_constructor_sets_target_id() {
-        use crate::annotation::keys;
         let chunk = Chunk::mutation("target-456", "test");
         assert_eq!(chunk.is_mutation(), Some("target-456".into()));
         assert_eq!(chunk.content_type, ContentType::Null);
+    }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn any_content_type() -> impl Strategy<Value = ContentType> {
+        prop_oneof![
+            Just(ContentType::Text),
+            Just(ContentType::Binary),
+            Just(ContentType::BinaryRef),
+            Just(ContentType::Null),
+        ]
+    }
+
+    fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn annotation_map() -> impl Strategy<Value = std::collections::HashMap<String, serde_json::Value>> {
+        prop::collection::hash_map("[a-z._-]{1,15}", arb_json_value(), 0..5)
+    }
+
+    fn any_chunk() -> impl Strategy<Value = Chunk> {
+        (
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            any_content_type(),
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(prop::collection::vec(any::<u8>(), 0..50)),
+            proptest::option::of("[a-z/._-]{0,30}"),
+            "[a-zA-Z0-9._-]{1,30}",
+            annotation_map(),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(id, content_type, content, data, mime_type, producer, annotations, timestamp)| {
+                    Chunk {
+                        id,
+                        content_type,
+                        content,
+                        data,
+                        mime_type,
+                        producer,
+                        annotations,
+                        timestamp,
+                    }
+                },
+            )
+    }
+
+    proptest! {
+        #[test]
+        fn chunk_serde_roundtrip(chunk in any_chunk()) {
+            let json = serde_json::to_string(&chunk).unwrap();
+            let back: Chunk = serde_json::from_str(&json).unwrap();
+            prop_assert_eq!(back.id, chunk.id);
+            prop_assert_eq!(back.content_type, chunk.content_type);
+            prop_assert_eq!(back.content, chunk.content);
+            prop_assert_eq!(back.data, chunk.data);
+            prop_assert_eq!(back.mime_type, chunk.mime_type);
+            prop_assert_eq!(back.producer, chunk.producer);
+            prop_assert_eq!(back.timestamp, chunk.timestamp);
+            // Compare annotations via JSON value tree (avoids float-precision issues)
+            let orig_val = serde_json::to_value(&chunk.annotations).unwrap();
+            let back_val = serde_json::to_value(&back.annotations).unwrap();
+            prop_assert_eq!(orig_val, back_val);
+        }
+
+        #[test]
+        fn chunk_serde_preserves_transient(chunk in any_chunk()) {
+            let transient = chunk.as_transient();
+            let json = serde_json::to_string(&transient).unwrap();
+            let back: Chunk = serde_json::from_str(&json).unwrap();
+            prop_assert!(back.is_transient());
+        }
+
+        #[test]
+        fn chunk_serde_preserves_retain(chunk in any_chunk()) {
+            let retained = chunk.as_transient().with_retain(42);
+            let json = serde_json::to_string(&retained).unwrap();
+            let back: Chunk = serde_json::from_str(&json).unwrap();
+            prop_assert!(back.is_transient());
+            prop_assert_eq!(back.retain_secs(), Some(42));
+        }
+
+        #[test]
+        fn chunk_serde_preserves_annotations(
+            chunk in any_chunk(),
+            key in "[a-z._-]{1,10}",
+            value in arb_json_value(),
+        ) {
+            let annotated = chunk.with_annotation(&key, &value);
+            let json = serde_json::to_string(&annotated).unwrap();
+            let back: Chunk = serde_json::from_str(&json).unwrap();
+            // Use JSON value tree comparison for annotation values
+            let orig = serde_json::to_value(&annotated.annotations).unwrap();
+            let back_ann = serde_json::to_value(&back.annotations).unwrap();
+            prop_assert_eq!(orig, back_ann);
+        }
+
+        #[test]
+        fn chunk_roundtrip_over_mutations(
+            chunk in any_chunk(),
+            target_id in "[a-f0-9-]{36}",
+        ) {
+            let mutation = chunk.clone();
+            let mutation = Chunk {
+                annotations: {
+                    let mut ann = mutation.annotations.clone();
+                    ann.insert("cafe.mutates.target_id".into(), serde_json::json!(target_id));
+                    ann
+                },
+                ..mutation
+            };
+            let json = serde_json::to_string(&mutation).unwrap();
+            let back: Chunk = serde_json::from_str(&json).unwrap();
+            prop_assert_eq!(back.is_mutation(), Some(target_id));
+        }
     }
 }

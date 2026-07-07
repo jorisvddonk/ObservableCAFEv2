@@ -2,6 +2,7 @@ use cafe_types::Chunk;
 use std::time::Instant;
 use tokio::sync::broadcast;
 
+#[derive(Debug)]
 pub struct SessionState {
     pub session_id: String,
     pub agent_id: String,
@@ -110,5 +111,189 @@ mod tests {
         // New subscriber should only receive the non-transient chunk in replay
         assert_eq!(state.history.len(), 1);
         assert_eq!(state.history[0].content, Some("normal".into()));
+    }
+
+    // ── Property-based tests (proptest) ──
+
+    use cafe_types::ContentType;
+    use proptest::prelude::*;
+
+    fn any_content_type() -> impl Strategy<Value = ContentType> {
+        prop_oneof![
+            Just(ContentType::Text),
+            Just(ContentType::Binary),
+            Just(ContentType::BinaryRef),
+            Just(ContentType::Null),
+        ]
+    }
+
+    fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn annotation_map() -> impl Strategy<Value = std::collections::HashMap<String, serde_json::Value>> {
+        prop::collection::hash_map("[a-z._-]{1,15}", arb_json_value(), 0..5)
+    }
+
+    fn any_chunk() -> impl Strategy<Value = Chunk> {
+        (
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            any_content_type(),
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(prop::collection::vec(any::<u8>(), 0..50)),
+            proptest::option::of("[a-z/._-]{0,30}"),
+            "[a-zA-Z0-9._-]{1,30}",
+            annotation_map(),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(id, content_type, content, data, mime_type, producer, annotations, timestamp)| {
+                    Chunk {
+                        id,
+                        content_type,
+                        content,
+                        data,
+                        mime_type,
+                        producer,
+                        annotations,
+                        timestamp,
+                    }
+                },
+            )
+    }
+
+    fn chunk_list() -> impl Strategy<Value = Vec<Chunk>> {
+        prop::collection::vec(any_chunk(), 0..20)
+    }
+
+    fn retained_chunk() -> impl Strategy<Value = Chunk> {
+        (any_chunk(), any::<u64>()).prop_map(|(chunk, secs)| {
+            chunk.as_transient().with_retain(secs.saturating_add(1) % 3600 + 1)
+        })
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let config = proptest::test_runner::Config::default();
+        let mut runner = proptest::test_runner::TestRunner::new(config);
+        runner
+            .run(&strategy, |v| {
+                test(v);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn session_history_count() {
+        run_proptest(chunk_list(), |chunks: Vec<Chunk>| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            let non_transient_count = chunks.iter().filter(|c| !c.is_transient()).count();
+            for chunk in &chunks {
+                state.publish(chunk.clone());
+            }
+            assert_eq!(state.history.len(), non_transient_count);
+        });
+    }
+
+    #[test]
+    fn session_history_empty_when_all_transient() {
+        run_proptest(chunk_list(), |chunks: Vec<Chunk>| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            let transient_chunks: Vec<_> = chunks.into_iter().map(|c| c.as_transient()).collect();
+            for chunk in &transient_chunks {
+                state.publish(chunk.clone());
+                assert!(chunk.is_transient());
+            }
+            assert!(state.history.is_empty());
+        });
+    }
+
+    #[test]
+    fn session_history_order_preserved() {
+        run_proptest(chunk_list(), |chunks: Vec<Chunk>| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            for chunk in &chunks {
+                state.publish(chunk.clone());
+            }
+            let non_transient: Vec<_> = chunks.iter().filter(|c| !c.is_transient()).collect();
+            assert_eq!(state.history.len(), non_transient.len());
+            for (i, chunk) in non_transient.iter().enumerate() {
+                assert_eq!(state.history[i].id, chunk.id);
+            }
+        });
+    }
+
+    #[test]
+    fn session_broadcast_delivery_all() {
+        run_proptest(chunk_list(), |chunks: Vec<Chunk>| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            let mut rx = state.subscribe();
+            for chunk in &chunks {
+                state.publish(chunk.clone());
+                match rx.try_recv() {
+                    Ok(received) => {
+                        assert_eq!(received.id, chunk.id);
+                        assert_eq!(received.content, chunk.content);
+                        assert_eq!(received.is_transient(), chunk.is_transient());
+                    }
+                    Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                        panic!("broadcast channel was empty after publish");
+                    }
+                    Err(e) => {
+                        panic!("broadcast error: {:?}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn session_broadcast_closed_when_sender_dropped() {
+        let state = SessionState::new("test".into(), "test".into());
+        let mut rx = state.subscribe();
+        drop(state);
+        match rx.try_recv() {
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {}
+            _ => panic!("expected broadcast to be closed after SessionState drop"),
+        }
+    }
+
+    #[test]
+    fn retained_transient_in_drain_not_history() {
+        run_proptest(retained_chunk(), |chunk: Chunk| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            state.publish(chunk.clone());
+
+            assert!(state.history.is_empty());
+
+            let drained = state.drain_retained();
+            assert_eq!(drained.len(), 1);
+            assert_eq!(drained[0].id, chunk.id);
+        });
+    }
+
+    #[test]
+    fn drain_retained_empty_when_no_retained_chunks() {
+        run_proptest(chunk_list(), |chunks: Vec<Chunk>| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            for c in &chunks {
+                let plain = {
+                    let mut ann = c.annotations.clone();
+                    ann.remove("cafe.transient.retain_secs");
+                    Chunk { annotations: ann, ..c.clone() }
+                };
+                state.publish(plain);
+            }
+            let drained = state.drain_retained();
+            assert!(drained.is_empty());
+        });
     }
 }
