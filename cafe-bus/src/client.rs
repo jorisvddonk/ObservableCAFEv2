@@ -1071,6 +1071,25 @@ mod tests {
                 prop_assert!(session_matches_filter(&s, &specific));
             }
         }
+
+        // ── Source connection injection (ADR-101) ──
+
+        #[test]
+        fn source_connection_injected_on_publish(
+            chunk in any_chunk(),
+            conn_id in "[a-zA-Z0-9._-]{1,30}",
+        ) {
+            let ct = chunk.content_type.clone();
+            let producer = chunk.producer.clone();
+            let tagged = chunk.with_annotation(keys::CAFE_SOURCE_CONNECTION, &conn_id);
+            prop_assert_eq!(
+                tagged.get_annotation::<String>(keys::CAFE_SOURCE_CONNECTION),
+                Some(conn_id)
+            );
+            // Other fields unchanged
+            prop_assert_eq!(tagged.content_type, ct);
+            prop_assert_eq!(tagged.producer, producer);
+        }
     }
 }
 

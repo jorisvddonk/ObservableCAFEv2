@@ -343,6 +343,31 @@ mod tests {
     }
 
     #[test]
+    fn mutation_does_not_modify_history() {
+        run_proptest(chunk_list(), |chunks: Vec<Chunk>| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            for c in &chunks {
+                state.publish(c.clone());
+            }
+            // Snapshot the annotations before mutation
+            let before: Vec<_> = state.history.iter().map(|c| c.annotations.clone()).collect();
+            // Publish a mutation targeting the last chunk
+            if let Some(last) = state.history.last() {
+                let mutation = Chunk::mutation(&last.id, "test-mutator")
+                    .with_annotation("test.key", "test.value");
+                state.publish(mutation);
+                // History should have grown by 1 (the mutation itself is non-transient)
+                assert_eq!(state.history.len(), before.len() + 1);
+                // All original chunks' annotations must be unchanged
+                for (i, ann) in before.iter().enumerate() {
+                    assert_eq!(state.history[i].annotations, *ann,
+                        "mutation modified history[{}] annotations", i);
+                }
+            }
+        });
+    }
+
+    #[test]
     fn retained_transient_available_across_drain() {
         run_proptest(retained_chunk(), |chunk: Chunk| {
             let mut state = SessionState::new("test".into(), "test".into());

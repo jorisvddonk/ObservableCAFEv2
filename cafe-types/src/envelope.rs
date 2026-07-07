@@ -364,5 +364,32 @@ mod tests {
             let event = parsed.get("event").and_then(|v| v.as_str());
             prop_assert!(event.is_some(), "server message must have 'event' tag");
         }
+
+        // ── Invalid JSON rejection (ADR-001) ──
+
+        #[test]
+        fn invalid_json_rejected_as_client_message(garbage in "[ -~]{0,100}") {
+            let result = serde_json::from_str::<ClientMessage>(&garbage);
+            match result {
+                Ok(msg) => {
+                    // If it happened to parse, verify the tag is present
+                    let val = serde_json::to_value(&msg).unwrap();
+                    prop_assert!(val.get("op").is_some(), "parsed but no op tag");
+                }
+                Err(_) => {} // expected — graceful rejection
+            }
+        }
+
+        #[test]
+        fn invalid_json_rejected_as_server_message(garbage in "[ -~]{0,100}") {
+            let result = serde_json::from_str::<ServerMessage>(&garbage);
+            match result {
+                Ok(msg) => {
+                    let val = serde_json::to_value(&msg).unwrap();
+                    prop_assert!(val.get("event").is_some(), "parsed but no event tag");
+                }
+                Err(_) => {} // expected — graceful rejection
+            }
+        }
     }
 }

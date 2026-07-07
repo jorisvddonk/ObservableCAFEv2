@@ -250,4 +250,30 @@ mod tests {
             assert_eq!(info.message_count, 1);
         });
     }
+
+    #[test]
+    fn session_isolation_two_sessions() {
+        run_proptest(
+            (
+                "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                "[a-zA-Z._-]{1,20}",
+            ),
+            |(sid_a, sid_b, agent): (String, String, String)| {
+                // Use different IDs
+                if sid_a == sid_b { return; }
+                let mut state_a = SessionState::new(sid_a.clone(), agent.clone());
+                let mut state_b = SessionState::new(sid_b.clone(), agent);
+                let chunk_a = cafe_types::Chunk::new_text("hello from A", "test");
+                let chunk_b = cafe_types::Chunk::new_text("hello from B", "test");
+                state_a.publish(chunk_a);
+                state_b.publish(chunk_b);
+                assert_eq!(state_a.history.len(), 1);
+                assert_eq!(state_b.history.len(), 1);
+                // Session A should not contain B's chunk content
+                assert_eq!(state_a.history[0].content, Some("hello from A".into()));
+                assert_eq!(state_b.history[0].content, Some("hello from B".into()));
+            },
+        );
+    }
 }

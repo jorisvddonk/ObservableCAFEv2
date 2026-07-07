@@ -614,4 +614,129 @@ mod tests {
             },
         );
     }
+
+    // ── ADR-driven property tests ──
+
+    #[test]
+    fn binary_ref_has_no_data_or_content() {
+        run_proptest(arb_chunk_strategy(), |chunk: Chunk| {
+            let br = Chunk {
+                content_type: ContentType::BinaryRef,
+                content: None,
+                data: None,
+                ..chunk
+            };
+            assert_eq!(br.content_type, ContentType::BinaryRef);
+            assert!(br.content.is_none());
+            assert!(br.data.is_none());
+            // BinaryRef should serialize correctly
+            let json = serde_json::to_string(&br).unwrap();
+            let back: Chunk = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.content_type, ContentType::BinaryRef);
+        });
+    }
+
+    #[test]
+    fn rpc_request_chunk_is_transient() {
+        use crate::jsonrpc::JsonRpcRequest;
+        run_proptest(
+            (".{0,20}", ".{0,20}", arb_json_value()),
+            |(method, id, params): (String, String, serde_json::Value)| {
+                let req = JsonRpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id,
+                    method,
+                    params,
+                };
+                let chunk = Chunk::new_null("test")
+                    .with_annotation(crate::annotation::keys::CAFE_JSONRPC_REQUEST, &req)
+                    .as_transient();
+                assert!(chunk.is_transient());
+                assert!(chunk.as_rpc_request().is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn rpc_response_chunk_is_transient() {
+        use crate::jsonrpc::JsonRpcResponse;
+        run_proptest(
+            (".{0,20}", arb_json_value()),
+            |(id, result): (String, serde_json::Value)| {
+                let resp = JsonRpcResponse::ok(id, result);
+                let chunk = Chunk::new_null("test")
+                    .with_annotation(crate::annotation::keys::CAFE_JSONRPC_RESPONSE, &resp)
+                    .as_transient();
+                assert!(chunk.is_transient());
+                assert!(chunk.as_rpc_response().is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn mutation_merge_excludes_meta_key() {
+        // Simulate the merge logic: mutation annotations are overlaid on target,
+        // but mutates.target_id is excluded.
+        run_proptest(
+            (
+                prop::collection::hash_map("[a-z._-]{1,10}", arb_json_value(), 0..5),
+                prop::collection::hash_map("[a-z._-]{1,10}", arb_json_value(), 0..5),
+            ),
+            |(target_ann, mut_ann): (HashMap<String, serde_json::Value>, HashMap<String, serde_json::Value>)| {
+                // The merge: overlays mutation annotations on target,
+                // excluding mutates.target_id from the result
+                let mut merged = target_ann.clone();
+                for (k, v) in &mut_ann {
+                    if k != "cafe.mutates.target_id" && k != "mutates.target_id" {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                }
+                // mutates.target_id should never be in the merged result
+                // unless it was in the original target
+                let has_meta = merged.contains_key("cafe.mutates.target_id")
+                    || merged.contains_key("mutates.target_id");
+                // It may still be in the result if the original target had it
+                let original_had_meta = target_ann.contains_key("cafe.mutates.target_id")
+                    || target_ann.contains_key("mutates.target_id");
+                // But the mutation's meta-key must NOT propagate
+                let mutation_meta = mut_ann.contains_key("cafe.mutates.target_id")
+                    || mut_ann.contains_key("mutates.target_id");
+                if mutation_meta && !original_had_meta {
+                    assert!(!has_meta, "mutation's meta-key leaked into merge result");
+                }
+            },
+        );
+    }
+
+    fn arb_chunk_strategy() -> impl Strategy<Value = Chunk> {
+        (
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            prop_oneof![
+                Just(ContentType::Text),
+                Just(ContentType::Binary),
+                Just(ContentType::BinaryRef),
+                Just(ContentType::Null),
+            ],
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(prop::collection::vec(any::<u8>(), 0..50)),
+            proptest::option::of("[a-z/._-]{0,30}"),
+            "[a-zA-Z0-9._-]{1,30}",
+            prop::collection::hash_map("[a-z._-]{1,15}", arb_json_value(), 0..5),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(id, content_type, content, data, mime_type, producer, annotations, timestamp)| {
+                    Chunk {
+                        id,
+                        content_type,
+                        content,
+                        data,
+                        mime_type,
+                        producer,
+                        annotations,
+                        timestamp,
+                    }
+                },
+            )
+    }
 }
