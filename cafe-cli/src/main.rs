@@ -1,10 +1,9 @@
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::http::HttpClient;
-use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SubscribeFilter};
+use cafe_sdk::{Chunk, ContentType, ServerMessage, SubscribeFilter};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use std::io::Write;
 
@@ -206,63 +205,30 @@ async fn main() -> Result<()> {
             }
 
             if let Some(wait_secs) = wait {
-                // Use a raw socket so we share the same connection — needed to receive
-                // direct_to mutations (binary-store sends write credentials back).
-                let stream = tokio::net::UnixStream::connect(&cli.bus).await?;
-                let (reader, mut writer) = tokio::io::split(stream);
-                let mut lines = tokio::io::BufReader::new(reader).lines();
+                // Use SessionSubscription for shared-connection direct_to replies
+                let _ = client.create_session(&session_id, "default", Default::default()).await;
+                let mut sub = client.subscribe_session(&session_id).await?;
 
-                // Read Connected
-                if let Some(line) = lines.next_line().await? {
-                    if let Ok(ServerMessage::Connected { .. }) = serde_json::from_str(&line) {
-                        // consumed
-                    }
-                }
-
-                // SubscribeAll so we receive direct_to mutations
-                writer
-                    .write_all(b"{\"op\":\"subscribe_all\"}\n")
-                    .await?;
-
-                // Create session if needed (fire-and-forget is fine — SESSION_EXISTS ignored)
-                let create = serde_json::json!({
-                    "op": "create_session",
-                    "session_id": session_id,
-                    "agent_id": "default",
-                    "config": {}
-                });
-                writer.write_all(create.to_string().as_bytes()).await?;
-                writer.write_all(b"\n").await?;
-
-                // Publish the chunk
-                let publish = serde_json::json!({
-                    "op": "publish",
-                    "session_id": session_id,
-                    "chunk": &chunk,
-                });
-                writer.write_all(publish.to_string().as_bytes()).await?;
-                writer.write_all(b"\n").await?;
+                // Publish the chunk through the shared connection
+                sub.publish(chunk).await?;
 
                 // Wait for mutations targeting our chunk_id
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_secs);
                 while tokio::time::Instant::now() < deadline {
                     tokio::select! {
-                        line = lines.next_line() => {
-                            match line {
-                                Ok(Some(line)) => {
-                                    if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
-                                        if let ServerMessage::Chunk { chunk, .. } = msg {
-                                            if let Some(target) = chunk.is_mutation() {
-                                                if target == chunk_id {
-                                                    // Found a mutation targeting our chunk — print it
-                                                    let json = serde_json::to_string(&chunk)?;
-                                                    println!("{}", json);
-                                                }
-                                            }
+                        msg = sub.rx.recv() => {
+                            match msg {
+                                Some(ServerMessage::Chunk { chunk, .. }) => {
+                                    if let Some(target) = chunk.is_mutation() {
+                                        if target == chunk_id {
+                                            let json = serde_json::to_string(&chunk)?;
+                                            println!("{}", json);
                                         }
                                     }
                                 }
-                                _ => break,
+                                Some(ServerMessage::SessionDeleted { .. }) => break,
+                                None => break,
+                                _ => {}
                             }
                         }
                         _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -414,45 +380,15 @@ async fn main() -> Result<()> {
                     let chunk_id = uuid::Uuid::new_v4().to_string();
                     let store_url = store_url.trim_end_matches('/').to_string();
 
-                    // Open raw socket for credential exchange
-                    let stream = tokio::net::UnixStream::connect(&cli.bus).await?;
-                    let (reader, mut writer) = tokio::io::split(stream);
-                    let mut lines = BufReader::new(reader).lines();
-
-                    // Read Connected
-                    if let Some(line) = lines.next_line().await? {
-                        let _ = serde_json::from_str::<ServerMessage>(&line);
-                    }
-
-                    // SubscribeAll, then wait briefly for snapshot to settle
-                    writer.write_all(b"{\"op\":\"subscribe_all\"}\n").await?;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-
-                    // Create session (auto-generated UUID, always succeeds)
-                    let create = serde_json::json!({"op":"create_session","session_id":session_id,"agent_id":"default","config":{}});
-                    writer.write_all(create.to_string().as_bytes()).await?;
-                    writer.write_all(b"\n").await?;
-
-                    // Drain until we see the SessionCreated for our session
-                    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-                    while tokio::time::Instant::now() < deadline {
-                        if let Ok(Some(line)) = lines.next_line().await {
-                            if line.contains(&format!(r#""session_id":"{}""#, session_id))
-                                && line.contains(r#""event":"session_created""#)
-                            {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
+                    // Create session, then subscribe with a shared connection for credential exchange
+                    client.create_session(&session_id, "default", Default::default()).await?;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    let mut sub = client.subscribe_session(&session_id).await?;
 
                     // Publish BinaryRef
                     let mut binref = Chunk::new_binary_ref(mime.as_deref().unwrap_or("application/octet-stream"), "cafe-cli");
                     binref.id = chunk_id.clone();
-                    let publish = serde_json::json!({"op":"publish","session_id":session_id,"chunk":&binref});
-                    writer.write_all(publish.to_string().as_bytes()).await?;
-                    writer.write_all(b"\n").await?;
+                    sub.publish(binref).await?;
 
                     // Wait for write credentials mutation
                     let mut write_url = None;
@@ -460,23 +396,21 @@ async fn main() -> Result<()> {
                     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
                     while tokio::time::Instant::now() < deadline {
                         tokio::select! {
-                            line = lines.next_line() => {
-                                match line {
-                                    Ok(Some(line)) => {
-                                        if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
-                                            if let ServerMessage::Chunk { chunk, .. } = msg {
-                                                let ann = &chunk.annotations;
-                                                if ann.contains_key("cafe.binary.write_url") {
-                                                    write_url = ann.get("cafe.binary.write_url").and_then(|v| v.as_str().map(String::from));
-                                                    write_token = ann.get("cafe.binary.write_token").and_then(|v| v.as_str().map(String::from));
-                                                    if write_url.is_some() && write_token.is_some() {
-                                                        break;
-                                                    }
-                                                }
+                            msg = sub.rx.recv() => {
+                                match msg {
+                                    Some(ServerMessage::Chunk { chunk, .. }) => {
+                                        let ann = &chunk.annotations;
+                                        if ann.contains_key("cafe.binary.write_url") {
+                                            write_url = ann.get("cafe.binary.write_url").and_then(|v| v.as_str().map(String::from));
+                                            write_token = ann.get("cafe.binary.write_token").and_then(|v| v.as_str().map(String::from));
+                                            if write_url.is_some() && write_token.is_some() {
+                                                break;
                                             }
                                         }
                                     }
-                                    _ => break,
+                                    Some(ServerMessage::SessionDeleted { .. }) => break,
+                                    None => break,
+                                    _ => {}
                                 }
                             }
                             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -504,8 +438,8 @@ async fn main() -> Result<()> {
                     });
 
                     let upload_url = format!("{}?token={}&session_id={}", write_url, write_token, session_id);
-                    let client = reqwest::Client::new();
-                    client.post(&upload_url)
+                    let http_client = reqwest::Client::new();
+                    http_client.post(&upload_url)
                         .header("Content-Type", &mime_type)
                         .body(data)
                         .send()
@@ -517,23 +451,21 @@ async fn main() -> Result<()> {
                     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
                     while tokio::time::Instant::now() < deadline {
                         tokio::select! {
-                            line = lines.next_line() => {
-                                match line {
-                                    Ok(Some(line)) => {
-                                        if let Ok(msg) = serde_json::from_str::<ServerMessage>(&line) {
-                                            if let ServerMessage::Chunk { chunk, .. } = msg {
-                                                let ann = &chunk.annotations;
-                                                if ann.contains_key("binary.read_url") {
-                                                    read_url = ann.get("binary.read_url").and_then(|v| v.as_str().map(String::from));
-                                                    read_token = ann.get("binary.read_token").and_then(|v| v.as_str().map(String::from));
-                                                    if read_url.is_some() {
-                                                        break;
-                                                    }
-                                                }
+                            msg = sub.rx.recv() => {
+                                match msg {
+                                    Some(ServerMessage::Chunk { chunk, .. }) => {
+                                        let ann = &chunk.annotations;
+                                        if ann.contains_key("binary.read_url") {
+                                            read_url = ann.get("binary.read_url").and_then(|v| v.as_str().map(String::from));
+                                            read_token = ann.get("binary.read_token").and_then(|v| v.as_str().map(String::from));
+                                            if read_url.is_some() {
+                                                break;
                                             }
                                         }
                                     }
-                                    _ => break,
+                                    Some(ServerMessage::SessionDeleted { .. }) => break,
+                                    None => break,
+                                    _ => {}
                                 }
                             }
                             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -542,8 +474,7 @@ async fn main() -> Result<()> {
 
                     // Fallback: read from history
                     if read_url.is_none() {
-                        let bus = BusClient::new(&cli.bus);
-                        if let Ok(history) = bus.get_history(&session_id).await {
+                        if let Ok(history) = client.get_history(&session_id).await {
                             for c in &history {
                                 if let Some(target) = c.is_mutation() {
                                     if target == chunk_id {
