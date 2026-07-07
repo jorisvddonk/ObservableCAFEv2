@@ -24,6 +24,9 @@ cafe-web-sdk/node_modules/
 cafe-web-sdk/dist/
 node_modules/
 
+# macOS
+.DS_Store
+
 # Runtime / local config
 *.sock
 .env
@@ -37,6 +40,7 @@ logs/
 *.pyc
 *.egg-info/
 build/
+.venv/
 
 .pi/
 
