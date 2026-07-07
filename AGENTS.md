@@ -34,6 +34,15 @@ Never mention local setup — launchd, servers, locally available models, or any
 - **Python E2E tests:** `tests/*.py` (run against live services)
 - **Rust unit tests:** inline in `src/` files under `#[cfg(test)]` modules — no dedicated test files or integration test directories
 
+## CI
+
+GitHub Actions workflow at `.github/workflows/ci.yml` runs on push/PR to `main`:
+- `cargo build --release --workspace`
+- `cargo test --release --workspace`
+- E2E bus tests: `bus-filters-e2e.py` and `source-connection-e2e.py`
+
+**When adding a new E2E test script to `tests/`, add it to the CI workflow's `Run E2E bus tests` step.**
+
 ## Doc rules
 
 - Use Mermaid for sequence diagrams in markdown.
