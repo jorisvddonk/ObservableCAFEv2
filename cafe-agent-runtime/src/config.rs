@@ -429,4 +429,111 @@ mod tests {
             },
         );
     }
+
+    // ── apply_config_key property tests ──
+
+    fn known_config_keys() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(keys::CONFIG_LLM_SYSTEM_PROMPT.to_string()),
+            Just(keys::CONFIG_LLM_TEMPERATURE.to_string()),
+            Just(keys::CONFIG_LLM_MAX_TOKENS.to_string()),
+            Just(keys::CONFIG_LLM_MODEL.to_string()),
+            Just(keys::CONFIG_LLM_BACKEND.to_string()),
+            Just(keys::CONFIG_TTS_PROFILE.to_string()),
+            Just(keys::CONFIG_TTS_ENGINE.to_string()),
+            Just(keys::CONFIG_TTS_ENDPOINT.to_string()),
+            Just(keys::CONFIG_COMFY_WORKFLOW_PATH.to_string()),
+            Just(keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE.to_string()),
+            Just(keys::CONFIG_COMFY_ENDPOINT.to_string()),
+            Just(keys::CONFIG_SHEETBOT_URL.to_string()),
+            Just(keys::CONFIG_SHEETBOT_API_KEY.to_string()),
+            Just(keys::CONFIG_STT_BASE_URL.to_string()),
+            Just(keys::CONFIG_STT_RESPONSE_FORMAT.to_string()),
+            Just(keys::CONFIG_RSS_URL.to_string()),
+        ]
+    }
+
+    #[test]
+    fn apply_known_string_key_sets_field() {
+        run_proptest(
+            (known_config_keys(), ".{0,30}"),
+            |(key, val): (String, String)| {
+                let mut cfg = SessionConfig::default();
+                apply_config_key(&mut cfg, &key, &serde_json::Value::String(val.clone()));
+                // All known string keys set their corresponding Option<String>
+                let field_value = match key.as_str() {
+                    keys::CONFIG_LLM_SYSTEM_PROMPT => cfg.llm_system_prompt,
+                    keys::CONFIG_LLM_MODEL => cfg.llm_model,
+                    keys::CONFIG_LLM_BACKEND => cfg.llm_backend,
+                    keys::CONFIG_TTS_PROFILE => cfg.tts_profile,
+                    keys::CONFIG_TTS_ENGINE => cfg.tts_engine,
+                    keys::CONFIG_TTS_ENDPOINT => cfg.tts_endpoint,
+                    keys::CONFIG_COMFY_WORKFLOW_PATH => cfg.comfy_workflow_path,
+                    keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE => cfg.comfy_workflow_input_node,
+                    keys::CONFIG_COMFY_ENDPOINT => cfg.comfy_endpoint,
+                    keys::CONFIG_SHEETBOT_URL => cfg.sheetbot_url,
+                    keys::CONFIG_SHEETBOT_API_KEY => cfg.sheetbot_api_key,
+                    keys::CONFIG_STT_BASE_URL => cfg.stt_base_url,
+                    keys::CONFIG_STT_RESPONSE_FORMAT => cfg.stt_response_format,
+                    keys::CONFIG_RSS_URL => cfg.rss_url,
+                    _ => return,
+                };
+                assert_eq!(field_value, Some(val));
+            },
+        );
+    }
+
+    #[test]
+    fn apply_unknown_key_goes_to_extra() {
+        run_proptest(
+            ("config\\.\\w{1,15}", arb_annotation_value()),
+            |(key, val): (String, serde_json::Value)| {
+                // Skip keys that are known
+                let known = [
+                    keys::CONFIG_LLM_SYSTEM_PROMPT, keys::CONFIG_LLM_TEMPERATURE,
+                    keys::CONFIG_LLM_MAX_TOKENS, keys::CONFIG_LLM_MODEL, keys::CONFIG_LLM_BACKEND,
+                    keys::CONFIG_TTS_PROFILE, keys::CONFIG_TTS_ENGINE, keys::CONFIG_TTS_ENDPOINT,
+                    keys::CONFIG_COMFY_WORKFLOW_PATH, keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE,
+                    keys::CONFIG_COMFY_ENDPOINT, keys::CONFIG_SHEETBOT_URL, keys::CONFIG_SHEETBOT_API_KEY,
+                    keys::CONFIG_STT_BASE_URL, keys::CONFIG_STT_RESPONSE_FORMAT, keys::CONFIG_RSS_URL,
+                ];
+                if known.contains(&key.as_str()) { return; }
+                let mut cfg = SessionConfig::default();
+                apply_config_key(&mut cfg, &key, &val);
+                assert_eq!(cfg.extra.get(&key), Some(&val));
+            },
+        );
+    }
+
+    #[test]
+    fn apply_non_string_value_does_not_crash() {
+        run_proptest(
+            (known_config_keys(), arb_annotation_value()),
+            |(key, val): (String, serde_json::Value)| {
+                let mut cfg = SessionConfig::default();
+                apply_config_key(&mut cfg, &key, &val);
+                // Should not panic regardless of value type
+            },
+        );
+    }
+
+    #[test]
+    fn apply_temperature_from_number() {
+        run_proptest(
+            any::<f32>().prop_filter("finite", |f| f.is_finite()),
+            |temp_f32: f32| {
+                let mut cfg = SessionConfig::default();
+                apply_config_key(&mut cfg, keys::CONFIG_LLM_TEMPERATURE, &serde_json::json!(temp_f32));
+                // f32 → serde_json → f64 → f32 round-trip should be exact for f32 values
+                assert!((cfg.llm_temperature.unwrap() - temp_f32).abs() < 1e-6);
+            },
+        );
+    }
+
+    #[test]
+    fn apply_temperature_from_string() {
+        let mut cfg = SessionConfig::default();
+        apply_config_key(&mut cfg, keys::CONFIG_LLM_TEMPERATURE, &serde_json::Value::String("0.7".into()));
+        assert!((cfg.llm_temperature.unwrap() - 0.7).abs() < 1e-5);
+    }
 }

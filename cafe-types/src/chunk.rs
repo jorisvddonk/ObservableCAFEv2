@@ -708,6 +708,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn is_runtime_config_property() {
+        run_proptest(arb_chunk_strategy(), |mut chunk: Chunk| {
+            // Initially not a runtime config
+            chunk.content_type = ContentType::Null;
+            chunk.annotations.remove("config.type");
+            assert!(!chunk.is_runtime_config());
+
+            // With config.type=runtime → true
+            chunk.annotations.insert("config.type".into(), serde_json::Value::String("runtime".into()));
+            assert!(chunk.is_runtime_config());
+
+            // Non-null type is never runtime config
+            chunk.content_type = ContentType::Text;
+            assert!(!chunk.is_runtime_config());
+
+            // Wrong config.type value → false
+            chunk.content_type = ContentType::Null;
+            chunk.annotations.insert("config.type".into(), serde_json::Value::String("other".into()));
+            assert!(!chunk.is_runtime_config());
+        });
+    }
+
+    #[test]
+    fn runtime_config_chunk_is_null() {
+        run_proptest(arb_chunk_strategy(), |chunk: Chunk| {
+            let rc = Chunk {
+                content_type: ContentType::Null,
+                annotations: [("config.type".into(), serde_json::Value::String("runtime".into()))]
+                    .iter().cloned().collect(),
+                ..chunk
+            };
+            assert!(rc.is_runtime_config());
+            assert_eq!(rc.content_type, ContentType::Null);
+        });
+    }
+
     fn arb_chunk_strategy() -> impl Strategy<Value = Chunk> {
         (
             "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",

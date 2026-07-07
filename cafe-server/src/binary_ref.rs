@@ -292,6 +292,36 @@ mod tests {
     }
 
     #[test]
+    fn binary_unifies_with_binary_ref_shape() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let binary = Chunk {
+                content_type: ContentType::Binary,
+                data: Some(vec![1u8, 2, 3]),
+                mime_type: Some("audio/wav".into()),
+                ..chunk
+            };
+            let binary_ref = Chunk {
+                content_type: ContentType::BinaryRef,
+                data: None,
+                ..binary.clone()
+            };
+            let val_binary = serialize_chunk(&binary, true);
+            let val_ref = serialize_chunk(&binary_ref, false);
+            // Both produce "binary-ref" content_type
+            assert_eq!(val_binary["content_type"], "binary-ref");
+            assert_eq!(val_ref["content_type"], "binary-ref");
+            // Both have null data
+            assert!(val_binary["data"].is_null());
+            assert!(val_ref["data"].is_null());
+            // Both have content.chunk_id set
+            assert_eq!(val_binary["content"]["chunk_id"], binary.id);
+            assert_eq!(val_ref["content"]["chunk_id"], binary_ref.id);
+            // Both preserve annotations
+            assert_eq!(val_binary["annotations"], val_ref["annotations"]);
+        });
+    }
+
+    #[test]
     fn serialize_chunk_timestamp_preserved() {
         run_proptest(arb_chunk(), |chunk: Chunk| {
             let val = serialize_chunk(&chunk, true);
