@@ -391,5 +391,15 @@ mod tests {
                 Err(_) => {} // expected — graceful rejection
             }
         }
+
+        // ── Connected message shape (ADR-101) ──
+
+        #[test]
+        fn connected_message_has_event_and_connection_id(conn_id in ".{0,30}") {
+            let msg = ServerMessage::Connected { connection_id: conn_id.clone() };
+            let json = serde_json::to_value(&msg).unwrap();
+            prop_assert_eq!(json["event"].as_str(), Some("connected"));
+            prop_assert_eq!(json["connection_id"].as_str(), Some(conn_id.as_str()));
+        }
     }
 }

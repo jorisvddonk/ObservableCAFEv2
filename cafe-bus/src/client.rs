@@ -1133,6 +1133,26 @@ mod tests {
             }
         }
     }
+
+    // ── Connection ID properties (ADR-101) ──
+
+    #[test]
+    fn connection_ids_are_monotonic() {
+        let first = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+        let second = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+        assert!(second > first, "connection IDs must be strictly increasing");
+        assert_eq!(second, first + 1, "connection IDs must be sequential");
+    }
+
+    #[test]
+    fn connection_id_format_is_c_prefix() {
+        let id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
+        let conn_id = format!("c-{}", id);
+        assert!(conn_id.starts_with("c-"), "connection ID must start with 'c-'");
+        // Verify it parses back to the same number
+        let parsed: u64 = conn_id.strip_prefix("c-").unwrap().parse().unwrap();
+        assert_eq!(parsed, id);
+    }
 }
 
 fn make_config_chunk(config: &SessionConfig) -> Chunk {
