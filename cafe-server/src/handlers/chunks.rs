@@ -7,11 +7,11 @@ use axum::{
 };
 use cafe_sdk::{keys, Chunk, ContentType};
 use base64::Engine;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct SendChunkRequest {
     pub content_type: String,
     pub content: Option<String>,
@@ -54,8 +54,15 @@ pub async fn send_chunk(
             Chunk::new_binary(raw, mime, "com.nominal.cafe-server")
         }
         "binary_ref" => {
-            let mime = body.mime_type.clone().unwrap_or_else(|| "application/octet-stream".into());
-            Chunk::new_binary_ref(mime, "com.nominal.cafe-server")
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "BinaryRef chunks published via HTTP never receive \
+                              write credentials. Use the WebSocket endpoint at \
+                              /api/sessions/{session_id}/ws instead."
+                })),
+            )
+                .into_response()
         }
         _ => {
             return (
@@ -134,6 +141,126 @@ pub async fn delete_chunk(
 /// Returns the raw binary data for a single chunk. Suitable for use as an
 /// `<audio src>` or `<img src>` URL. Aggressively cacheable by chunk_id since
 /// chunks are immutable.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handlers::proxy::ProxyState;
+    use crate::route_registry::RouteRegistryInner;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::{Json, body::Body};
+    use cafe_sdk::bus::BusClient;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    async fn make_state(tmpdir: &std::path::Path) -> AppState {
+        let db_path = tmpdir.join("test.db");
+        let db = Arc::new(
+            crate::db::Db::connect(db_path.to_str().unwrap())
+                .await
+                .unwrap(),
+        );
+        db.migrate().await.unwrap();
+        AppState {
+            bus: BusClient::new(tmpdir.join("bus.sock").to_str().unwrap()),
+            db,
+            proxy_state: Arc::new(ProxyState {
+                registry: Arc::new(RouteRegistryInner::new(1024 * 1024, 30, 60)),
+                bus: BusClient::new(tmpdir.join("bus.sock").to_str().unwrap()),
+                pending: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            }),
+        }
+    }
+
+    async fn check_binary_ref_rejected(state: AppState) -> (StatusCode, String) {
+        let response = send_chunk(
+            State(state),
+            AuthUser { is_admin: false },
+            Path("sess".into()),
+            Json(SendChunkRequest {
+                content_type: "binary_ref".into(),
+                content: None,
+                data: None,
+                mime_type: Some("audio/wav".into()),
+                annotations: None,
+            }),
+        )
+        .await;
+        let resp = response.into_response();
+        let status = resp.status();
+        let parts = resp.into_parts();
+        let body_bytes = axum::body::to_bytes(Body::new(parts.1), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        (status, json["error"].as_str().unwrap_or("").to_string())
+    }
+
+    #[tokio::test]
+    async fn binary_ref_returns_bad_request() {
+        let tmpdir = TempDir::new().unwrap();
+        let state = make_state(tmpdir.path()).await;
+        let (status, _) = check_binary_ref_rejected(state).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn binary_ref_error_mentions_websocket() {
+        let tmpdir = TempDir::new().unwrap();
+        let state = make_state(tmpdir.path()).await;
+        let (_, err) = check_binary_ref_rejected(state).await;
+        assert!(err.contains("WebSocket"), "error should mention WebSocket: {}", err);
+        assert!(err.contains("write credentials"), "error should mention write credentials: {}", err);
+    }
+
+    #[tokio::test]
+    async fn text_chunk_not_rejected() {
+        let tmpdir = TempDir::new().unwrap();
+        let state = make_state(tmpdir.path()).await;
+
+        // Test text and null — should not be rejected (binary might fail with
+        // invalid base64, which is a separate pre-existing validation)
+        for ct in ["text", "null"] {
+            let body = SendChunkRequest {
+                content_type: ct.to_string(),
+                content: Some("hello".into()),
+                data: None,
+                mime_type: None,
+                annotations: None,
+            };
+            let response = send_chunk(
+                State(state.clone()),
+                AuthUser { is_admin: false },
+                Path("sess".into()),
+                Json(body),
+            )
+            .await;
+            let resp = response.into_response();
+            assert_ne!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "content_type={} should not be rejected",
+                ct
+            );
+        }
+        // Verify binary_ref is the ONLY content type that gets the WebSocket error
+        let body = SendChunkRequest {
+            content_type: "binary_ref".into(),
+            content: None,
+            data: None,
+            mime_type: Some("audio/wav".into()),
+            annotations: None,
+        };
+        let response = send_chunk(
+            State(state),
+            AuthUser { is_admin: false },
+            Path("sess".into()),
+            Json(body),
+        )
+        .await;
+        let resp = response.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
 pub async fn get_chunk_binary(
     State(state): State<AppState>,
     _auth: AuthUser,

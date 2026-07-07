@@ -31,3 +31,5 @@ futures-util       = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3.27.0"
+tower = "0.5.3"
