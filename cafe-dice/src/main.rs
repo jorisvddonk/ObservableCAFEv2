@@ -59,6 +59,7 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
                     let tool_call = ToolCall {
                         name: "dice.roll".into(),
                         parameters: serde_json::json!({ "count": count, "sides": sides }),
+                        provider: None,
                     };
                     let tc_chunk = Chunk::new_null("com.nominal.cafe-dice")
                         .with_annotation(keys::CAFE_TOOL_CALL, &tool_call);
