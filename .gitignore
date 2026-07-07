@@ -1,5 +1,7 @@
 # LanceDB vector database (auto-generated)
+*.lance
 /knowledgebase.lance/
+/.lance/
 
 # Binary-store data (auto-generated during tests)
 /data/binary-store/
