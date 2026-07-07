@@ -502,4 +502,116 @@ mod tests {
             prop_assert_eq!(back.is_mutation(), Some(target_id));
         }
     }
+
+    // ── Annotation merging property tests ──
+
+    use proptest::prelude::*;
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn annotation_last_wins() {
+        run_proptest(
+            ("[a-z._-]{1,10}", arb_json_value(), arb_json_value()),
+            |(key, val1, val2): (String, serde_json::Value, serde_json::Value)| {
+                let chunk = Chunk::new_null("test")
+                    .with_annotation(&key, val1.clone())
+                    .with_annotation(&key, val2.clone());
+                assert_eq!(chunk.annotations.get(&key), Some(&val2));
+            },
+        );
+    }
+
+    #[test]
+    fn annotation_chains_preserve_unique_keys() {
+        run_proptest(
+            (
+                prop::collection::hash_set("[a-z._-]{1,10}", 1..10),
+                arb_json_value(),
+            ),
+            |(keys, val): (std::collections::HashSet<String>, serde_json::Value)| {
+                let mut chunk = Chunk::new_null("test");
+                let keys_clone: Vec<String> = keys.iter().cloned().collect();
+                for key in &keys_clone {
+                    chunk = chunk.with_annotation(key, &val);
+                }
+                assert_eq!(chunk.annotations.len(), keys_clone.len());
+                for key in &keys_clone {
+                    assert_eq!(chunk.annotations.get(key), Some(&val));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn annotation_does_not_affect_other_fields() {
+        run_proptest(
+            ("[a-z._-]{1,10}", arb_json_value()),
+            |(key, val): (String, serde_json::Value)| {
+                let content = "hello world";
+                let mut chunk = Chunk::new_text(content, "test-producer");
+                let original_id = chunk.id.clone();
+                let original_ts = chunk.timestamp;
+                chunk = chunk.with_annotation(&key, val);
+                assert_eq!(chunk.id, original_id);
+                assert_eq!(chunk.content, Some(content.into()));
+                assert_eq!(chunk.producer, "test-producer");
+                assert_eq!(chunk.timestamp, original_ts);
+                assert_eq!(chunk.content_type, ContentType::Text);
+            },
+        );
+    }
+
+    #[test]
+    fn annotation_multiple_calls_preserve_all() {
+        run_proptest(
+            prop::collection::vec(
+                ("[a-z._-]{1,10}", arb_json_value()),
+                0..10,
+            ),
+            |pairs: Vec<(String, serde_json::Value)>| {
+                let mut chunk = Chunk::new_null("test");
+                let mut expected: std::collections::HashMap<String, serde_json::Value> =
+                    std::collections::HashMap::new();
+                for (key, val) in &pairs {
+                    chunk = chunk.with_annotation(key, val.clone());
+                    expected.insert(key.clone(), val.clone());
+                }
+                for (key, val) in &expected {
+                    assert_eq!(chunk.annotations.get(key), Some(val));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn annotation_overwrite_preserves_unrelated_keys() {
+        run_proptest(
+            (
+                (Just("key_a".to_string()), arb_json_value()),
+                (Just("key_b".to_string()), arb_json_value()),
+                (Just("key_a".to_string()), arb_json_value()),
+            ),
+            |((k1, v1), (k2, v2), (k3, v3)): (
+                (String, serde_json::Value),
+                (String, serde_json::Value),
+                (String, serde_json::Value),
+            )| {
+                let chunk = Chunk::new_null("test")
+                    .with_annotation(&k1, &v1)
+                    .with_annotation(&k2, &v2)
+                    .with_annotation(&k3, &v3);
+                // key_a should have the last value (v3)
+                assert_eq!(chunk.annotations.get(&k1), Some(&v3));
+                // key_b should still have v2
+                assert_eq!(chunk.annotations.get(&k2), Some(&v2));
+            },
+        );
+    }
 }

@@ -21,3 +21,6 @@ default      = []
 bus-client   = []
 http-client  = ["dep:reqwest", "dep:futures-util"]
 ws-client    = ["dep:tokio-tungstenite", "dep:futures-util"]
+
+[dev-dependencies]
+proptest = "1"

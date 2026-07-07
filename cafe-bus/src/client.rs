@@ -939,6 +939,138 @@ mod tests {
             };
             prop_assert!(!session_matches_filter(&s, &filter2));
         }
+
+        // ── Filter monotonic property ──
+        // Adding constraints can only reduce matches.
+
+        #[test]
+        fn chunk_filter_monotonic_content_type(
+            chunk in any_chunk(),
+            ct in any_content_type(),
+        ) {
+            let empty = SubscribeFilter::default();
+            let restricted = SubscribeFilter {
+                content_types: Some(vec![ct]),
+                ..Default::default()
+            };
+            // If the chunk matches restricted, it must also match empty
+            if chunk_matches_filter(&chunk, &restricted) {
+                prop_assert!(chunk_matches_filter(&chunk, &empty));
+            }
+        }
+
+        #[test]
+        fn chunk_filter_monotonic_annotation(
+            chunk in any_chunk(),
+            key in "[a-z._-]{1,10}",
+            value in arb_json_value(),
+        ) {
+            let mut ann = HashMap::new();
+            ann.insert(key, value);
+            let restricted = SubscribeFilter {
+                annotations: Some(ann),
+                ..Default::default()
+            };
+            let empty = SubscribeFilter::default();
+            if chunk_matches_filter(&chunk, &restricted) {
+                prop_assert!(chunk_matches_filter(&chunk, &empty));
+            }
+        }
+
+        #[test]
+        fn chunk_filter_monotonic_combined(
+            chunk in any_chunk(),
+            ct in any_content_type(),
+            key in "[a-z._-]{1,10}",
+            value in arb_json_value(),
+        ) {
+            let mut ann = HashMap::new();
+            ann.insert(key.clone(), value.clone());
+            let restricted = SubscribeFilter {
+                content_types: Some(vec![ct.clone()]),
+                annotations: Some(ann),
+                ..Default::default()
+            };
+            let type_only = SubscribeFilter {
+                content_types: Some(vec![ct]),
+                ..Default::default()
+            };
+            let ann_only = SubscribeFilter {
+                annotations: Some(HashMap::from([(key.clone(), value)])),
+                ..Default::default()
+            };
+            // If chunk matches combined, it must match each component
+            if chunk_matches_filter(&chunk, &restricted) {
+                prop_assert!(chunk_matches_filter(&chunk, &type_only),
+                    "matched combined filter but not content_type-only filter");
+                prop_assert!(chunk_matches_filter(&chunk, &ann_only),
+                    "matched combined filter but not annotation-only filter");
+            }
+        }
+
+        #[test]
+        fn chunk_filter_monotonic_annotation_values(
+            chunk in any_chunk(),
+            key in "[a-z._-]{1,10}",
+            value1 in arb_json_value(),
+            value2 in arb_json_value(),
+        ) {
+            let mut ann_restrictive = HashMap::new();
+            ann_restrictive.insert(key.clone(), value2.clone());
+            let restrictive = SubscribeFilter {
+                annotations: Some(ann_restrictive),
+                ..Default::default()
+            };
+            // 2-key filter (more restrictive) implies 1-key filter (less restrictive)
+            // But only if the chunk doesn't have key mapped to a different value
+            let mut ann_broad = HashMap::new();
+            ann_broad.insert(key.clone(), value1);
+            ann_broad.insert("another.key".to_string(), value2);
+            let broad = SubscribeFilter {
+                annotations: Some(ann_broad),
+                ..Default::default()
+            };
+            if chunk_matches_filter(&chunk, &broad) {
+                prop_assert!(chunk_matches_filter(&chunk, &restrictive));
+            }
+        }
+
+        #[test]
+        fn session_filter_monotonic_sessions(
+            s in any_session_state(),
+            extra_id in ".{0,20}",
+        ) {
+            let specific = SubscribeFilter {
+                sessions: Some(vec![s.session_id.clone()]),
+                ..Default::default()
+            };
+            let broader = SubscribeFilter {
+                sessions: Some(vec![s.session_id.clone(), extra_id]),
+                ..Default::default()
+            };
+            // If the session matches the broader set, it must also match the specific one
+            if session_matches_filter(&s, &broader) {
+                prop_assert!(session_matches_filter(&s, &specific));
+            }
+        }
+
+        #[test]
+        fn session_filter_monotonic_agents(
+            s in any_session_state(),
+            extra_agent in ".{0,20}",
+        ) {
+            let specific = SubscribeFilter {
+                agents: Some(vec![s.agent_id.clone()]),
+                ..Default::default()
+            };
+            let broader = SubscribeFilter {
+                agents: Some(vec![s.agent_id.clone(), extra_agent]),
+                ..Default::default()
+            };
+            if session_matches_filter(&s, &broader) {
+                prop_assert!(session_matches_filter(&s, &specific));
+            }
+        }
     }
 }
 

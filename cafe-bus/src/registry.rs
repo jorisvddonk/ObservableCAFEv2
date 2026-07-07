@@ -69,3 +69,185 @@ impl SessionRegistry {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use crate::session::SessionState;
+
+    fn arb_session_state() -> impl Strategy<Value = SessionState> {
+        (".{0,20}", ".{0,20}")
+            .prop_map(|(session_id, agent_id)| SessionState::new(session_id, agent_id))
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn insert_then_contains() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            assert!(!reg.contains(&sid));
+            reg.insert(state);
+            assert!(reg.contains(&sid));
+        });
+    }
+
+    #[test]
+    fn remove_then_not_contains() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            assert!(reg.contains(&sid));
+            assert!(reg.remove(&sid));
+            assert!(!reg.contains(&sid));
+        });
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_false() {
+        run_proptest(
+            (arb_session_state(), ".{0,20}"),
+            |(state, other_id): (SessionState, String)| {
+                let sid = state.session_id.clone();
+                let mut reg = SessionRegistry::new();
+                reg.insert(state);
+                // Removing with a different ID returns false
+                if other_id != sid {
+                    assert!(!reg.remove(&other_id));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn insert_then_list_contains() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let aid = state.agent_id.clone();
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            let sessions = reg.list();
+            assert!(sessions.iter().any(|s| s.session_id == sid && s.agent_id == aid));
+        });
+    }
+
+    #[test]
+    fn remove_then_list_excludes() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            reg.remove(&sid);
+            let sessions = reg.list();
+            assert!(!sessions.iter().any(|s| s.session_id == sid));
+        });
+    }
+
+    #[test]
+    fn list_returns_all_inserted() {
+        run_proptest(
+            prop::collection::vec(
+                ("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", ".{0,20}")
+                    .prop_map(|(session_id, agent_id)| SessionState::new(session_id, agent_id)),
+                0..20,
+            ),
+            |states: Vec<SessionState>| {
+                let mut reg = SessionRegistry::new();
+                let expected_count = states.len();
+                for s in states {
+                    reg.insert(s);
+                }
+                assert_eq!(reg.list().len(), expected_count);
+            },
+        );
+    }
+
+    #[test]
+    fn event_tx_broadcasts_session_created() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let aid = state.agent_id.clone();
+            let mut reg = SessionRegistry::new();
+            let mut rx = reg.event_tx().subscribe();
+            reg.insert(state);
+            // Should receive a SessionCreated event
+            if let Ok(event) = rx.try_recv() {
+                match event {
+                    ServerMessage::SessionCreated { session_id, agent_id } => {
+                        assert_eq!(session_id, sid);
+                        assert_eq!(agent_id, aid);
+                    }
+                    _ => panic!("expected SessionCreated, got {:?}", event),
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn event_tx_broadcasts_session_deleted() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            let mut rx = reg.event_tx().subscribe();
+            reg.insert(state);
+            // Drain the SessionCreated event
+            let _ = rx.try_recv();
+            reg.remove(&sid);
+            // Should receive a SessionDeleted event
+            if let Ok(event) = rx.try_recv() {
+                match event {
+                    ServerMessage::SessionDeleted { session_id } => {
+                        assert_eq!(session_id, sid);
+                    }
+                    _ => panic!("expected SessionDeleted, got {:?}", event),
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn get_returns_inserted_session() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            assert!(reg.get(&sid).is_some());
+            assert_eq!(reg.get(&sid).unwrap().session_id, sid);
+        });
+    }
+
+    #[test]
+    fn get_mut_returns_inserted_session() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            assert!(reg.get_mut(&sid).is_some());
+        });
+    }
+
+    #[test]
+    fn list_message_count_matches_history() {
+        use cafe_types::ContentType;
+        run_proptest(arb_session_state(), |mut state: SessionState| {
+            // Add some non-transient chunks
+            let chunk = cafe_types::Chunk::new_text("hello", "test");
+            state.publish(chunk);
+            let sid = state.session_id.clone();
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            let sessions = reg.list();
+            let info = sessions.iter().find(|s| s.session_id == sid).unwrap();
+            assert_eq!(info.message_count, 1);
+        });
+    }
+}

@@ -181,4 +181,103 @@ mod tests {
         assert_eq!(p.get("b").unwrap(), "y");
         assert_eq!(p.get("c").unwrap(), "z");
     }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn arb_path_segment() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9._~%-]{1,10}"
+    }
+
+    fn arb_path() -> impl Strategy<Value = String> {
+        prop::collection::vec(arb_path_segment(), 0..10)
+            .prop_map(|segs| {
+                if segs.is_empty() { "/".to_string() }
+                else { format!("/{}", segs.join("/")) }
+            })
+    }
+
+    fn arb_pattern() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                arb_path_segment(),
+                ":[a-z_][a-z0-9_]{0,15}".prop_map(|s| s),
+            ],
+            0..10,
+        ).prop_map(|segs| {
+            if segs.is_empty() { "/".to_string() }
+            else { format!("/{}", segs.join("/")) }
+        })
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn match_pattern_self_match() {
+        run_proptest(arb_path(), |path: String| {
+            let params = match_pattern(&path, &path);
+            assert!(params.is_some());
+            if let Some(p) = params {
+                for (_, v) in p {
+                    assert!(!v.starts_with(':'));
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn match_pattern_param_extracts_something() {
+        run_proptest(
+            (arb_path_segment(), "[a-z_][a-z0-9_]{0,15}", arb_path_segment()),
+            |(prefix, param_name, value): (String, String, String)| {
+                let pattern = format!("/{}/:{}", prefix, param_name);
+                let path = format!("/{}/{}", prefix, value);
+                let params = match_pattern(&pattern, &path);
+                assert!(params.is_some(), "pattern={} path={}", pattern, path);
+                if let Some(p) = params {
+                    assert_eq!(p.get(&param_name), Some(&value));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn match_pattern_mismatched_segments() {
+        run_proptest(
+            (
+                prop::collection::vec(arb_path_segment(), 1..5),
+                prop::collection::vec(arb_path_segment(), 1..5),
+            ),
+            |(pat_segs, path_segs): (Vec<String>, Vec<String>)| {
+                let pat = format!("/{}", pat_segs.join("/"));
+                let path = format!("/{}", path_segs.join("/"));
+                let params = match_pattern(&pat, &path);
+                if pat_segs.len() != path_segs.len() {
+                    assert!(params.is_none());
+                }
+                // When lengths match, all-literal patterns still need matching segments
+            },
+        );
+    }
+
+    #[test]
+    fn match_pattern_params_count() {
+        run_proptest(0..5usize, |params_count: usize| {
+            let segments: Vec<String> = (0..params_count)
+                .map(|i| format!(":param{}", i))
+                .collect();
+            let pattern = format!("/{}", segments.join("/"));
+            let path_segs: Vec<String> = (0..params_count).map(|_| "x".to_string()).collect();
+            let path = format!("/{}", path_segs.join("/"));
+            let params = match_pattern(&pattern, &path);
+            assert_eq!(params.map(|p| p.len()), Some(params_count));
+        });
+    }
 }

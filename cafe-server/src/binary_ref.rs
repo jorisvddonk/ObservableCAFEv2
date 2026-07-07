@@ -165,4 +165,153 @@ mod tests {
         let val = serialize_chunk(&chunk, true);
         assert_eq!(val["content"]["byte_size"], 1024);
     }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn arb_annotation_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn arb_chunk() -> impl Strategy<Value = Chunk> {
+        (
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            prop_oneof![
+                Just(ContentType::Text),
+                Just(ContentType::Binary),
+                Just(ContentType::BinaryRef),
+                Just(ContentType::Null),
+            ],
+            proptest::option::of(".{0,50}"),
+            proptest::option::of(prop::collection::vec(any::<u8>(), 0..100)),
+            proptest::option::of("[a-z/._-]{0,30}"),
+            "[a-zA-Z0-9._-]{1,30}",
+            prop::collection::hash_map("[a-z._-]{1,15}", arb_annotation_value(), 0..5),
+            any::<i64>(),
+        )
+            .prop_map(
+                |(id, content_type, content, data, mime_type, producer, annotations, timestamp)| {
+                    Chunk {
+                        id,
+                        content_type,
+                        content,
+                        data,
+                        mime_type,
+                        producer,
+                        annotations,
+                        timestamp,
+                    }
+                },
+            )
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn serialize_chunk_text_passes_through() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            // Text chunks should have no data payload
+            let chunk = Chunk {
+                content_type: ContentType::Text,
+                data: None,
+                ..chunk
+            };
+            let with_refs = serialize_chunk(&chunk, true);
+            let without_refs = serialize_chunk(&chunk, false);
+            assert_eq!(with_refs["content_type"], "text");
+            assert_eq!(without_refs["content_type"], "text");
+            assert!(with_refs["data"].is_null());
+            assert!(without_refs["data"].is_null());
+        });
+    }
+
+    #[test]
+    fn serialize_chunk_binary_with_refs() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let data = vec![1u8, 2, 3];
+            let chunk = Chunk {
+                content_type: ContentType::Binary,
+                data: Some(data),
+                mime_type: Some("audio/wav".into()),
+                ..chunk
+            };
+            let val = serialize_chunk(&chunk, true);
+            assert_eq!(val["content_type"], "binary-ref");
+            assert!(val["data"].is_null());
+            assert_eq!(val["content"]["chunk_id"].as_str(), Some(chunk.id.as_str()));
+            assert_eq!(val["content"]["byte_size"], 3);
+        });
+    }
+
+    #[test]
+    fn serialize_chunk_binary_without_refs() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let data = vec![1u8, 2, 3, 4];
+            let chunk = Chunk {
+                content_type: ContentType::Binary,
+                data: Some(data),
+                mime_type: Some("audio/wav".into()),
+                ..chunk
+            };
+            let val = serialize_chunk(&chunk, false);
+            assert_eq!(val["content_type"], "binary");
+            assert!(val["data"].is_string());
+        });
+    }
+
+    #[test]
+    fn serialize_chunk_null_passes_through() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let chunk = Chunk {
+                content_type: ContentType::Null,
+                ..chunk
+            };
+            let val = serialize_chunk(&chunk, true);
+            assert_eq!(val["content_type"], "null");
+        });
+    }
+
+    #[test]
+    fn serialize_chunk_producer_preserved() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let val = serialize_chunk(&chunk, true);
+            assert_eq!(val["producer"].as_str(), Some(chunk.producer.as_str()));
+        });
+    }
+
+    #[test]
+    fn serialize_chunk_timestamp_preserved() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let val = serialize_chunk(&chunk, true);
+            assert_eq!(val["timestamp"].as_i64(), Some(chunk.timestamp));
+        });
+    }
+
+    #[test]
+    fn serialize_chunk_preserves_annotations() {
+        run_proptest(arb_chunk(), |chunk: Chunk| {
+            let val = serialize_chunk(&chunk, false);
+            if let Some(val_ann) = val.get("annotations") {
+                for (key, value) in &chunk.annotations {
+                    let v = val_ann.get(key);
+                    assert!(v.is_some(), "annotation key '{}' missing", key);
+                    if let Some(v) = v {
+                        assert_eq!(v, value, "annotation key '{}' wrong value", key);
+                    }
+                }
+            }
+        });
+    }
 }

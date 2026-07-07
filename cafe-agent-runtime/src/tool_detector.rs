@@ -82,4 +82,117 @@ mod tests {
         let (_, calls) = detect(text);
         assert!(calls.is_empty());
     }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn arb_tool_call_json() -> impl Strategy<Value = String> {
+        (".{1,30}", proptest::collection::hash_map(".{1,15}", arb_json_value(), 0..3))
+            .prop_map(|(name, parameters)| {
+                serde_json::json!({"name": name, "parameters": parameters}).to_string()
+            })
+    }
+
+    fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn arb_text_with_call() -> impl Strategy<Value = String> {
+        (".{0,50}", arb_tool_call_json(), ".{0,50}")
+            .prop_map(|(before, call_json, after)| {
+                format!("{}<|tool_call|>{}\n<|tool_call_end|>{}", before, call_json, after)
+            })
+    }
+
+    fn arb_plain_text() -> impl Strategy<Value = String> {
+        ".{0,100}".prop_map(|s| s)
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn detect_never_panics() {
+        run_proptest(arb_plain_text(), |text: String| {
+            let (cleaned, calls) = detect(&text);
+            assert!(cleaned.len() <= text.len() + 1);
+            let _ = calls;
+        });
+    }
+
+    #[test]
+    fn detect_removes_markers() {
+        run_proptest(arb_text_with_call(), |text: String| {
+            let (cleaned, calls) = detect(&text);
+            assert!(!cleaned.contains("<|tool_call|>"));
+            assert!(!cleaned.contains("<|tool_call_end|>"));
+            assert!(!calls.is_empty());
+        });
+    }
+
+    #[test]
+    fn detect_valid_json_parses() {
+        run_proptest(arb_tool_call_json(), |call_json: String| {
+            let text = format!("<|tool_call|>{}<|tool_call_end|>", call_json);
+            let (_, calls) = detect(&text);
+            assert!(!calls.is_empty());
+            for call in &calls {
+                assert!(!call.name.is_empty());
+            }
+        });
+    }
+
+    #[test]
+    fn detect_plain_text_no_calls() {
+        run_proptest(arb_plain_text(), |text: String| {
+            let (cleaned, calls) = detect(&text);
+            if !text.contains("<|tool_call|>") {
+                assert!(calls.is_empty());
+                assert_eq!(cleaned.trim(), text.trim());
+            }
+        });
+    }
+
+    #[test]
+    fn detect_malformed_json_skipped() {
+        run_proptest(
+            ".{0,30}",
+            |marker_text: String| {
+                let text = format!("<|tool_call|>{}<|tool_call_end|>", marker_text);
+                let (_, calls) = detect(&text);
+                // should not panic
+            },
+        );
+    }
+
+    #[test]
+    fn detect_handles_unclosed_marker() {
+        run_proptest(
+            ".{0,100}",
+            |text: String| {
+                let text = format!("{}<|tool_call|>", text);
+                let (_, calls) = detect(&text);
+                assert!(calls.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn detect_handles_empty_markers() {
+        let (cleaned, calls) = detect("<|tool_call|><|tool_call_end|>");
+        assert!(calls.is_empty());
+        // Regex requires `{...}` between markers; empty markers are kept as-is
+        assert!(cleaned.contains("<|tool_call|>") || cleaned.is_empty());
+    }
 }

@@ -518,4 +518,272 @@ mod tests {
         let config = SessionConfig::default();
         assert!(!is_enabled(&step, &config));
     }
+
+    // ── Property-based tests (proptest) ──
+
+    use proptest::prelude::*;
+
+    fn arb_annotation_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn arb_trigger_type() -> impl Strategy<Value = TriggerType> {
+        prop_oneof![
+            Just(TriggerType::UserMessage),
+            Just(TriggerType::LlmComplete),
+            Just(TriggerType::SchedulerTick),
+            ".{0,20}".prop_map(TriggerType::StepComplete),
+        ]
+    }
+
+    fn arb_builtin_evaluator() -> impl Strategy<Value = BuiltInEvaluator> {
+        prop_oneof![
+            Just(BuiltInEvaluator::RoleAnnotator),
+            Just(BuiltInEvaluator::TrustFilter),
+            Just(BuiltInEvaluator::ToolDetector),
+            Just(BuiltInEvaluator::ToolExecutor),
+            Just(BuiltInEvaluator::Mcp),
+        ]
+    }
+
+    fn arb_session_config() -> impl Strategy<Value = SessionConfig> {
+        prop::collection::hash_map("[a-z._-]{1,30}", arb_annotation_value(), 0..5)
+            .prop_map(|extra| SessionConfig { extra, ..SessionConfig::default() })
+    }
+
+    fn arb_pipeline_context() -> impl Strategy<Value = PipelineContext> {
+        (
+            ".{0,20}",
+            arb_session_config(),
+            proptest::option::of(".{0,100}"),
+            proptest::option::of(".{0,100}"),
+            any::<u32>(),
+        ).prop_map(|(session_id, config, assembled_llm_text, user_text, depth)| {
+            PipelineContext {
+                session_id,
+                config,
+                assembled_llm_text,
+                user_text,
+                depth,
+            }
+        })
+    }
+
+    fn arb_namespace() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("llm".to_string()),
+            Just("tts".to_string()),
+            Just("stt".to_string()),
+            Just("comfy".to_string()),
+            ".{0,20}".prop_map(|s| s),
+        ]
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn trigger_type_from_str_never_panics() {
+        run_proptest(".{0,50}".prop_map(|s: String| s), |s: String| {
+            let _ = TriggerType::from_str(&s);
+        });
+    }
+
+    #[test]
+    fn trigger_type_step_complete_roundtrip() {
+        run_proptest(
+            ".{0,20}",
+            |id: String| {
+                let prefixed = format!("step_complete:{}", id);
+                assert_eq!(
+                    TriggerType::from_str(&prefixed),
+                    TriggerType::StepComplete(id)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn step_type_from_str_never_panics() {
+        run_proptest(".{0,50}".prop_map(|s: String| s), |s: String| {
+            let _ = StepType::from_str(&s);
+        });
+    }
+
+    #[test]
+    fn step_type_builtin_roundtrip() {
+        run_proptest(arb_builtin_evaluator(), |eval: BuiltInEvaluator| {
+            let s = match &eval {
+                BuiltInEvaluator::RoleAnnotator => "role-annotator",
+                BuiltInEvaluator::TrustFilter => "trust-filter",
+                BuiltInEvaluator::ToolDetector => "tool-detector",
+                BuiltInEvaluator::ToolExecutor => "tool-executor",
+                BuiltInEvaluator::Mcp => "mcp",
+            };
+            let result = StepType::from_str(s);
+            assert!(matches!(result, StepType::BuiltIn(ref e) if std::mem::discriminant(e) == std::mem::discriminant(&eval)));
+        });
+    }
+
+    #[test]
+    fn trigger_matches_wildcard_step_complete() {
+        run_proptest(
+            ".{0,20}",
+            |id: String| {
+                assert!(trigger_matches(
+                    "step_complete",
+                    &TriggerType::StepComplete(id)
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn trigger_matches_specific_step_complete() {
+        run_proptest(
+            ".{0,20}",
+            |id: String| {
+                let trigger = format!("step_complete:{}", id);
+                assert!(trigger_matches(&trigger, &TriggerType::StepComplete(id.clone())));
+                let other = format!("{}x", id);
+                if other != id {
+                    assert!(!trigger_matches(
+                        &trigger,
+                        &TriggerType::StepComplete(other)
+                    ));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn trigger_matches_exact() {
+        run_proptest(
+            (arb_trigger_type(), ".{0,30}"),
+            |(event, trigger): (TriggerType, String)| {
+                match &event {
+                    TriggerType::UserMessage => {
+                        assert_eq!(
+                            trigger_matches(&trigger, &event),
+                            trigger == "user_message"
+                        );
+                    }
+                    TriggerType::LlmComplete => {
+                        assert_eq!(
+                            trigger_matches(&trigger, &event),
+                            trigger == "llm_complete"
+                        );
+                    }
+                    TriggerType::SchedulerTick => {
+                        assert_eq!(
+                            trigger_matches(&trigger, &event),
+                            trigger == "scheduler_tick"
+                        );
+                    }
+                    TriggerType::StepComplete(id) => {
+                        let expected = trigger == format!("step_complete:{}", id).as_str()
+                            || trigger == "step_complete";
+                        assert_eq!(trigger_matches(&trigger, &event), expected);
+                    }
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn is_enabled_when_no_field() {
+        run_proptest(
+            (".{0,20}", ".{0,30}", ".{0,30}"),
+            |(step_id, step_type, trigger): (String, String, String)| {
+                let step = StepDef {
+                    id: step_id,
+                    step_type,
+                    trigger,
+                    enabled_if: None,
+                };
+                assert!(is_enabled(&step, &SessionConfig::default()));
+            },
+        );
+    }
+
+    #[test]
+    fn is_enabled_depends_on_key() {
+        run_proptest(
+            (".{0,20}", "[a-z._-]{1,20}", any::<bool>()),
+            |(step_id, key, val): (String, String, bool)| {
+                let step = StepDef {
+                    id: step_id,
+                    step_type: "llm".into(),
+                    trigger: "user_message".into(),
+                    enabled_if: Some(key.clone()),
+                };
+                let mut config = SessionConfig::default();
+                config
+                    .extra
+                    .insert(key, serde_json::Value::Bool(val));
+                assert_eq!(is_enabled(&step, &config), val);
+            },
+        );
+    }
+
+    #[test]
+    fn build_rpc_params_always_returns_object() {
+        run_proptest(
+            (arb_namespace(), arb_pipeline_context()),
+            |(namespace, ctx): (String, PipelineContext)| {
+                let params = build_rpc_params(&namespace, &ctx);
+                assert!(params.is_object());
+            },
+        );
+    }
+
+    #[test]
+    fn build_rpc_params_llm_has_session_id() {
+        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
+            let params = build_rpc_params("llm", &ctx);
+            assert_eq!(params["session_id"], ctx.session_id);
+        });
+    }
+
+    #[test]
+    fn build_rpc_params_tts_has_text() {
+        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
+            let params = build_rpc_params("tts", &ctx);
+            assert!(params["text"].is_string());
+        });
+    }
+
+    #[test]
+    fn build_rpc_params_comfy_has_prompt() {
+        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
+            let params = build_rpc_params("comfy", &ctx);
+            assert!(params["prompt"].is_string());
+        });
+    }
+
+    #[test]
+    fn build_rpc_params_stt_has_session_id() {
+        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
+            let params = build_rpc_params("stt", &ctx);
+            assert_eq!(params["session_id"], ctx.session_id);
+        });
+    }
+
+    #[test]
+    fn build_rpc_params_fallback_has_session_id() {
+        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
+            let params = build_rpc_params("unknown-namespace", &ctx);
+            assert!(params["session_id"].is_string());
+        });
+    }
 }

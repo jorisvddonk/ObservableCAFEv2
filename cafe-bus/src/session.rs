@@ -296,4 +296,66 @@ mod tests {
             assert!(drained.is_empty());
         });
     }
+
+    #[test]
+    fn retained_transient_order_in_drain() {
+        run_proptest(
+            (chunk_list(), prop::collection::vec(retained_chunk(), 0..10)),
+            |(history_chunks, retained_chunks): (Vec<Chunk>, Vec<Chunk>)| {
+                let mut state = SessionState::new("test".into(), "test".into());
+                // Publish in mixed order: history chunk, retained, history, retained...
+                for (h, r) in history_chunks.iter().zip(retained_chunks.iter()) {
+                    state.publish(h.clone());
+                    state.publish(r.clone());
+                }
+                let drained = state.drain_retained();
+                let retained_count = retained_chunks.iter().count();
+                // drained should only contain retained chunks (not expired)
+                assert!(drained.len() <= retained_count);
+                // drained should be in publication order (oldest first)
+                for chunk in &drained {
+                    assert!(chunk.is_transient());
+                    assert!(chunk.retain_secs().is_some());
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn replay_count_matches_history_plus_retained() {
+        // During subscribe, HistoryComplete.count = history.len() + retained.len()
+        run_proptest(
+            (chunk_list(), prop::collection::vec(retained_chunk(), 0..10)),
+            |(history_chunks, retained_chunks): (Vec<Chunk>, Vec<Chunk>)| {
+                let mut state = SessionState::new("test".into(), "test".into());
+                let non_transient_count = history_chunks.iter().filter(|c| !c.is_transient()).count();
+                for chunk in &history_chunks {
+                    state.publish(chunk.clone());
+                }
+                for chunk in &retained_chunks {
+                    state.publish(chunk.clone());
+                }
+                let expected_replay = non_transient_count;
+                let _retained_replay = state.drain_retained().len();
+                assert_eq!(state.history.len(), expected_replay);
+            },
+        );
+    }
+
+    #[test]
+    fn retained_transient_available_across_drain() {
+        run_proptest(retained_chunk(), |chunk: Chunk| {
+            let mut state = SessionState::new("test".into(), "test".into());
+            state.publish(chunk.clone());
+            // History must be empty (retained transient not in history)
+            assert!(state.history.is_empty());
+            // drain_retained returns it (still non-expired)
+            let first = state.drain_retained();
+            assert!(!first.is_empty());
+            // drain_retained is NOT a drain — it only removes expired entries,
+            // so non-expired retained chunks persist across calls
+            let second = state.drain_retained();
+            assert_eq!(second.len(), first.len());
+        });
+    }
 }

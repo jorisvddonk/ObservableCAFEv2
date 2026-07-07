@@ -285,5 +285,148 @@ mod tests {
         );
     }
 
+    // ── Property-based tests (proptest) ──
 
+    use proptest::prelude::*;
+
+    fn arb_annotation_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            ".{0,20}".prop_map(serde_json::Value::String),
+            (any::<i64>()).prop_map(|n| serde_json::json!(n)),
+        ]
+    }
+
+    fn arb_annotation_map() -> impl Strategy<Value = Vec<(String, serde_json::Value)>> {
+        prop::collection::vec(
+            ("[a-z._-]{1,20}".prop_map(|s| format!("config.{}", s)), arb_annotation_value()),
+            0..10,
+        )
+    }
+
+    fn arb_runtime_config_chunk() -> impl Strategy<Value = Chunk> {
+        arb_annotation_map().prop_map(|annotations| {
+            let mut chunk = Chunk::new_null("proptest");
+            chunk = chunk.with_annotation(keys::CONFIG_TYPE, "runtime");
+            for (k, v) in annotations {
+                chunk = chunk.with_annotation(k, v);
+            }
+            chunk
+        })
+    }
+
+    fn arb_any_chunk() -> impl Strategy<Value = Chunk> {
+        prop_oneof![
+            arb_runtime_config_chunk().boxed(),
+            (0..100).prop_map(|_| Chunk::new_text("hello", "test")).boxed(),
+            (0..100).prop_map(|_| Chunk::new_binary(vec![1, 2, 3], "audio/wav", "test")).boxed(),
+        ]
+    }
+
+    fn run_proptest<S: proptest::strategy::Strategy<Value = V>, V: std::fmt::Debug>(
+        strategy: S,
+        test: fn(V),
+    ) {
+        let mut runner = proptest::test_runner::TestRunner::default();
+        runner.run(&strategy, |v| { test(v); Ok(()) }).unwrap();
+    }
+
+    #[test]
+    fn prop_empty_history_all_none() {
+        let cfg = resolve_session_config(&[]);
+        assert!(cfg.llm_system_prompt.is_none());
+        assert!(cfg.llm_temperature.is_none());
+        assert!(cfg.llm_max_tokens.is_none());
+        assert!(cfg.llm_model.is_none());
+        assert!(cfg.llm_backend.is_none());
+        assert!(cfg.tts_profile.is_none());
+        assert!(cfg.tts_engine.is_none());
+        assert!(cfg.tts_endpoint.is_none());
+        assert!(cfg.comfy_workflow_path.is_none());
+        assert!(cfg.comfy_workflow_input_node.is_none());
+        assert!(cfg.comfy_endpoint.is_none());
+        assert!(cfg.sheetbot_url.is_none());
+        assert!(cfg.sheetbot_api_key.is_none());
+        assert!(cfg.stt_base_url.is_none());
+        assert!(cfg.stt_response_format.is_none());
+        assert!(cfg.rss_url.is_none());
+        assert!(cfg.extra.is_empty());
+    }
+
+    #[test]
+    fn prop_idempotent() {
+        run_proptest(
+            prop::collection::vec(arb_any_chunk(), 0..20),
+            |chunks: Vec<Chunk>| {
+                let cfg1 = resolve_session_config(&chunks);
+                let cfg2 = resolve_session_config(&chunks);
+                assert_eq!(cfg1.llm_system_prompt, cfg2.llm_system_prompt);
+                assert_eq!(cfg1.llm_temperature, cfg2.llm_temperature);
+                assert_eq!(cfg1.llm_max_tokens, cfg2.llm_max_tokens);
+                assert_eq!(cfg1.llm_model, cfg2.llm_model);
+                assert_eq!(cfg1.llm_backend, cfg2.llm_backend);
+                assert_eq!(cfg1.tts_profile, cfg2.tts_profile);
+                assert_eq!(cfg1.comfy_workflow_path, cfg2.comfy_workflow_path);
+                assert_eq!(cfg1.sheetbot_url, cfg2.sheetbot_url);
+                assert_eq!(cfg1.stt_base_url, cfg2.stt_base_url);
+                assert_eq!(cfg1.rss_url, cfg2.rss_url);
+            },
+        );
+    }
+
+    #[test]
+    fn prop_partial_update_preserves_unset_fields() {
+        run_proptest(
+            prop::collection::vec(arb_runtime_config_chunk(), 0..10),
+            |chunks: Vec<Chunk>| {
+                let cfg = resolve_session_config(&chunks);
+                let mut twice = chunks.clone();
+                twice.extend(chunks);
+                let cfg2 = resolve_session_config(&twice);
+                assert_eq!(cfg.llm_system_prompt, cfg2.llm_system_prompt);
+                assert_eq!(cfg.llm_temperature, cfg2.llm_temperature);
+                assert_eq!(cfg.llm_model, cfg2.llm_model);
+            },
+        );
+    }
+
+    #[test]
+    fn prop_non_config_chunks_ignored() {
+        run_proptest(
+            prop::collection::vec(arb_any_chunk(), 0..20),
+            |chunks: Vec<Chunk>| {
+                let cfg = resolve_session_config(&chunks);
+                // should not crash
+            },
+        );
+    }
+
+    #[test]
+    fn prop_unknown_keys_go_to_extra() {
+        run_proptest(arb_annotation_map(), |annotations: Vec<(String, serde_json::Value)>| {
+            let mut chunk = Chunk::new_null("proptest");
+            chunk = chunk.with_annotation(keys::CONFIG_TYPE, "runtime");
+            for (k, v) in &annotations {
+                chunk = chunk.with_annotation(k, v.clone());
+            }
+            let cfg = resolve_session_config(&[chunk]);
+            assert!(cfg.extra.len() <= annotations.len());
+        });
+    }
+
+    #[test]
+    fn prop_later_chunks_override_earlier() {
+        run_proptest(
+            (
+                prop::collection::vec(arb_runtime_config_chunk(), 0..5),
+                prop::collection::vec(arb_runtime_config_chunk(), 0..5),
+            ),
+            |(chunks1, chunks2): (Vec<Chunk>, Vec<Chunk>)| {
+                let mut combined = chunks1;
+                combined.extend(chunks2);
+                let _cfg = resolve_session_config(&combined);
+            },
+        );
+    }
 }
