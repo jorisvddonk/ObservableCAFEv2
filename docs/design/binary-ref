@@ -1,12 +1,12 @@
 # Binary streaming via binary-ref chunks
 
-**Status: not yet implemented**
+**Status: Implemented** — `de1c6fb`, `a1899ca`
 
-All prerequisites are now implemented:
-- [`SubscribeFiltered`](./subscribe-filters) — `abe6eea`
-- [`Connection IDs`](./connection-ids) — `66b6f41`
-- [`Direct-to`](./direct-to) — `2826eae`
-- [`Mutations`](./mutations) — `e4d5a9d`
+All prerequisites are implemented:
+- [`SubscribeFiltered`](./subscribe-filters)
+- [`Connection IDs`](./connection-ids)
+- [`Direct-to`](./direct-to)
+- [`Mutations`](./mutations)
 
 Binary-store connects via `subscribe_filtered` for `BinaryRef` chunks only — no `SubscribeAll`.
 

@@ -16,7 +16,7 @@ A **Chunk** is the fundamental unit of data in the system. It is immutable.
 | Field         | Type                        | Required | Description                                      |
 |---------------|-----------------------------|----------|--------------------------------------------------|
 | `id`          | UUID v4 (string)            | yes      | Globally unique identifier                       |
-| `content_type`| `ContentType` enum          | yes      | One of `text`, `binary`, `null`                  |
+| `content_type`| `ContentType` enum          | yes      | One of `text`, `binary`, `binary-ref`, `null`    |
 | `content`     | `Option<String>`            | yes      | UTF-8 text if `text`; absent if `binary`/`null`  |
 | `data`        | `Option<Vec<u8>>`           | yes      | Raw bytes if `binary`; absent otherwise          |
 | `mime_type`   | `Option<String>`            | no       | MIME type for binary chunks (e.g. `image/png`)   |
@@ -27,9 +27,21 @@ A **Chunk** is the fundamental unit of data in the system. It is immutable.
 ### ContentType enum
 
 ```
-text   — UTF-8 string content
-binary — raw bytes (image, audio, file)
-null   — no content; used for signals, config, flow control
+text       — UTF-8 string content
+binary     — raw bytes (image, audio, file), base64-encoded in JSON
+binary-ref — binary asset announced by reference; bytes stored in cafe-binary-store
+null       — no content; used for signals, config, flow control
+```
+
+For `binary-ref` chunks, the `content` field contains a JSON object (overriding the
+usual `string` value) with the referenced binary's metadata:
+
+```json
+{
+  "chunk_id": "<uuid of the binary chunk>",
+  "mime_type": "audio/wav",
+  "byte_size": 123456
+}
 ```
 
 ### JSON wire format
@@ -121,6 +133,23 @@ Annotation keys use dot-namespaced strings. All values are JSON-typed.
 | `tool.call`               | object     | `{ name: string, arguments: object }`            |
 | `tool.result`             | object     | `{ name: string, output: any }`                  |
 
+### Binary assets
+
+| Key                       | Value type | Description                                      |
+|---------------------------|------------|--------------------------------------------------|
+| `binary.write_url`        | string     | URL to POST binary data to (cafe-binary-store)   |
+| `binary.write_token`      | string     | Write JWT for binary upload                      |
+| `binary.read_url`         | string     | URL to GET binary data from (cafe-binary-store)  |
+| `binary.read_token`       | string     | Read JWT for binary download                     |
+| `binary.byte_size`        | number     | Total byte size of the binary asset              |
+
+### Mutations (chunk metadata)
+
+| Key                       | Value type | Description                                      |
+|---------------------------|------------|--------------------------------------------------|
+| `cafe.mutates`            | object     | `{ target_id: string }` — this chunk modifies the target chunk's annotations |
+| `cafe.direct_to`          | string     | Connection ID; only that connection receives this chunk |
+
 ### Flow control (null chunks)
 
 | Key                       | Value type | Description                                      |
@@ -185,7 +214,33 @@ persists_state bool  — if false, history is not saved to SQLite
 
 ---
 
-## 6. Chunk envelope (bus wire format)
+## 6. Mutation Chunks
+
+A **mutation chunk** is a null chunk that modifies the annotations of another chunk
+in-place. This enables adding late-bound metadata (e.g., write/read credentials for
+binary assets) without sacrificing immutability of the original chunk.
+
+```json
+{
+  "id": "mut-001",
+  "content_type": "null",
+  "content": null,
+  "producer": "com.nominal.cafe-binary-store",
+  "annotations": {
+    "cafe.mutates": { "target_id": "orig-chunk-uuid" },
+    "binary.write_url": "http://...",
+    "binary.write_token": "eyJ..."
+  }
+}
+```
+
+The client library merges mutation annotations into the target chunk's annotation map.
+Mutations arrive either via `cafe.direct_to` (private delivery to the publishing
+connection) or broadcast (public, all subscribers).
+
+---
+
+## 7. Chunk envelope (bus wire format)
 
 On the bus, chunks are wrapped in an envelope that carries routing information.
 See `docs/spec-bus-protocol.md` for the full protocol.

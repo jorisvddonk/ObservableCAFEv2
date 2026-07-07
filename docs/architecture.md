@@ -10,20 +10,41 @@ a reactive multi-agent LLM platform. Processes communicate via a central message
 graph TB
     bus["cafe-bus (Unix socket)"]
 
-    subgraph "Bus-connected services"
+    subgraph "Infrastructure & Data"
         store[cafe-store<br/>SQLite persistence]
+        bstore[cafe-binary-store<br/>Binary asset store]
+        kb[cafe-knowledgebase<br/>Vector search]
+    end
+
+    subgraph "AI Services"
         llm[cafe-llm<br/>LLM calls]
-        agent[cafe-agent-runtime<br/>agent lifecycle]
         tts[cafe-tts<br/>TTS / Voicebox]
+        stt[cafe-stt<br/>Speech-to-text]
         comfy[cafe-comfy<br/>ComfyUI / img]
+    end
+
+    subgraph "Bridges"
+        agent[cafe-agent-runtime<br/>Agent pipeline]
+        sheet[cafe-sheetbot<br/>Spreadsheet]
+        fetch[cafe-web-fetch<br/>URL fetcher]
+        mcp[cafe-mcp-bridge<br/>MCP protocol]
+    end
+
+    subgraph "Gateway"
         server[cafe-server<br/>HTTP gateway]
     end
 
     bus --> store
+    bus --> bstore
+    bus --> kb
     bus --> llm
-    bus --> agent
     bus --> tts
+    bus --> stt
     bus --> comfy
+    bus --> agent
+    bus --> sheet
+    bus --> fetch
+    bus --> mcp
     bus --> server
 
     subgraph "Clients"
@@ -72,17 +93,26 @@ sequenceDiagram
 ```mermaid
 graph LR
     bus[cafe-bus] --> store[cafe-store]
+    bus --> bstore[cafe-binary-store]
+    bus --> kb[cafe-knowledgebase]
     bus --> llm[cafe-llm]
     bus --> agent[cafe-agent-runtime]
     bus --> tts[cafe-tts]
+    bus --> stt[cafe-stt]
     bus --> comfy[cafe-comfy]
+    bus --> sheet[cafe-sheetbot]
+    bus --> fetch[cafe-web-fetch]
+    bus --> mcp[cafe-mcp-bridge]
     bus --> server[cafe-server]
+    store --> agent
+    store --> server
     server --> web[cafe-web]
-    server --> tui[cafe-tui]
     server --> tg[cafe-telegram]
 
     style bus fill:#4a6,color:#fff
     style store fill:#46a,color:#fff
+    style bstore fill:#46a,color:#fff
+    style kb fill:#46a,color:#fff
     style llm fill:#46a,color:#fff
     style agent fill:#46a,color:#fff
     style server fill:#46a,color:#fff
@@ -96,8 +126,10 @@ Dependencies are enforced by `process-compose` via `depends_on` + readiness prob
 
 See `docs/spec-cafe.md` for the full data model specification.
 
-**Chunk** — Immutable unit of data. Has an ID, content type (text/binary/null),
-content, producer, annotations, and timestamp.
+**Chunk** — Immutable unit of data. Has an ID, content type (text/binary/binary-ref/null),
+content, producer, annotations, and timestamp. `binary-ref` chunks announce binary
+assets by reference — the actual bytes are stored in `cafe-binary-store` and streamed
+via a separate HTTP endpoint.
 
 **Annotation** — Key-value metadata on a chunk. Keys use dot-namespaced strings
 (`chat.role`, `config.type`, `security.trust-level`). Full list in spec-cafe.md.
@@ -122,7 +154,12 @@ Client → bus:
 ```json
 { "op": "publish", "session_id": "abc", "chunk": { ...chunk fields... } }
 { "op": "subscribe", "session_id": "abc" }
+{ "op": "subscribe_filtered", "session_id": "abc", "content_types": ["BinaryRef"] }
+{ "op": "subscribe_all" }
 { "op": "create_session", "session_id": "abc", "agent_id": "default", "config": {} }
+{ "op": "delete_session", "session_id": "abc" }
+{ "op": "list_sessions" }
+{ "op": "ping" }
 ```
 
 Bus → client:
@@ -137,7 +174,7 @@ Bus → client:
 
 Full specification in `docs/spec-http-api.md`.
 
-Base URL: `http://localhost:3000`  
+Base URL: `http://localhost:4000`  
 Auth: `Authorization: Bearer <token>`
 
 Key endpoints:

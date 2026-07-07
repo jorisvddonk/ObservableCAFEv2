@@ -47,7 +47,7 @@ processes:
       - "LLM_BACKEND=openai"
       - "OPENAI_URL=http://localhost:8080"
       - "OPENAI_MODEL=gemma3:1b"
-      - "MODEL_LIST_URLS=http://localhost:8079/v1/models"
+      - "MODEL_LIST_URLS=http://localhost:8079"
       - "OLLAMA_URL=http://localhost:8080"
       - "OLLAMA_MODEL=gemma3:1b"
     readiness_probe:
