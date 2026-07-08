@@ -16,11 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Build
         run: cargo build --release --workspace
@@ -30,9 +36,6 @@ jobs:
 
       - name: Run benchmarks (smoke test)
         run: cargo bench --no-run -p cafe-types -p cafe-bus
-
-      - name: Build E2E dependencies
-        run: cargo build --release -p cafe-bus -p cafe-store -p cafe-cli
 
       - name: Run E2E bus tests
         run: |
