@@ -1,6 +1,6 @@
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, SessionConfig};
+use cafe_sdk::{keys, Chunk, EphemeralConfig, SessionConfig};
 use std::collections::HashMap;
 
 /// Create a background session for an agent, optionally sending an initial chunk.
@@ -12,10 +12,23 @@ pub async fn create_agent_session(
     initial_chunk_data: Option<Vec<u8>>,
     initial_chunk_mime_type: Option<String>,
     initial_chunk_annotations: HashMap<String, serde_json::Value>,
+    ephemeral_keepalive_secs: Option<u64>,
+    ephemeral_count_role: Option<String>,
 ) -> Result<()> {
     let client = BusClient::new(socket_path);
 
-    client.create_session(agent_name, agent_name, SessionConfig::default()).await?;
+    let config = if let Some(keepalive) = ephemeral_keepalive_secs {
+        SessionConfig {
+            ephemeral: Some(EphemeralConfig {
+                keepalive_secs: keepalive,
+                count_role: ephemeral_count_role,
+            }),
+            ..Default::default()
+        }
+    } else {
+        SessionConfig::default()
+    };
+    client.create_session(agent_name, agent_name, config).await?;
 
     let chunk_type = initial_chunk_type.as_deref().unwrap_or("text");
     let chunk_content = initial_chunk_content.unwrap_or_default();

@@ -51,7 +51,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
 
     // Subscribe with a persistent connection — publish reuses the same
     // connection so source.connection stays alive for direct_to replies.
-    let mut sub = match state.bus.subscribe_session(&current_session).await {
+    let mut sub = match state.bus.subscribe_session_with_role(&current_session, "user").await {
         Ok(s) => s,
         Err(e) => {
             warn!("ws_handler: subscribe error: {}", e);
@@ -122,7 +122,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                                 if let Some(new_sid) = action.session_id {
                                     info!("ws_handler: switching to session {}", new_sid);
                                     current_session = new_sid.clone();
-                                    match state.bus.subscribe_session(&new_sid).await {
+                                    match state.bus.subscribe_session_with_role(&new_sid, "user").await {
                                         Ok(new_sub) => sub = new_sub,
                                         Err(e) => {
                                             warn!("ws_handler: subscribe error: {}", e);

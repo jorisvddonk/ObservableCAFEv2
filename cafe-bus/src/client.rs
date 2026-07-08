@@ -2,13 +2,14 @@ use crate::registry::SessionRegistry;
 use crate::session::SessionState;
 use anyhow::Result;
 use cafe_types::{
-    keys, BusCodec, BusCodecError, Chunk, ClientMessage, JsonLineCodec, ServerMessage,
+    keys, BusCodec, BusCodecError, Chunk, ClientMessage, ServerMessage,
     SessionConfig, SubscribeFilter,
 };
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock};
@@ -17,6 +18,15 @@ use tracing::{debug, error, warn};
 const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024; // 16 MB
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Metadata self-declared by a connection (set via SetMeta message).
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionMeta {
+    pub role: Option<String>,
+}
+
+/// Shared registry of connection metadata, keyed by connection ID.
+pub type ConnectionMetaRegistry = Arc<RwLock<HashMap<String, ConnectionMeta>>>;
 
 /// A framing reader that uses a `BusCodec` to extract messages from a byte stream.
 struct Frames<C: BusCodec> {
@@ -62,6 +72,7 @@ pub async fn handle_client<C: BusCodec>(
     stream: tokio::net::UnixStream,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
+    conn_meta: ConnectionMetaRegistry,
 ) {
     let (reader, writer) = stream.into_split();
     let writer = Arc::new(Mutex::new(writer));
@@ -75,14 +86,40 @@ pub async fn handle_client<C: BusCodec>(
             return;
         }
     };
-    send_bytes(&writer, &payload).await;
+    let _ = send_bytes(&writer, &payload).await;
 
     let conns = connections.clone();
-    if let Err(e) = client_loop::<C>(reader, writer, registry, conns, conn_id.clone()).await {
+    let metas = conn_meta.clone();
+
+    // Track spawned subscriber tasks per session for this connection
+    let mut subscriber_tasks: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
+
+    if let Err(e) = client_loop::<C>(reader, writer, registry.clone(), conns, metas.clone(), conn_id.clone(), &mut subscriber_tasks).await {
         debug!("client {} disconnected: {}", conn_id, e);
     }
 
+    // Connection dropped — abort any remaining subscriber tasks
+    for (_sid, handle) in &subscriber_tasks {
+        handle.abort();
+    }
+
+    // Clean up connection metadata
+    metas.write().await.remove(&conn_id);
     connections.write().await.remove(&conn_id);
+
+    // Remove this connection's subscriptions from sessions and trigger ephemeral cleanup
+    let mut reg = registry.write().await;
+
+    for (sid, _handle) in &subscriber_tasks {
+        if let Some(session) = reg.get_mut(sid) {
+            session.remove_subscriber(&conn_id);
+            // If ephemeral and no counted subscribers remain, schedule deletion
+            if session.is_ephemeral() && session.counted_subscriber_count() == 0 {
+                let keepalive = session.ephemeral.as_ref().map(|c| Duration::from_secs(c.keepalive_secs));
+                reg.schedule_deletion(sid, keepalive, registry.clone());
+            }
+        }
+    }
 }
 
 async fn client_loop<C: BusCodec>(
@@ -90,7 +127,9 @@ async fn client_loop<C: BusCodec>(
     writer: Arc<Mutex<OwnedWriteHalf>>,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
+    conn_meta: ConnectionMetaRegistry,
     conn_id: String,
+    subscriber_tasks: &mut Vec<(String, tokio::task::JoinHandle<()>)>,
 ) -> Result<()> {
     let mut frames = Frames::<C>::new(reader);
 
@@ -99,13 +138,18 @@ async fn client_loop<C: BusCodec>(
 
         match msg {
             ClientMessage::Ping => {
-                send_msg::<C>(&writer, &ServerMessage::Pong).await;
+                let _ = send_msg::<C>(&writer, &ServerMessage::Pong).await;
+            }
+
+            ClientMessage::SetMeta { role } => {
+                let meta = ConnectionMeta { role };
+                conn_meta.write().await.insert(conn_id.clone(), meta);
             }
 
             ClientMessage::ListSessions => {
                 let reg = registry.read().await;
                 let sessions = reg.list();
-                send_msg::<C>(&writer, &ServerMessage::SessionsList { sessions }).await;
+                let _ = send_msg::<C>(&writer, &ServerMessage::SessionsList { sessions }).await;
             }
 
             ClientMessage::CreateSession {
@@ -124,6 +168,10 @@ async fn client_loop<C: BusCodec>(
                     .await;
                 } else {
                     let mut state = SessionState::new(session_id.clone(), agent_id.clone());
+                    // Set ephemeral config if provided
+                    if config.ephemeral.is_some() {
+                        state.ephemeral = config.ephemeral.clone();
+                    }
                     // Emit a config null chunk if config fields are present
                     if config.backend.is_some()
                         || config.model.is_some()
@@ -134,7 +182,7 @@ async fn client_loop<C: BusCodec>(
                     }
                     reg.insert(state);
                     drop(reg);
-                    send_msg::<C>(
+                    let _ = send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
                             session_id,
@@ -149,7 +197,7 @@ async fn client_loop<C: BusCodec>(
                 let mut reg = registry.write().await;
                 if reg.remove(&session_id) {
                     drop(reg);
-                    send_msg::<C>(
+                    let _ = send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionDeleted {
                             session_id,
@@ -176,7 +224,7 @@ async fn client_loop<C: BusCodec>(
                 if let Some(target_id) = chunk.get_annotation::<String>(keys::CAFE_DIRECT_TO) {
                     let conns = connections.read().await;
                     if let Some(target_writer) = conns.get(&target_id) {
-                        send_msg::<C>(
+                        let _ = send_msg::<C>(
                             target_writer,
                             &ServerMessage::Chunk {
                                 session_id,
@@ -212,11 +260,19 @@ async fn client_loop<C: BusCodec>(
             }
 
             ClientMessage::Subscribe { session_id } => {
+                // Look up this connection's role from metadata
+                let subscriber_role = conn_meta.read().await.get(&conn_id)
+                    .and_then(|m| m.role.clone());
+
                 // Snapshot history + retained + get receiver while holding write lock
                 let (history, retained, mut rx) = {
                     let mut reg = registry.write().await;
+                    // Cancel any pending ephemeral deletion timer first
+                    reg.cancel_scheduled_deletion(&session_id);
                     match reg.get_mut(&session_id) {
                         Some(s) => {
+                            // Register subscriber with role
+                            s.add_subscriber(conn_id.clone(), subscriber_role.clone());
                             let retained = s.drain_retained();
                             (s.history.clone(), retained, s.subscribe())
                         }
@@ -234,53 +290,74 @@ async fn client_loop<C: BusCodec>(
                     }
                 };
 
+                // Record the subscription for cleanup on disconnect
+                let sid_for_tracking = session_id.clone();
+
                 // Replay history (oldest first)
                 let count = history.len() + retained.len();
                 for chunk in history {
-                    send_msg::<C>(
+                    if send_msg::<C>(
                         &writer,
                         &ServerMessage::Chunk {
                             session_id: session_id.clone(),
                             chunk,
                         },
                     )
-                    .await;
+                    .await
+                    .is_err()
+                    {
+                        // Write error — connection is likely dead
+                        break;
+                    }
                 }
                 // Retained transient chunks, in chronological order after history
                 for chunk in retained {
-                    send_msg::<C>(
+                    if send_msg::<C>(
                         &writer,
                         &ServerMessage::Chunk {
                             session_id: session_id.clone(),
                             chunk,
                         },
                     )
-                    .await;
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
                 }
-                send_msg::<C>(
+                if send_msg::<C>(
                     &writer,
                     &ServerMessage::HistoryComplete {
                         session_id: session_id.clone(),
                         count,
                     },
                 )
-                .await;
+                .await
+                .is_err()
+                {
+                    // Failed to send history — connection is dead, skip spawning
+                    continue;
+                }
 
                 // Forward live chunks in a background task
                 let writer2 = writer.clone();
                 let sid = session_id.clone();
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     loop {
                         match rx.recv().await {
                             Ok(chunk) => {
-                                send_msg::<C>(
+                                if send_msg::<C>(
                                     &writer2,
                                     &ServerMessage::Chunk {
                                         session_id: sid.clone(),
                                         chunk,
                                     },
                                 )
-                                .await;
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 warn!("subscriber lagged by {} messages on session {}", n, sid);
@@ -299,6 +376,7 @@ async fn client_loop<C: BusCodec>(
                         }
                     }
                 });
+                subscriber_tasks.push((sid_for_tracking, handle));
             }
 
             ClientMessage::SubscribeAll => {
@@ -320,7 +398,7 @@ async fn client_loop<C: BusCodec>(
 
                 // Announce + replay for existing sessions
                 for (sid, agent_id, history, retained, rx) in sessions_snapshot {
-                    send_msg::<C>(
+                    let _ = send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
                             session_id: sid.clone(),
@@ -334,11 +412,11 @@ async fn client_loop<C: BusCodec>(
                 // Listen for new sessions via registry events
                 let writer3 = writer.clone();
                 let reg3 = registry.clone();
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let mut event_rx = event_rx;
                     while let Ok(event) = event_rx.recv().await {
                         // Forward registry event (SessionCreated / SessionDeleted)
-                        send_msg::<C>(&writer3, &event).await;
+                        let _ = send_msg::<C>(&writer3, &event).await;
                         // For new sessions, also replay history + forward live chunks
                         if let ServerMessage::SessionCreated { session_id, .. } = &event {
                             let maybe = {
@@ -360,6 +438,7 @@ async fn client_loop<C: BusCodec>(
                         }
                     }
                 });
+                subscriber_tasks.push((String::new(), handle));
             }
 
             ClientMessage::SubscribeFiltered { filter } => {
@@ -386,7 +465,7 @@ async fn client_loop<C: BusCodec>(
 
                 // Announce + replay for existing sessions
                 for (sid, agent_id, history, retained, rx) in sessions_snapshot {
-                    send_msg::<C>(
+                    let _ = send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
                             session_id: sid.clone(),
@@ -401,7 +480,7 @@ async fn client_loop<C: BusCodec>(
                 let writer3 = writer.clone();
                 let reg3 = registry.clone();
                 let filter3 = filter.clone();
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let mut event_rx = event_rx;
                     while let Ok(event) = event_rx.recv().await {
                         if let ServerMessage::SessionCreated { session_id, .. } = &event {
@@ -416,7 +495,7 @@ async fn client_loop<C: BusCodec>(
                             };
                             if let Some((history, retained, rx)) = maybe {
                                 // Forward SessionCreated before replay
-                                send_msg::<C>(&writer3, &event).await;
+                                let _ = send_msg::<C>(&writer3, &event).await;
                                 replay_and_forward::<C>(
                                     &writer3,
                                     session_id.clone(),
@@ -429,10 +508,11 @@ async fn client_loop<C: BusCodec>(
                             }
                         } else {
                             // Forward SessionDeleted etc.
-                            send_msg::<C>(&writer3, &event).await;
+                            let _ = send_msg::<C>(&writer3, &event).await;
                         }
                     }
                 });
+                subscriber_tasks.push((String::new(), handle));
             }
         }
     }
@@ -487,7 +567,7 @@ async fn replay_and_forward<C: BusCodec>(
 ) {
     for chunk in history {
         if filter.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
-            send_msg::<C>(
+            let _ = send_msg::<C>(
                 writer,
                 &ServerMessage::Chunk {
                     session_id: session_id.clone(),
@@ -499,7 +579,7 @@ async fn replay_and_forward<C: BusCodec>(
     }
     for chunk in retained {
         if filter.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
-            send_msg::<C>(
+            let _ = send_msg::<C>(
                 writer,
                 &ServerMessage::Chunk {
                     session_id: session_id.clone(),
@@ -518,14 +598,18 @@ async fn replay_and_forward<C: BusCodec>(
             match rx.recv().await {
                 Ok(chunk) => {
                     if filter2.as_ref().map_or(true, |f| chunk_matches_filter(&chunk, f)) {
-                        send_msg::<C>(
+                        if send_msg::<C>(
                             &writer2,
                             &ServerMessage::Chunk {
                                 session_id: sid2.clone(),
                                 chunk,
                             },
                         )
-                        .await;
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
                 Err(_) => break,
@@ -534,17 +618,16 @@ async fn replay_and_forward<C: BusCodec>(
     });
 }
 
-async fn send_bytes(writer: &Arc<Mutex<OwnedWriteHalf>>, payload: &[u8]) {
+async fn send_bytes(writer: &Arc<Mutex<OwnedWriteHalf>>, payload: &[u8]) -> std::io::Result<()> {
     let mut w = writer.lock().await;
-    if let Err(e) = w.write_all(payload).await {
-        debug!("write error: {}", e);
-    }
+    w.write_all(payload).await
 }
 
-async fn send_msg<C: BusCodec>(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMessage) {
+async fn send_msg<C: BusCodec>(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMessage) -> std::io::Result<()> {
     if let Ok(payload) = C::encode(msg) {
-        send_bytes(writer, &payload).await;
+        send_bytes(writer, &payload).await?;
     }
+    Ok(())
 }
 
 async fn send_error<C: BusCodec>(
@@ -559,7 +642,7 @@ async fn send_error<C: BusCodec>(
         code: code.to_string(),
     };
     if let Ok(payload) = C::encode(&msg) {
-        send_bytes(writer, &payload).await;
+        let _ = send_bytes(writer, &payload).await;
     }
 }
 

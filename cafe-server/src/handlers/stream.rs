@@ -19,7 +19,7 @@ pub async fn stream_session(
 ) -> impl IntoResponse {
     let use_refs = query.enabled();
 
-    let rx = match state.bus.subscribe(&session_id).await {
+    let rx = match state.bus.subscribe_with_role(&session_id, "user").await {
         Ok(r) => r,
         Err(e) => {
             return axum::response::Response::builder()

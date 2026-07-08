@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcRequest, ServerMessage, SessionConfig};
+use cafe_sdk::{keys, Chunk, EphemeralConfig, JsonRpcRequest, ServerMessage, SessionConfig};
 use clap::Parser;
 use serde_json::{json, Value};
 use tracing::info;
@@ -326,37 +326,39 @@ async fn rpc_dispatch(
     let client = BusClient::new(bus_path);
 
     let session_id = format!("_cafe_mcp_{}", Uuid::new_v4());
+    let config = SessionConfig {
+        ephemeral: Some(EphemeralConfig {
+            keepalive_secs: 0,
+            count_role: Some("mcp-rpc".into()),
+        }),
+        ..Default::default()
+    };
     client
-        .create_session(&session_id, "cafe-mcp-bridge", SessionConfig::default())
+        .create_session(&session_id, "cafe-mcp-bridge", config)
         .await?;
 
-    // Wrap the core logic so session cleanup always runs
-    let result = async {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-        let mut rx = client.subscribe(&session_id).await?;
-        drain_until_history(&mut rx).await;
+    // Subscribe with role — the session will auto-delete when this
+    // subscription's connection drops (no other connection has role "mcp-rpc").
+    let mut rx = client.subscribe_with_role(&session_id, "mcp-rpc").await?;
+    drain_until_history(&mut rx).await;
 
-        let params = serde_json::to_value(args)?;
-        let call_id = Uuid::new_v4().to_string();
-        let rpc = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: call_id.clone(),
-            method: rpc_method.into(),
-            params,
-        };
-        let chunk = Chunk::new_null("cafe-mcp-bridge")
-            .with_annotation(keys::CAFE_JSONRPC_REQUEST, &rpc)
-            .as_transient()
-            .with_retain(60);
-        client.publish(&session_id, chunk).await?;
+    let params = serde_json::to_value(args)?;
+    let call_id = Uuid::new_v4().to_string();
+    let rpc = JsonRpcRequest {
+        jsonrpc: "2.0".into(),
+        id: call_id.clone(),
+        method: rpc_method.into(),
+        params,
+    };
+    let chunk = Chunk::new_null("cafe-mcp-bridge")
+        .with_annotation(keys::CAFE_JSONRPC_REQUEST, &rpc)
+        .as_transient()
+        .with_retain(60);
+    client.publish(&session_id, chunk).await?;
 
-        wait_for_rpc_response(&mut rx, &call_id).await
-    }
-    .await;
-
-    let _ = client.delete_session(&session_id).await;
-    result
+    wait_for_rpc_response(&mut rx, &call_id).await
 }
 
 async fn drain_until_history(rx: &mut tokio::sync::mpsc::Receiver<ServerMessage>) {

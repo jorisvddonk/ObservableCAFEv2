@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
 
     let registry = Arc::new(RwLock::new(SessionRegistry::new()));
     let connections = client::ConnectionRegistry::default();
+    let conn_meta = client::ConnectionMetaRegistry::default();
 
     info!("cafe-bus listening on {}", config.socket_path);
 
@@ -67,7 +68,8 @@ async fn main() -> Result<()> {
                     Ok((stream, _)) => {
                         let reg = registry.clone();
                         let conns = connections.clone();
-                        tokio::spawn(client::handle_client::<cafe_types::JsonLineCodec>(stream, reg, conns));
+                        let metas = conn_meta.clone();
+                        tokio::spawn(client::handle_client::<cafe_types::JsonLineCodec>(stream, reg, conns, metas));
                     }
                     Err(e) => {
                         tracing::error!("accept error: {}", e);

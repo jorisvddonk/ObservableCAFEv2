@@ -1,6 +1,7 @@
 use crate::session::SessionState;
 use cafe_types::{ServerMessage, SessionInfo};
 use std::collections::HashMap;
+use std::time::Duration;
 use tokio::sync::broadcast;
 
 pub struct SessionRegistry {
@@ -54,6 +55,44 @@ impl SessionRegistry {
         removed
     }
 
+    /// Schedule an ephemeral session for deletion after a delay.
+    /// If `delay` is None, the session is deleted immediately.
+    /// The timer task checks the condition again before deleting, so it's safe
+    /// even if a new subscriber arrives during the grace period.
+    pub fn schedule_deletion(
+        &mut self,
+        session_id: &str,
+        delay: Option<Duration>,
+        registry: std::sync::Arc<tokio::sync::RwLock<SessionRegistry>>,
+    ) {
+        // Only delete if the session is actually ephemeral
+        if !self.get(session_id).map_or(false, |s| s.is_ephemeral()) {
+            return;
+        }
+        if delay.is_none() || delay.map_or(true, |d| d.is_zero()) {
+            self.remove(session_id);
+            return;
+        }
+
+        let sid = session_id.to_string();
+        let d = delay.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(d).await;
+            let mut reg = registry.write().await;
+            if reg.get(&sid).map_or(false, |s| {
+                s.is_ephemeral() && s.counted_subscriber_count() == 0
+            }) {
+                reg.remove(&sid);
+            }
+        });
+    }
+
+    /// Cancel a pending scheduled deletion (no-op — timer checks condition itself).
+    pub fn cancel_scheduled_deletion(&mut self, _session_id: &str) {
+        // Timer tasks check the subscriber count on expiry, so explicit
+        // cancellation isn't required. This exists as a hook for future use.
+    }
+
     pub fn list(&self) -> Vec<SessionInfo> {
         self.sessions
             .values()
@@ -73,6 +112,7 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cafe_types::envelope::EphemeralConfig;
     use proptest::prelude::*;
     use crate::session::SessionState;
 
@@ -249,6 +289,65 @@ mod tests {
             let info = sessions.iter().find(|s| s.session_id == sid).unwrap();
             assert_eq!(info.message_count, 1);
         });
+    }
+
+    #[test]
+    fn schedule_deletion_immediate_removes_session() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        state.ephemeral = Some(EphemeralConfig {
+            keepalive_secs: 0,
+            count_role: None,
+        });
+        let mut reg = SessionRegistry::new();
+        reg.insert(state);
+        assert!(reg.contains("s1"));
+
+        let registry_arc = std::sync::Arc::new(tokio::sync::RwLock::new(
+            // We can't easily create a new one here, so use the existing reg's type
+            // but schedule_deletion takes the full Arc. We'll create one.
+            SessionRegistry::new(),
+        ));
+        reg.schedule_deletion("s1", None, registry_arc);
+        assert!(!reg.contains("s1"));
+    }
+
+    #[test]
+    fn schedule_deletion_non_ephemeral_not_deleted() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        // No ephemeral config — persistent
+        let mut reg = SessionRegistry::new();
+        reg.insert(state);
+        assert!(reg.contains("s1"));
+
+        let registry_arc = std::sync::Arc::new(tokio::sync::RwLock::new(
+            SessionRegistry::new(),
+        ));
+        reg.schedule_deletion("s1", None, registry_arc);
+        assert!(reg.contains("s1"), "non-ephemeral sessions should not be deleted via schedule_deletion");
+    }
+
+    #[test]
+    fn cancel_scheduled_deletion_is_noop() {
+        let mut reg = SessionRegistry::new();
+        // Should not panic
+        reg.cancel_scheduled_deletion("nonexistent");
+        // Should not panic even with existing entry (there isn't one tracked anymore)
+        reg.cancel_scheduled_deletion("s1");
+    }
+
+    #[test]
+    fn ephemeral_session_is_listed() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        state.ephemeral = Some(EphemeralConfig {
+            keepalive_secs: 30,
+            count_role: Some("user".into()),
+        });
+        let mut reg = SessionRegistry::new();
+        reg.insert(state);
+        let sessions = reg.list();
+        let info = sessions.iter().find(|s| s.session_id == "s1").unwrap();
+        assert_eq!(info.agent_id, "a1");
+        assert_eq!(info.message_count, 0);
     }
 
     #[test]

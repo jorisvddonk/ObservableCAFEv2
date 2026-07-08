@@ -61,6 +61,8 @@ pub struct AgentFile {
     pub initial_chunk: Option<InitialChunkTable>,
     pub rpc_timeout_secs: Option<u64>,
     pub max_pipeline_depth: Option<u32>,
+    pub ephemeral_keepalive_secs: Option<u64>,
+    pub ephemeral_count_role: Option<String>,
 }
 
 impl From<AgentFile> for AgentDefinition {
@@ -130,6 +132,8 @@ impl From<AgentFile> for AgentDefinition {
             initial_chunk_annotations: chunk_annotations,
             rpc_timeout_secs: f.rpc_timeout_secs.unwrap_or(60),
             max_pipeline_depth: f.max_pipeline_depth.unwrap_or(10),
+            ephemeral_keepalive_secs: f.ephemeral_keepalive_secs,
+            ephemeral_count_role: f.ephemeral_count_role,
         }
     }
 }
@@ -265,6 +269,8 @@ mod tests {
             initial_chunk: None,
             rpc_timeout_secs: None,
             max_pipeline_depth: None,
+            ephemeral_keepalive_secs: None,
+            ephemeral_count_role: None,
         };
 
         let agent: AgentDefinition = agent_file.into();
@@ -284,6 +290,8 @@ mod tests {
         assert_eq!(agent.initial_chunk_annotations.get("chat.source").unwrap(), &json!("test"));
         assert_eq!(agent.initial_chunk_annotations.get("chat.priority").unwrap(), &json!("high"));
         assert_eq!(agent.initial_chunk_annotations.get("custom.value").unwrap(), &json!(42));
+        assert!(agent.ephemeral_keepalive_secs.is_none());
+        assert!(agent.ephemeral_count_role.is_none());
     }
 
     #[test]

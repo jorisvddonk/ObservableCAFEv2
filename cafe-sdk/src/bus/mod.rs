@@ -69,6 +69,7 @@ pub struct SessionSubscription<C: BusCodec = JsonLineCodec> {
     writer: Option<tokio::net::unix::OwnedWriteHalf>,
     _reader_handle: tokio::task::JoinHandle<()>,
     session_id: String,
+    role: Option<String>,
     _codec: std::marker::PhantomData<C>,
 }
 
@@ -116,16 +117,35 @@ impl BusClient {
         (tokio::net::unix::OwnedWriteHalf, BusReader<C, tokio::net::unix::OwnedReadHalf>),
         SdkError,
     > {
+        self.connect_with_role::<C>(None).await
+    }
+
+    /// Open a connection and optionally set connection metadata (role).
+    async fn connect_with_role<C: BusCodec>(
+        &self,
+        role: Option<&str>,
+    ) -> Result<
+        (tokio::net::unix::OwnedWriteHalf, BusReader<C, tokio::net::unix::OwnedReadHalf>),
+        SdkError,
+    > {
         let stream = UnixStream::connect(self.socket_path.as_str())
             .await
             .map_err(|e| SdkError::BusConnect(e.into()))?;
-        let (reader, writer) = stream.into_split();
+        let (reader, mut writer) = stream.into_split();
         let mut bus_reader = BusReader::<C, _>::new(reader);
 
         match bus_reader.read_msg::<ServerMessage>().await? {
             Some(ServerMessage::Connected { .. }) => {}
             Some(other) => warn!("expected Connected, got: {:?}", other),
             None => warn!("bus closed before sending Connected"),
+        }
+
+        // Optionally set connection metadata
+        if let Some(r) = role {
+            let meta_msg = ClientMessage::SetMeta { role: Some(r.to_string()) };
+            let payload = C::encode(&meta_msg)?;
+            use tokio::io::AsyncWriteExt;
+            writer.write_all(&payload).await?;
         }
 
         Ok((writer, bus_reader))
@@ -287,16 +307,40 @@ impl BusClient {
         self.subscribe_session_with_codec::<JsonLineCodec>(session_id).await
     }
 
+    /// Subscribe to a session with a connection role (for ephemeral session lifecycle).
+    /// The role is declared to the bus and used by ephemeral sessions to determine
+    /// which subscribers count toward session lifetime.
+    pub async fn subscribe_session_with_role(
+        &self,
+        session_id: &str,
+        role: &str,
+    ) -> Result<SessionSubscription<JsonLineCodec>, SdkError> {
+        self.subscribe_session_with_codec_and_role::<JsonLineCodec>(session_id, Some(role))
+            .await
+    }
+
     /// Subscribe to a session with a specific codec.
     pub async fn subscribe_session_with_codec<C: BusCodec>(
         &self,
         session_id: &str,
     ) -> Result<SessionSubscription<C>, SdkError> {
-        let (writer, mut reader) = self
-            .send::<C>(&ClientMessage::Subscribe {
+        self.subscribe_session_with_codec_and_role(session_id, None).await
+    }
+
+    /// Subscribe to a session with a specific codec and an optional connection role.
+    async fn subscribe_session_with_codec_and_role<C: BusCodec>(
+        &self,
+        session_id: &str,
+        role: Option<&str>,
+    ) -> Result<SessionSubscription<C>, SdkError> {
+        let (writer, mut reader) = {
+            let (mut writer, reader) = self.connect_with_role::<C>(role).await?;
+            let payload = C::encode(&ClientMessage::Subscribe {
                 session_id: session_id.to_string(),
-            })
-            .await?;
+            })?;
+            writer.write_all(&payload).await?;
+            (writer, reader)
+        };
 
         let (tx, rx) = mpsc::channel::<ServerMessage>(256);
         let sid = session_id.to_string();
@@ -323,6 +367,7 @@ impl BusClient {
             writer: Some(writer),
             _reader_handle: reader_handle,
             session_id: sid,
+            role: role.map(String::from),
             _codec: std::marker::PhantomData,
         })
     }
@@ -335,16 +380,35 @@ impl BusClient {
         self.subscribe_with_codec::<JsonLineCodec>(session_id).await
     }
 
+    /// Subscribe to a session with a connection role (for ephemeral lifecycle).
+    pub async fn subscribe_with_role(
+        &self,
+        session_id: &str,
+        role: &str,
+    ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
+        self.subscribe_with_codec_and_role::<JsonLineCodec>(session_id, Some(role)).await
+    }
+
     /// Subscribe to a session with a specific codec.
     pub async fn subscribe_with_codec<C: BusCodec>(
         &self,
         session_id: &str,
     ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
-        let (writer, mut reader) = self
-            .send::<C>(&ClientMessage::Subscribe {
-                session_id: session_id.to_string(),
-            })
-            .await?;
+        self.subscribe_with_codec_and_role::<C>(session_id, None).await
+    }
+
+    /// Subscribe with an optional connection role.
+    async fn subscribe_with_codec_and_role<C: BusCodec>(
+        &self,
+        session_id: &str,
+        role: Option<&str>,
+    ) -> Result<mpsc::Receiver<ServerMessage>, SdkError> {
+        let (mut writer, mut reader) = self.connect_with_role::<C>(role).await?;
+
+        let payload = C::encode(&ClientMessage::Subscribe {
+            session_id: session_id.to_string(),
+        })?;
+        writer.write_all(&payload).await?;
 
         let (tx, rx) = mpsc::channel::<ServerMessage>(256);
 

@@ -70,6 +70,8 @@ async fn main() -> Result<()> {
                 def.initial_chunk_data.clone(),
                 def.initial_chunk_mime_type.clone(),
                 def.initial_chunk_annotations.clone(),
+                def.ephemeral_keepalive_secs,
+                def.ephemeral_count_role.clone(),
             ).await {
                 warn!("cafe-agent-runtime: failed to create session for '{}': {}", name, e);
             }

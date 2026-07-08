@@ -76,6 +76,10 @@ pub mod keys {
     pub const BINARY_READ_TOKEN: &str = "binary.read_token";
     pub const BINARY_BYTE_SIZE: &str = "binary.byte_size";
 
+    // Ephemeral session config (stored as annotations in config null chunks)
+    pub const EPHEMERAL_KEEPALIVE_SECS: &str = "ephemeral.keepalive_secs";
+    pub const EPHEMERAL_COUNT_ROLE: &str = "ephemeral.count_role";
+
     // ── Cafe-namespaced (preferred) ──
     pub const CAFE_TRANSIENT: &str = "cafe.transient";
     pub const CAFE_TRANSIENT_RETAIN_SECS: &str = "cafe.transient.retain_secs";

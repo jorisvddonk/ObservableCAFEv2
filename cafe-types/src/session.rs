@@ -34,6 +34,12 @@ pub struct AgentDefinition {
     pub rpc_timeout_secs: u64,
     /// Maximum pipeline recursion depth via step_complete chaining (default 10).
     pub max_pipeline_depth: u32,
+    /// Ephemeral session keepalive in seconds (None = persistent).
+    /// When set, the session auto-deletes after all subscribers disconnect.
+    pub ephemeral_keepalive_secs: Option<u64>,
+    /// Role to count for ephemeral lifecycle. Only subscribers with this role
+    /// are counted toward session lifetime. None = count all subscribers.
+    pub ephemeral_count_role: Option<String>,
 }
 
 impl Default for AgentDefinition {
@@ -66,6 +72,8 @@ impl Default for AgentDefinition {
             initial_chunk_annotations: std::collections::HashMap::new(),
             rpc_timeout_secs: 60,
             max_pipeline_depth: 10,
+            ephemeral_keepalive_secs: None,
+            ephemeral_count_role: None,
         }
     }
 }

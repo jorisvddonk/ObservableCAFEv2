@@ -3,6 +3,21 @@ use crate::session::SessionInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Ephemeral session lifecycle config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EphemeralConfig {
+    /// Seconds to keep session alive after the last counted subscriber disconnects.
+    /// 0 = delete immediately.
+    pub keepalive_secs: u64,
+    /// If set, only count subscribers whose connection has this role.
+    /// Subscribers without a matching role are ignored for lifecycle purposes.
+    ///
+    /// Example: count_role = Some("user") means the session lives as long as at
+    /// least one connection with role "user" is subscribed. Internal services
+    /// (pipelines, store, etc.) that don't declare a role are not counted.
+    pub count_role: Option<String>,
+}
+
 /// Configuration passed when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionConfig {
@@ -11,6 +26,8 @@ pub struct SessionConfig {
     pub system_prompt: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// If set, the session is ephemeral and will be auto-deleted.
+    pub ephemeral: Option<EphemeralConfig>,
 }
 
 /// Filter for chunk subscriptions.
@@ -40,6 +57,12 @@ pub enum ClientMessage {
     Publish {
         session_id: String,
         chunk: Chunk,
+    },
+    SetMeta {
+        /// Optional role for this connection. Used by ephemeral sessions to
+        /// filter which subscribers count toward session lifecycle.
+        #[serde(default)]
+        role: Option<String>,
     },
     CreateSession {
         session_id: String,
@@ -204,14 +227,16 @@ mod tests {
             proptest::option::of(".{0,50}"),
             proptest::option::of(-10.0f32..10.0f32),
             proptest::option::of(any::<u32>()),
+            proptest::option::of(any_ephemeral_config()),
         )
             .prop_map(
-                |(backend, model, system_prompt, temperature, max_tokens)| SessionConfig {
+                |(backend, model, system_prompt, temperature, max_tokens, ephemeral)| SessionConfig {
                     backend,
                     model,
                     system_prompt,
                     temperature,
                     max_tokens,
+                    ephemeral,
                 },
             )
     }
@@ -258,6 +283,15 @@ mod tests {
             )
     }
 
+    fn any_ephemeral_config() -> impl Strategy<Value = EphemeralConfig> {
+        (any::<u64>(), proptest::option::of(".{0,20}")).prop_map(
+            |(keepalive_secs, count_role)| EphemeralConfig {
+                keepalive_secs,
+                count_role,
+            },
+        )
+    }
+
     fn any_client_message() -> impl Strategy<Value = ClientMessage> {
         prop_oneof![
             ".{0,20}".prop_map(|session_id| ClientMessage::Subscribe { session_id }),
@@ -266,6 +300,8 @@ mod tests {
                 .prop_map(|filter| ClientMessage::SubscribeFiltered { filter }),
             (".{0,20}", any_chunk())
                 .prop_map(|(session_id, chunk)| ClientMessage::Publish { session_id, chunk }),
+            proptest::option::of(".{0,20}")
+                .prop_map(|role| ClientMessage::SetMeta { role }),
             (".{0,20}", ".{0,20}", any_session_config()).prop_map(
                 |(session_id, agent_id, config)| ClientMessage::CreateSession {
                     session_id,

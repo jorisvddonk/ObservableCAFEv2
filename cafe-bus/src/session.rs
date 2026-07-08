@@ -1,6 +1,15 @@
+use cafe_types::envelope::EphemeralConfig;
 use cafe_types::Chunk;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tokio::sync::broadcast;
+
+/// Tracks a single subscriber's connection on a session.
+#[derive(Debug, Clone)]
+pub struct SubscriberInfo {
+    pub conn_id: String,
+    pub role: Option<String>,
+}
 
 #[derive(Debug)]
 pub struct SessionState {
@@ -9,6 +18,10 @@ pub struct SessionState {
     pub history: Vec<Chunk>,
     pub tx: broadcast::Sender<Chunk>,
     retained: Vec<(Chunk, Instant)>,
+    /// Connections subscribed to this session, with their roles.
+    pub(crate) subscribers: HashMap<String, SubscriberInfo>,
+    /// Ephemeral lifecycle config. None = persistent.
+    pub ephemeral: Option<EphemeralConfig>,
 }
 
 impl SessionState {
@@ -20,6 +33,8 @@ impl SessionState {
             history: Vec::new(),
             tx,
             retained: Vec::new(),
+            subscribers: HashMap::new(),
+            ephemeral: None,
         }
     }
 
@@ -55,6 +70,42 @@ impl SessionState {
 
     pub fn subscribe(&self) -> broadcast::Receiver<Chunk> {
         self.tx.subscribe()
+    }
+
+    /// Register a subscriber connection. Returns the previous info if re-subscribing.
+    pub fn add_subscriber(&mut self, conn_id: String, role: Option<String>) -> Option<SubscriberInfo> {
+        self.subscribers.insert(conn_id.clone(), SubscriberInfo { conn_id, role })
+    }
+
+    /// Remove a subscriber connection. Returns the removed info, if any.
+    pub fn remove_subscriber(&mut self, conn_id: &str) -> Option<SubscriberInfo> {
+        self.subscribers.remove(conn_id)
+    }
+
+    /// Return the number of subscribers that match this session's count_role filter.
+    /// If `count_role` is None, all subscribers count.
+    pub fn counted_subscriber_count(&self) -> usize {
+        match &self.ephemeral {
+            Some(cfg) => {
+                let role_filter = cfg.count_role.as_deref();
+                self.subscribers
+                    .values()
+                    .filter(|s| role_filter.map_or(true, |r| s.role.as_deref() == Some(r)))
+                    .count()
+            }
+            // Not ephemeral — all subscribers count
+            None => self.subscribers.len(),
+        }
+    }
+
+    /// Whether this session is ephemeral and should be tracked for auto-deletion.
+    pub fn is_ephemeral(&self) -> bool {
+        self.ephemeral.is_some()
+    }
+
+    /// Get the set of connection IDs currently subscribed.
+    pub fn subscriber_conn_ids(&self) -> HashSet<String> {
+        self.subscribers.keys().cloned().collect()
     }
 }
 
@@ -413,5 +464,195 @@ mod tests {
             let second = state.drain_retained();
             assert_eq!(second.len(), first.len());
         });
+    }
+
+    // ── Ephemeral session subscriber tests ──
+
+    #[test]
+    fn no_ephemeral_all_subscribers_count() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        assert!(!state.is_ephemeral());
+        state.add_subscriber("c-1".into(), None);
+        state.add_subscriber("c-2".into(), Some("user".into()));
+        assert_eq!(state.counted_subscriber_count(), 2);
+    }
+
+    #[test]
+    fn ephemeral_no_role_filter_counts_all() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        state.ephemeral = Some(EphemeralConfig {
+            keepalive_secs: 0,
+            count_role: None,
+        });
+        assert!(state.is_ephemeral());
+        state.add_subscriber("c-1".into(), None);
+        state.add_subscriber("c-2".into(), Some("user".into()));
+        assert_eq!(state.counted_subscriber_count(), 2);
+    }
+
+    #[test]
+    fn ephemeral_role_filter_matching_role() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        state.ephemeral = Some(EphemeralConfig {
+            keepalive_secs: 30,
+            count_role: Some("user".into()),
+        });
+        state.add_subscriber("c-1".into(), None);
+        state.add_subscriber("c-2".into(), Some("user".into()));
+        state.add_subscriber("c-3".into(), Some("user".into()));
+        // Only c-2 and c-3 have role "user"
+        assert_eq!(state.counted_subscriber_count(), 2);
+    }
+
+    #[test]
+    fn ephemeral_role_filter_no_matching_role() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        state.ephemeral = Some(EphemeralConfig {
+            keepalive_secs: 0,
+            count_role: Some("admin".into()),
+        });
+        state.add_subscriber("c-1".into(), None);
+        state.add_subscriber("c-2".into(), Some("user".into()));
+        // No subscriber has role "admin"
+        assert_eq!(state.counted_subscriber_count(), 0);
+    }
+
+    #[test]
+    fn add_remove_subscriber_tracking() {
+        let mut state = SessionState::new("s1".into(), "a1".into());
+        state.ephemeral = Some(EphemeralConfig {
+            keepalive_secs: 0,
+            count_role: None,
+        });
+
+        let prev = state.add_subscriber("c-1".into(), Some("user".into()));
+        assert!(prev.is_none());
+        assert_eq!(state.counted_subscriber_count(), 1);
+
+        // Re-subscribe (same conn_id, new role) — should replace
+        let prev = state.add_subscriber("c-1".into(), Some("admin".into()));
+        assert!(prev.is_some());
+        assert_eq!(prev.unwrap().role, Some("user".into()));
+        assert_eq!(state.counted_subscriber_count(), 1);
+
+        // Remove
+        let removed = state.remove_subscriber("c-1");
+        assert!(removed.is_some());
+        assert_eq!(state.counted_subscriber_count(), 0);
+
+        // Remove non-existent
+        let removed = state.remove_subscriber("c-999");
+        assert!(removed.is_none());
+    }
+
+    // ── Property-based tests for subscriber tracking ──
+
+    fn arb_ephemeral_config() -> impl Strategy<Value = Option<EphemeralConfig>> {
+        prop_oneof![
+            Just(None),
+            (any::<u64>(), proptest::option::of(".{0,10}")).prop_map(
+                |(keepalive_secs, count_role)| Some(EphemeralConfig {
+                    keepalive_secs,
+                    count_role,
+                }),
+            ),
+        ]
+    }
+
+    /// Generate unique connection IDs by using UUID-style patterns.
+    fn arb_unique_conn_id() -> impl Strategy<Value = String> {
+        "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    }
+
+    #[test]
+    fn prop_subscriber_count_matches_without_role_filter() {
+        run_proptest(
+            (
+                arb_ephemeral_config(),
+                prop::collection::vec(arb_unique_conn_id(), 0..10),
+            ),
+            |(ephemeral, conn_ids): (Option<EphemeralConfig>, Vec<String>)| {
+                let mut state = SessionState::new("s".into(), "a".into());
+                state.ephemeral = ephemeral;
+                let expected_count = if state.ephemeral.as_ref()
+                    .and_then(|c| c.count_role.as_ref())
+                    .is_some()
+                {
+                    // With role filter, only matching roles count — we add all with None
+                    0
+                } else {
+                    conn_ids.len()
+                };
+                for conn_id in &conn_ids {
+                    state.add_subscriber(conn_id.clone(), None);
+                }
+                assert_eq!(
+                    state.counted_subscriber_count(),
+                    expected_count,
+                    "conn_ids={:?}, ephemeral={:?}",
+                    conn_ids,
+                    state.ephemeral,
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn prop_subscriber_count_with_role_filter() {
+        run_proptest(
+            (
+                ".{0,10}",
+                prop::collection::vec(
+                    (arb_unique_conn_id(), proptest::option::of(".{0,10}")),
+                    0..10,
+                ),
+            ),
+            |(count_role, subscribers): (String, Vec<(String, Option<String>)>)| {
+                let mut state = SessionState::new("s".into(), "a".into());
+                state.ephemeral = Some(EphemeralConfig {
+                    keepalive_secs: 0,
+                    count_role: Some(count_role.clone()),
+                });
+                let matching = subscribers
+                    .iter()
+                    .filter(|(_, role)| role.as_deref() == Some(&count_role))
+                    .count();
+                for (conn_id, role) in &subscribers {
+                    state.add_subscriber(conn_id.clone(), role.clone());
+                }
+                assert_eq!(
+                    state.counted_subscriber_count(),
+                    matching,
+                    "count_role={:?}, subscribers={:?}",
+                    count_role,
+                    subscribers,
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn prop_remove_nonexistent_returns_none() {
+        run_proptest(
+            (arb_unique_conn_id(), arb_unique_conn_id()),
+            |(conn_id, other_id): (String, String)| {
+                let mut state = SessionState::new("s".into(), "a".into());
+                state.add_subscriber(conn_id.clone(), None);
+                if other_id != conn_id {
+                    assert!(state.remove_subscriber(&other_id).is_none());
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn prop_counted_count_zero_on_empty() {
+        run_proptest(
+            arb_ephemeral_config(),
+            |ephemeral: Option<EphemeralConfig>| {
+                let state = SessionState::new("s".into(), "a".into());
+                assert_eq!(state.counted_subscriber_count(), 0);
+            },
+        );
     }
 }

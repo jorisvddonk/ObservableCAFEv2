@@ -36,7 +36,7 @@ pub async fn chat(
     }
 
     // 2. Subscribe to session output
-    let mut bus_rx = match state.bus.subscribe(&session_id).await {
+    let mut bus_rx = match state.bus.subscribe_with_role(&session_id, "user").await {
         Ok(r) => r,
         Err(e) => {
             return axum::response::Response::builder()
