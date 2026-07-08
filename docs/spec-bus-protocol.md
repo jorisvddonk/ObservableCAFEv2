@@ -1,7 +1,15 @@
 # Bus Protocol Specification
 
 `cafe-bus` is the central message broker. All services connect to it as clients over
-a Unix domain socket. The protocol is newline-delimited JSON (NDJSON).
+a Unix domain socket.
+
+**Note on wire format**: The bus uses a pluggable `BusCodec` trait
+([`cafe-types/src/codec.rs`](../cafe-types/src/codec.rs)).
+The default codec is newline-delimited JSON (NDJSON), described below.
+With the `bincode-codec` feature, the bus uses length-prefixed bincode v2
+(4-byte little-endian length prefix + bincode payload).
+All services must agree on the same codec — the bus server is instantiated
+with one at compile time.
 
 ---
 

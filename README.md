@@ -4,6 +4,10 @@ A Unix-philosophy reimplementation of the ObservableCAFE architecture as a suite
 of small, composable programs. Services communicate through a central message
 bus (`cafe-bus`) over a Unix socket.
 
+Bus wire format is pluggable via the [`BusCodec` trait](cafe-types/src/codec.rs).
+Default is newline-delimited JSON; `bincode-codec` feature enables compact
+binary framing with 4-byte length-prefixed bincode encoding.
+
 ## Projects
 
 | Crate | Language | Role |
@@ -61,8 +65,10 @@ uv run tests/binary-store-e2e.py
 ## Architecture
 
 All services communicate via `cafe-bus` over a Unix socket at
-`/tmp/cafe-bus.sock`. Wire format is newline-delimited JSON using types
-defined in `cafe-types`.
+`/tmp/cafe-bus.sock`. The bus uses a pluggable wire format via the
+[`BusCodec` trait](cafe-types/src/codec.rs) — default is newline-delimited
+JSON (NDJSON). Enable the `bincode-codec` feature for compact binary framing
+(4-byte length-prefixed bincode v2). Types are defined in `cafe-types`.
 
 ```mermaid
 graph TD
@@ -224,6 +230,26 @@ uv run tests/tool-calling-e2e.py
 # LLM-generated tool call lifecycle (dice-llm agent)
 uv run tests/tool-lifecycle-e2e.py
 ```
+
+## Benchmarks
+
+Criterion benchmarks for serialization throughput and bus internals:
+
+```sh
+# Serialization benchmarks (cafe-types)
+cargo bench --bench serialization
+
+# Bus internal benchmarks (cafe-bus: filtering, session ops, registry)
+cargo bench --bench bus_benchmarks
+
+# All benchmarks
+cargo bench -p cafe-types -p cafe-bus
+```
+
+The serialization benchmarks are format-parameterized via the `Format` trait —
+adding a new format (simd-json, bincode, msgpack) requires implementing the
+trait and adding one function call. Compare formats side-by-side in the same
+report.
 
 ## License
 
