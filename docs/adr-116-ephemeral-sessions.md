@@ -1,6 +1,6 @@
 # ADR-116: Ephemeral Sessions with Connection Roles
 
-**Status:** Implemented (commit pending)
+**Status:** Implemented (`e5f767d`)
 
 **Driver:** MCP bridge creates short-lived sessions for tool calls (RPC), but there was no automatic cleanup — sessions lived in memory until explicitly deleted. Internal subscribers (agent runtime, store, LLM evaluator, etc.) incorrectly kept ephemeral sessions alive.
 
