@@ -126,6 +126,8 @@ enum Command {
     ListSessions,
     /// List available LLM models
     ListModels,
+    /// List available agents
+    ListAgents,
     /// Create a session, prints the session ID
     CreateSession {
         /// Session ID (omit for auto-generated)
@@ -343,6 +345,14 @@ async fn main() -> Result<()> {
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
             let json = serde_json::to_string(&models)?;
+            println!("{}", json);
+        }
+
+        Command::ListAgents => {
+            let token = cli.token.as_deref().unwrap_or("");
+            let http = HttpClient::new(&cli.server, token);
+            let agents = http.list_agents().await?;
+            let json = serde_json::to_string(&agents)?;
             println!("{}", json);
         }
 
