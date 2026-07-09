@@ -39,10 +39,11 @@ func (c *Chunk) IsStreamComplete() bool {
 
 // SessionInfo mirrors cafe-types SessionInfo.
 type SessionInfo struct {
-	SessionID   string  `json:"session_id"`
-	AgentID     string  `json:"agent_id"`
-	DisplayName *string `json:"display_name"`
-	MessageCount int    `json:"message_count"`
+	SessionID    string   `json:"session_id"`
+	AgentID      string   `json:"agent_id"`
+	DisplayName  *string  `json:"display_name"`
+	Tags         []string `json:"tags"`
+	MessageCount int      `json:"message_count"`
 }
 
 type CafeClient struct {
@@ -126,6 +127,23 @@ func (c *CafeClient) StreamChat(sessionID, message string, out chan<- Chunk) err
 		}
 	}
 	return scanner.Err()
+}
+
+func (c *CafeClient) SetTags(sessionID string, tags []string) error {
+	body, _ := json.Marshal(map[string]interface{}{"tags": tags})
+	req, _ := http.NewRequest("PATCH",
+		fmt.Sprintf("%s/api/sessions/%s/tags", c.baseURL, sessionID),
+		bytes.NewReader(body))
+	c.authHeader(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("set tags failed: %s", resp.Status)
+	}
+	return nil
 }
 
 func (c *CafeClient) SendChunk(sessionID string, chunk map[string]interface{}) error {

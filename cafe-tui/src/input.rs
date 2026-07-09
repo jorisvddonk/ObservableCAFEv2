@@ -5,6 +5,7 @@ pub enum InputAction {
     CreateSession,
     DeleteSession,
     RenameSession(String),
+    SetTags(String),
     SetSystemPrompt(String),
     SetModel(String),
     ListModels,
@@ -72,7 +73,7 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
                 if !partial.contains(' ') {
                     let commands = [
                         "sessions", "new", "delete", "rename",
-                        "system", "model", "agent", "clear", "help", "quit",
+                        "system", "model", "agent", "tag", "clear", "help", "quit",
                     ];
                     let matches: Vec<&&str> = commands.iter().filter(|c| c.starts_with(partial)).collect();
                     if matches.len() == 1 {
@@ -175,6 +176,15 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
                 InputAction::ListAgents
             } else {
                 InputAction::SelectAgent(agent)
+            }
+        }
+        "tag" | "t" => {
+            let rest = parts.get(1).unwrap_or(&"").trim().to_string();
+            if rest.is_empty() {
+                app.set_status("Usage: /tag <tag1> <tag2> ... (replaces all tags)");
+                InputAction::None
+            } else {
+                InputAction::SetTags(rest)
             }
         }
         "clear" | "c" => {

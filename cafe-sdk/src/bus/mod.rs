@@ -252,6 +252,32 @@ impl BusClient {
         Ok(())
     }
 
+    /// Set the tags for a session using the default JSON codec.
+    pub async fn set_tags(&self, session_id: &str, tags: Vec<String>) -> Result<(), SdkError> {
+        self.set_tags_with_codec::<JsonLineCodec>(session_id, tags).await
+    }
+
+    /// Set the tags for a session with a specific codec.
+    pub async fn set_tags_with_codec<C: BusCodec>(&self, session_id: &str, tags: Vec<String>) -> Result<(), SdkError> {
+        let (_writer, mut reader) = self
+            .send::<C>(&ClientMessage::SetSessionTags {
+                session_id: session_id.to_string(),
+                tags,
+            })
+            .await?;
+        // Wait for SessionTagsUpdated or Error response
+        while let Some(msg) = reader.read_msg::<ServerMessage>().await? {
+            match msg {
+                ServerMessage::SessionTagsUpdated { .. } => return Ok(()),
+                ServerMessage::Error { message, code, .. } => {
+                    return Err(SdkError::BusError { message, code: Some(code) });
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// List all sessions from the bus using the default JSON codec.
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>, SdkError> {
         self.list_sessions_with_codec::<JsonLineCodec>().await

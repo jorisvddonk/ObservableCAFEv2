@@ -20,6 +20,8 @@ pub async fn run(
         agents: None,
         content_types: Some(vec![ContentType::BinaryRef]),
         annotations: None,
+        tags: None,
+        tags_exclude: None,
     };
 
     let mut rx = match bus.subscribe_filtered(filter).await {

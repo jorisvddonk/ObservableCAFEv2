@@ -44,6 +44,7 @@ pub mod keys {
     pub const CONFIG_RSS_URL: &str = "config.rss.url";
 
     pub const CONFIG_SESSION_NAME: &str = "config.session.name";
+    pub const SESSION_TAGS: &str = "session.tags";
 
     pub const WEB_SOURCE_URL: &str = "web.source_url";
     pub const WEB_CONTENT_TYPE: &str = "web.content_type";

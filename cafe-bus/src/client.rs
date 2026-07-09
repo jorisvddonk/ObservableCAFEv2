@@ -172,6 +172,11 @@ async fn client_loop<C: BusCodec>(
                     if config.ephemeral.is_some() {
                         state.ephemeral = config.ephemeral.clone();
                     }
+                    // Set initial tags if provided
+                    let has_tags = config.tags.as_ref().map_or(false, |t| !t.is_empty());
+                    if has_tags {
+                        state.tags = config.tags.clone().unwrap_or_default();
+                    }
                     // Emit a config null chunk if config fields are present
                     if config.backend.is_some()
                         || config.model.is_some()
@@ -180,14 +185,50 @@ async fn client_loop<C: BusCodec>(
                         let config_chunk = make_config_chunk(&config);
                         state.publish(config_chunk);
                     }
+                    // Emit a tags annotation chunk if tags are present
+                    if has_tags {
+                        let tags_chunk = make_tags_chunk(config.tags.as_ref().unwrap());
+                        state.publish(tags_chunk);
+                    }
                     reg.insert(state);
                     drop(reg);
                     let _ = send_msg::<C>(
                         &writer,
                         &ServerMessage::SessionCreated {
-                            session_id,
-                            agent_id,
+                            session_id: session_id.clone(),
+                            agent_id: agent_id.clone(),
                         },
+                    )
+                    .await;
+                }
+            }
+
+            ClientMessage::SetSessionTags { session_id, tags } => {
+                let mut reg = registry.write().await;
+                if let Some(session) = reg.get_mut(&session_id) {
+                    // Dual-write: publish annotation chunk to history
+                    let tags_chunk = make_tags_chunk(&tags);
+                    session.publish(tags_chunk);
+                    // Update native field
+                    session.tags = tags.clone();
+                    // Broadcast notification to registry subscribers
+                    reg.set_tags(&session_id, tags.clone());
+                    drop(reg);
+                    let _ = send_msg::<C>(
+                        &writer,
+                        &ServerMessage::SessionTagsUpdated {
+                            session_id,
+                            tags,
+                        },
+                    )
+                    .await;
+                } else {
+                    drop(reg);
+                    send_error::<C>(
+                        &writer,
+                        Some(&session_id),
+                        &format!("Session not found: {}", session_id),
+                        "SESSION_NOT_FOUND",
                     )
                     .await;
                 }
@@ -541,7 +582,7 @@ pub fn chunk_matches_filter(chunk: &Chunk, filter: &SubscribeFilter) -> bool {
     true
 }
 
-/// Returns true if a session-level filter matches (sessions, agents).
+/// Returns true if a session-level filter matches (sessions, agents, tags).
 #[doc(hidden)]
 pub fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) -> bool {
     if let Some(ref sessions) = filter.sessions {
@@ -551,6 +592,16 @@ pub fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) 
     }
     if let Some(ref agents) = filter.agents {
         if !agents.contains(&session.agent_id) {
+            return false;
+        }
+    }
+    if let Some(ref tags) = filter.tags {
+        if !tags.iter().any(|tag| session.tags.contains(tag)) {
+            return false;
+        }
+    }
+    if let Some(ref exclude_tags) = filter.tags_exclude {
+        if session.tags.iter().any(|tag| exclude_tags.contains(tag)) {
             return false;
         }
     }
@@ -990,7 +1041,149 @@ mod tests {
         }
 
         #[test]
-        fn session_filter_and_semantics(
+        fn session_filter_tags_match(
+            mut s in any_session_state(),
+            tag in "[a-z]{1,10}",
+        ) {
+            s.tags = vec![tag.clone()];
+            let filter = SubscribeFilter {
+                tags: Some(vec![tag]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_no_match(
+            mut s in any_session_state(),
+            tag in "[a-z]{1,10}",
+        ) {
+            // Session has no tags — should not match a filter requiring this tag
+            s.tags = vec![];
+            let filter = SubscribeFilter {
+                tags: Some(vec![tag]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_exclude_blocks(
+            mut s in any_session_state(),
+            tag in "[a-z]{1,10}",
+        ) {
+            s.tags = vec![tag.clone()];
+            let filter = SubscribeFilter {
+                tags_exclude: Some(vec![tag]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_exclude_allows_absent(
+            mut s in any_session_state(),
+            tag in "[a-z]{1,10}",
+        ) {
+            s.tags = vec![];
+            let filter = SubscribeFilter {
+                tags_exclude: Some(vec![tag]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_exclude_allows_other(
+            mut s in any_session_state(),
+            tag in "[a-z]{1,10}",
+            other in "[a-z]{1,10}",
+        ) {
+            prop_assume!(tag != other);
+            s.tags = vec![other];
+            let filter = SubscribeFilter {
+                tags_exclude: Some(vec![tag]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_any_of(
+            mut s in any_session_state(),
+            tags in prop::collection::vec("[a-z]{1,10}", 1..5),
+        ) {
+            // Session must match if it has ANY of the filter tags
+            let session_tag = tags[0].clone();
+            s.tags = vec![session_tag];
+            let filter = SubscribeFilter {
+                tags: Some(tags),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_all_of(
+            mut s in any_session_state(),
+        ) {
+            // Session has multiple tags — filter requiring one matches
+            s.tags = vec!["a".into(), "b".into(), "c".into()];
+            let filter = SubscribeFilter {
+                tags: Some(vec!["b".into()]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_and_exclude(
+            mut s in any_session_state(),
+            include_tag in "[a-z]{1,10}",
+            exclude_tag in "[a-z]{1,10}",
+        ) {
+            prop_assume!(include_tag != exclude_tag);
+            s.tags = vec![include_tag.clone(), exclude_tag.clone()];
+            // Positive tag matches, but negative also matches → should fail
+            let filter = SubscribeFilter {
+                tags: Some(vec![include_tag]),
+                tags_exclude: Some(vec![exclude_tag]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_and_exclude_no_match(
+            mut s in any_session_state(),
+            include_tag in "[a-z]{1,10}",
+            exclude_tag in "[a-z]{1,10}",
+        ) {
+            prop_assume!(include_tag != exclude_tag);
+            s.tags = vec![include_tag.clone()];
+            // Positive matches, negative doesn't → should pass
+            let filter = SubscribeFilter {
+                tags: Some(vec![include_tag]),
+                tags_exclude: Some(vec![exclude_tag]),
+                ..Default::default()
+            };
+            prop_assert!(session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_empty_rejects_all(
+            mut s in any_session_state(),
+        ) {
+            s.tags = vec!["a".into()];
+            let filter = SubscribeFilter {
+                tags: Some(vec![]),
+                ..Default::default()
+            };
+            prop_assert!(!session_matches_filter(&s, &filter));
+        }
+
+        #[test]
+        fn session_filter_tags_and_semantics(
             s in any_session_state(),
             other_id in ".{0,20}",
             other_agent in ".{0,20}",
@@ -1183,6 +1376,47 @@ mod tests {
             }
         }
 
+        #[test]
+        fn session_filter_monotonic_tags(
+            mut s in any_session_state(),
+            extra_tag in "[a-z]{1,10}",
+        ) {
+            s.tags = vec!["base".into(), extra_tag.clone()];
+            let specific = SubscribeFilter {
+                tags: Some(vec!["base".into()]),
+                ..Default::default()
+            };
+            let broader = SubscribeFilter {
+                tags: Some(vec!["base".into(), extra_tag]),
+                ..Default::default()
+            };
+            // If session matches the specific set, it must also match the broader set
+            if session_matches_filter(&s, &specific) {
+                prop_assert!(session_matches_filter(&s, &broader));
+            }
+        }
+
+        #[test]
+        fn session_filter_monotonic_tags_exclude(
+            mut s in any_session_state(),
+            tag in "[a-z]{1,10}",
+        ) {
+            s.tags = vec![tag.clone()];
+            // exclude_tags with more entries is more restrictive
+            let less_restrictive = SubscribeFilter {
+                tags_exclude: Some(vec![]),
+                ..Default::default()
+            };
+            let more_restrictive = SubscribeFilter {
+                tags_exclude: Some(vec![tag]),
+                ..Default::default()
+            };
+            // Passing the more restrictive filter implies passing the less restrictive one
+            if session_matches_filter(&s, &more_restrictive) {
+                prop_assert!(session_matches_filter(&s, &less_restrictive));
+            }
+        }
+
         // ── Source connection injection (ADR-101) ──
 
         #[test]
@@ -1285,4 +1519,11 @@ fn make_config_chunk(config: &SessionConfig) -> Chunk {
         chunk = chunk.with_annotation(keys::CONFIG_MAX_TOKENS, mt);
     }
     chunk
+}
+
+fn make_tags_chunk(tags: &[String]) -> Chunk {
+    Chunk::new_null("com.nominal.cafe-bus")
+        .with_annotation(keys::SESSION_TAGS, serde_json::Value::Array(
+            tags.iter().map(|t| serde_json::Value::String(t.clone())).collect()
+        ))
 }

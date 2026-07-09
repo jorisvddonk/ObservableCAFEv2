@@ -8,6 +8,8 @@ pub struct SessionInfo {
     pub session_id: String,
     pub agent_id: String,
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub is_background: bool,
     pub ui_mode: String,
     pub message_count: usize,

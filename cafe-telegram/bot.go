@@ -90,8 +90,10 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 		b.cmdUnsubscribe(msg)
 	case "subscriptions":
 		b.cmdSubscriptions(msg)
+	case "tag":
+		b.cmdTag(msg)
 	default:
-		b.reply(msg, "Unknown command. Try /sessions, /new, /join <id>, /id")
+		b.reply(msg, "Unknown command. Try /sessions, /new, /join <id>, /id, /tag")
 	}
 }
 
@@ -128,7 +130,11 @@ func (b *Bot) cmdSessions(msg *tgbotapi.Message) {
 		if s.DisplayName != nil {
 			name = *s.DisplayName
 		}
-		sb.WriteString(fmt.Sprintf("• `%s` — %s (%d msgs)\n", s.SessionID, name, s.MessageCount))
+		tags := ""
+		if len(s.Tags) > 0 {
+			tags = fmt.Sprintf(" [%s]", strings.Join(s.Tags, ", "))
+		}
+		sb.WriteString(fmt.Sprintf("• `%s` — %s%s (%d msgs)\n", s.SessionID, name, tags, s.MessageCount))
 	}
 	sb.WriteString("\nUse /join <id> to switch.")
 	b.reply(msg, sb.String())
@@ -206,6 +212,21 @@ func (b *Bot) handleText(msg *tgbotapi.Message) {
 	}
 
 	b.streamToTelegram(msg.Chat.ID, sessionID, msg.Text)
+}
+
+func (b *Bot) cmdTag(msg *tgbotapi.Message) {
+	args := strings.Fields(msg.CommandArguments())
+	if len(args) < 2 {
+		b.reply(msg, "Usage: /tag <session-id> <tag1> <tag2> ...")
+		return
+	}
+	sessionID := args[0]
+	tags := args[1:]
+	if err := b.client.SetTags(sessionID, tags); err != nil {
+		b.reply(msg, fmt.Sprintf("Failed to set tags: %v", err))
+		return
+	}
+	b.reply(msg, fmt.Sprintf("Tags set for `%s`: %s", sessionID, strings.Join(tags, ", ")))
 }
 
 func (b *Bot) streamToTelegram(chatID int64, sessionID, userMessage string) {

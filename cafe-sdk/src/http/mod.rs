@@ -196,6 +196,18 @@ impl HttpClient {
         Ok(())
     }
 
+    /// Set the tags for a session.
+    pub async fn set_tags(&self, session_id: &str, tags: &[String]) -> Result<(), SdkError> {
+        self.client
+            .patch(self.url(&format!("/api/sessions/{}/tags", session_id)))
+            .bearer_auth(&self.token)
+            .json(&json!({ "tags": tags }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     /// Switch the model for a session.
     pub async fn set_model(&self, session_id: &str, model: &str) -> Result<(), SdkError> {
         self.client

@@ -81,6 +81,27 @@ pub async fn delete_session(
     }
 }
 
+#[derive(Deserialize)]
+pub struct SetSessionTagsRequest {
+    pub tags: Vec<String>,
+}
+
+pub async fn update_tags(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(session_id): Path<String>,
+    Json(body): Json<SetSessionTagsRequest>,
+) -> impl IntoResponse {
+    match state.bus.set_tags(&session_id, body.tags).await {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn get_history(
     State(state): State<AppState>,
     _auth: AuthUser,

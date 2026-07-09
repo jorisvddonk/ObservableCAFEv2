@@ -1,7 +1,6 @@
 use crate::db::Db;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{ServerMessage, SessionConfig, SubscribeFilter};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -25,6 +24,8 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
             "cafe.transient".to_string(),
             serde_json::Value::Bool(false),
         )])),
+        tags: None,
+        tags_exclude: None,
     };
     let mut rx = client.subscribe_filtered(filter).await?;
     info!("cafe-store: connected to bus at {}", socket_path);
@@ -55,6 +56,16 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
                         "cafe-store: failed to insert chunk {} for session {}: {}",
                         chunk.id, session_id, e
                     );
+                }
+            }
+            ServerMessage::SessionTagsUpdated { session_id, tags } => {
+                // Update tags in DB. agent_id/is_background are unknown here;
+                // upsert_session_with_tags handles the ON CONFLICT update.
+                if let Err(e) = db
+                    .upsert_session_with_tags(&session_id, "unknown", false, &tags)
+                    .await
+                {
+                    error!("cafe-store: failed to update tags for session {}: {}", session_id, e);
                 }
             }
             ServerMessage::HistoryComplete { session_id, count } => {
@@ -98,8 +109,17 @@ async fn restore_from_db(client: &BusClient, db: &Arc<Db>) {
             continue;
         }
 
+        let tags = if s.tags.is_empty() {
+            None
+        } else {
+            Some(s.tags.clone())
+        };
+        let config = SessionConfig {
+            tags,
+            ..SessionConfig::default()
+        };
         if let Err(e) = client
-            .create_session(&s.session_id, &s.agent_id, SessionConfig::default())
+            .create_session(&s.session_id, &s.agent_id, config)
             .await
         {
             // Race: another service may have created it between our list and create.

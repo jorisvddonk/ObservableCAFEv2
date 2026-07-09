@@ -22,6 +22,8 @@ pub struct SessionState {
     pub(crate) subscribers: HashMap<String, SubscriberInfo>,
     /// Ephemeral lifecycle config. None = persistent.
     pub ephemeral: Option<EphemeralConfig>,
+    /// User-defined tags for filtering/grouping sessions.
+    pub tags: Vec<String>,
 }
 
 impl SessionState {
@@ -35,6 +37,7 @@ impl SessionState {
             retained: Vec::new(),
             subscribers: HashMap::new(),
             ephemeral: None,
+            tags: Vec::new(),
         }
     }
 

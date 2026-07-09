@@ -380,6 +380,33 @@ async fn run_app(
                         }
                     }
 
+                    InputAction::SetTags(tags_str) => {
+                        if let Some(id) = app.active_session_id().map(String::from) {
+                            let tags: Vec<String> = tags_str
+                                .split_whitespace()
+                                .map(|t| t.to_string())
+                                .collect();
+                            if let Err(e) = client.set_tags(&id, &tags).await {
+                                app.set_status(format!("Failed to set tags: {}", e));
+                            } else {
+                                // Update local tags immediately
+                                if let Some(session) =
+                                    app.sessions.get_mut(app.active_session_idx)
+                                {
+                                    session.tags = tags.clone();
+                                }
+                                app.set_status(format!(
+                                    "Tags set: {}",
+                                    if tags.is_empty() {
+                                        "(none)".into()
+                                    } else {
+                                        tags.join(", ")
+                                    }
+                                ));
+                            }
+                        }
+                    }
+
                     InputAction::None => {}
                 }
             }

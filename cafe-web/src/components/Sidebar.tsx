@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
 import { listAgents, type SessionInfo, type AgentInfo } from 'cafe-web-sdk';
@@ -10,6 +10,25 @@ export function Sidebar() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [tagFilter, setTagFilter] = useState('');
+
+  // Tag filtering: positive tags (no ! prefix) match any, negative (! prefix) exclude
+  const filteredSessions = useMemo(() => {
+    const parts = tagFilter
+      .split(/\s+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const includeTags = parts.filter((p) => !p.startsWith('!')).map((p) => p.toLowerCase());
+    const excludeTags = parts.filter((p) => p.startsWith('!')).map((p) => p.slice(1).toLowerCase());
+
+    return sessions.filter((s) => {
+      if (s.is_background) return false;
+      const sessionTags = (s.tags ?? []).map((t) => t.toLowerCase());
+      if (includeTags.length && !includeTags.some((t) => sessionTags.includes(t))) return false;
+      if (excludeTags.some((t) => sessionTags.includes(t))) return false;
+      return true;
+    });
+  }, [sessions, tagFilter]);
 
   // Load agent list once on mount
   useEffect(() => {
@@ -124,17 +143,35 @@ export function Sidebar() {
         </div>
       )}
 
+      {/* Tag filter */}
+      <div style={{ padding: '4px 12px 8px' }}>
+        <input
+          value={tagFilter}
+          onChange={(e) => setTagFilter(e.target.value)}
+          placeholder="Filter tags… !exclude"
+          style={{
+            width: '100%',
+            padding: '5px 8px',
+            background: '#0d1b33',
+            color: '#ccc',
+            border: '1px solid #2a2a4a',
+            borderRadius: 4,
+            fontSize: 12,
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+      </div>
+
       <div style={{ overflowY: 'auto', flex: 1 }}>
-        {sessions
-          .filter((s) => !s.is_background)
-          .map((s) => (
-            <SessionItem
-              key={s.session_id}
-              session={s}
-              active={s.session_id === activeSessionId}
-              onSelect={() => switchSession(s.session_id)}
-            />
-          ))}
+        {filteredSessions.map((s) => (
+          <SessionItem
+            key={s.session_id}
+            session={s}
+            active={s.session_id === activeSessionId}
+            onSelect={() => switchSession(s.session_id)}
+          />
+        ))}
       </div>
     </aside>
   );
@@ -172,6 +209,24 @@ function SessionItem({
       <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
         {session.agent_id} · {session.message_count} msgs
       </div>
+      {(session.tags ?? []).length > 0 && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+          {session.tags.map((tag) => (
+            <span
+              key={tag}
+              style={{
+                fontSize: 10,
+                padding: '1px 5px',
+                borderRadius: 3,
+                background: '#1a2a50',
+                color: '#8ab4f8',
+              }}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
     </button>
   );
 }

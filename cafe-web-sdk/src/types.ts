@@ -21,6 +21,7 @@ export interface SessionInfo {
   session_id: string;
   agent_id: string;
   display_name: string | null;
+  tags: string[];
   is_background: boolean;
   ui_mode: string;
   message_count: number;
@@ -44,6 +45,7 @@ export interface SessionConfig {
   system_prompt?: string;
   temperature?: number;
   max_tokens?: number;
+  tags?: string[];
 }
 
 export interface AgentInfo {

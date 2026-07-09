@@ -275,7 +275,12 @@ fn draw_session_picker(f: &mut Frame, app: &App) {
             } else {
                 Style::default()
             };
-            ListItem::new(format!("  {}  [{}]", name, s.agent_id)).style(style)
+            let tags = if s.tags.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", s.tags.join(", "))
+            };
+            ListItem::new(format!("  {}  [{}{}]", name, s.agent_id, tags)).style(style)
         })
         .collect();
 

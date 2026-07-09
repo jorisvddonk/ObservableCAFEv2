@@ -29,6 +29,16 @@ export async function getHistory(
   return apiFetch(`/api/sessions/${id}/history?binaryRefs=1`);
 }
 
+export async function setTags(
+  sessionId: string,
+  tags: string[],
+): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/tags`, {
+    method: 'PATCH',
+    body: JSON.stringify({ tags }),
+  });
+}
+
 export function getBinaryUrl(sessionId: string, chunkId: string): string {
   const token = encodeURIComponent(getToken());
   return `${getBaseUrl()}/api/sessions/${sessionId}/chunks/${chunkId}/binary?token=${token}`;

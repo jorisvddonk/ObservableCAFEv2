@@ -28,6 +28,9 @@ pub struct SessionConfig {
     pub max_tokens: Option<u32>,
     /// If set, the session is ephemeral and will be auto-deleted.
     pub ephemeral: Option<EphemeralConfig>,
+    /// Optional initial tags for the session.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Filter for chunk subscriptions.
@@ -41,6 +44,12 @@ pub struct SubscribeFilter {
     pub content_types: Option<Vec<ContentType>>,
     /// Only forward chunks whose annotations contain ALL specified key/value pairs.
     pub annotations: Option<HashMap<String, serde_json::Value>>,
+    /// Only forward from sessions that have at least one of these tags.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// Exclude sessions that have any of these tags.
+    #[serde(default)]
+    pub tags_exclude: Option<Vec<String>>,
 }
 
 /// Messages sent from a client to the bus.
@@ -73,6 +82,10 @@ pub enum ClientMessage {
     DeleteSession {
         session_id: String,
     },
+    SetSessionTags {
+        session_id: String,
+        tags: Vec<String>,
+    },
     ListSessions,
     Ping,
 }
@@ -101,6 +114,10 @@ pub enum ServerMessage {
     HistoryComplete {
         session_id: String,
         count: usize,
+    },
+    SessionTagsUpdated {
+        session_id: String,
+        tags: Vec<String>,
     },
     Error {
         session_id: Option<String>,
@@ -228,15 +245,17 @@ mod tests {
             proptest::option::of(-10.0f32..10.0f32),
             proptest::option::of(any::<u32>()),
             proptest::option::of(any_ephemeral_config()),
+            proptest::option::of(prop::collection::vec(".{1,10}", 0..5)),
         )
             .prop_map(
-                |(backend, model, system_prompt, temperature, max_tokens, ephemeral)| SessionConfig {
+                |(backend, model, system_prompt, temperature, max_tokens, ephemeral, tags)| SessionConfig {
                     backend,
                     model,
                     system_prompt,
                     temperature,
                     max_tokens,
                     ephemeral,
+                    tags,
                 },
             )
     }
@@ -247,13 +266,17 @@ mod tests {
             proptest::option::of(prop::collection::vec(".{0,20}", 0..5)),
             proptest::option::of(prop::collection::vec(any_content_type(), 0..4)),
             proptest::option::of(annotation_map()),
+            proptest::option::of(prop::collection::vec(".{1,10}", 0..5)),
+            proptest::option::of(prop::collection::vec(".{1,10}", 0..5)),
         )
             .prop_map(
-                |(sessions, agents, content_types, annotations)| SubscribeFilter {
+                |(sessions, agents, content_types, annotations, tags, tags_exclude)| SubscribeFilter {
                     sessions,
                     agents,
                     content_types,
                     annotations,
+                    tags,
+                    tags_exclude,
                 },
             )
     }
@@ -263,17 +286,19 @@ mod tests {
             ".{0,20}",
             ".{0,20}",
             proptest::option::of(".{0,30}"),
+            prop::collection::vec(".{1,10}", 0..5),
             any::<bool>(),
             ".{0,20}",
             any::<usize>(),
             any::<i64>(),
         )
             .prop_map(
-                |(session_id, agent_id, display_name, is_background, ui_mode, message_count, created_at)| {
+                |(session_id, agent_id, display_name, tags, is_background, ui_mode, message_count, created_at)| {
                     SessionInfo {
                         session_id,
                         agent_id,
                         display_name,
+                        tags,
                         is_background,
                         ui_mode,
                         message_count,
@@ -311,6 +336,9 @@ mod tests {
             ),
             ".{0,20}"
                 .prop_map(|session_id| ClientMessage::DeleteSession { session_id }),
+            (".{0,20}", prop::collection::vec(".{1,10}", 0..5)).prop_map(
+                |(session_id, tags)| ClientMessage::SetSessionTags { session_id, tags },
+            ),
             Just(ClientMessage::Ping),
         ]
     }
@@ -336,6 +364,9 @@ mod tests {
                     session_id,
                     count,
                 },
+            ),
+            (".{0,20}", prop::collection::vec(".{1,10}", 0..5)).prop_map(
+                |(session_id, tags)| ServerMessage::SessionTagsUpdated { session_id, tags },
             ),
             (proptest::option::of(".{0,20}"), ".{0,20}", ".{0,20}").prop_map(
                 |(session_id, message, code)| ServerMessage::Error {

@@ -26,6 +26,7 @@ impl Db {
                 agent_id     TEXT NOT NULL,
                 is_background INTEGER NOT NULL DEFAULT 0,
                 display_name TEXT,
+                tags         TEXT NOT NULL DEFAULT '[]',
                 ui_mode      TEXT NOT NULL DEFAULT 'chat',
                 created_at   INTEGER NOT NULL,
                 updated_at   INTEGER NOT NULL
@@ -33,6 +34,12 @@ impl Db {
         )
         .execute(&self.pool)
         .await?;
+
+        // Migration: add tags column if missing (pre-tags schema)
+        sqlx::query("ALTER TABLE sessions ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+            .execute(&self.pool)
+            .await
+            .ok();
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS chunks (
@@ -67,16 +74,29 @@ impl Db {
         agent_id: &str,
         is_background: bool,
     ) -> Result<()> {
+        self.upsert_session_with_tags(session_id, agent_id, is_background, &[]).await
+    }
+
+    pub async fn upsert_session_with_tags(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        is_background: bool,
+        tags: &[String],
+    ) -> Result<()> {
         let now = now_ms();
+        let tags_json = serde_json::to_string(tags)?;
         sqlx::query(
-            "INSERT INTO sessions (id, agent_id, is_background, ui_mode, created_at, updated_at)
-             VALUES (?, ?, ?, 'chat', ?, ?)
+            "INSERT INTO sessions (id, agent_id, is_background, tags, ui_mode, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'chat', ?, ?)
              ON CONFLICT(id) DO UPDATE SET
+                 tags = excluded.tags,
                  updated_at = excluded.updated_at",
         )
         .bind(session_id)
         .bind(agent_id)
         .bind(is_background as i64)
+        .bind(&tags_json)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -95,7 +115,7 @@ impl Db {
     #[allow(dead_code)]
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         let rows = sqlx::query(
-            "SELECT s.id, s.agent_id, s.display_name, s.is_background, s.ui_mode, s.created_at,
+            "SELECT s.id, s.agent_id, s.display_name, s.tags, s.is_background, s.ui_mode, s.created_at,
                     COUNT(c.id) as message_count
              FROM sessions s
              LEFT JOIN chunks c ON c.session_id = s.id
@@ -107,14 +127,19 @@ impl Db {
 
         Ok(rows
             .into_iter()
-            .map(|r| SessionInfo {
-                session_id: r.get::<String, _>("id"),
-                agent_id: r.get::<String, _>("agent_id"),
-                display_name: r.get::<Option<String>, _>("display_name"),
-                is_background: r.get::<i64, _>("is_background") != 0,
-                ui_mode: r.get::<String, _>("ui_mode"),
-                message_count: r.get::<i64, _>("message_count") as usize,
-                created_at: r.get::<i64, _>("created_at"),
+            .map(|r| {
+                let tags_str: String = r.get::<String, _>("tags");
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                SessionInfo {
+                    session_id: r.get::<String, _>("id"),
+                    agent_id: r.get::<String, _>("agent_id"),
+                    display_name: r.get::<Option<String>, _>("display_name"),
+                    tags,
+                    is_background: r.get::<i64, _>("is_background") != 0,
+                    ui_mode: r.get::<String, _>("ui_mode"),
+                    message_count: r.get::<i64, _>("message_count") as usize,
+                    created_at: r.get::<i64, _>("created_at"),
+                }
             })
             .collect())
     }

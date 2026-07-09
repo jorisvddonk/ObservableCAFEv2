@@ -100,12 +100,28 @@ impl SessionRegistry {
                 session_id: s.session_id.clone(),
                 agent_id: s.agent_id.clone(),
                 display_name: None,
+                tags: s.tags.clone(),
                 is_background: false,
                 ui_mode: "chat".into(),
                 message_count: s.history.len(),
                 created_at: 0,
             })
             .collect()
+    }
+
+    /// Replace the tags on a session and broadcast a SessionTagsUpdated event.
+    /// Returns true if the session existed.
+    pub fn set_tags(&mut self, session_id: &str, tags: Vec<String>) -> bool {
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            session.tags = tags.clone();
+            let _ = self.event_tx.send(ServerMessage::SessionTagsUpdated {
+                session_id: session_id.to_string(),
+                tags,
+            });
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -333,6 +349,90 @@ mod tests {
         reg.cancel_scheduled_deletion("nonexistent");
         // Should not panic even with existing entry (there isn't one tracked anymore)
         reg.cancel_scheduled_deletion("s1");
+    }
+
+    #[test]
+    fn set_tags_updates_list_output() {
+        run_proptest(arb_session_state(), |mut state: SessionState| {
+            let sid = state.session_id.clone();
+            let tags = vec!["work".into(), "urgent".into()];
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            assert!(reg.set_tags(&sid, tags.clone()));
+            let sessions = reg.list();
+            let info = sessions.iter().find(|s| s.session_id == sid).unwrap();
+            assert_eq!(info.tags, tags);
+        });
+    }
+
+    #[test]
+    fn set_tags_nonexistent_returns_false() {
+        run_proptest(
+            (arb_session_state(), prop::collection::vec("[a-z]{1,10}", 0..5)),
+            |(state, tags): (SessionState, Vec<String>)| {
+                let sid = state.session_id.clone();
+                let mut reg = SessionRegistry::new();
+                reg.insert(state);
+                // Removing with a different ID returns false
+                let other = format!("{}_x", sid);
+                if other != sid {
+                    assert!(!reg.set_tags(&other, tags));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn set_tags_broadcasts_event() {
+        run_proptest(arb_session_state(), |state: SessionState| {
+            let sid = state.session_id.clone();
+            let tags = vec!["tag1".into()];
+            let mut reg = SessionRegistry::new();
+            let mut rx = reg.event_tx().subscribe();
+            reg.insert(state);
+            // Drain the SessionCreated event
+            let _ = rx.try_recv();
+            assert!(reg.set_tags(&sid, tags.clone()));
+            if let Ok(event) = rx.try_recv() {
+                match event {
+                    ServerMessage::SessionTagsUpdated { session_id, tags: ev_tags } => {
+                        assert_eq!(session_id, sid);
+                        assert_eq!(ev_tags, tags);
+                    }
+                    _ => panic!("expected SessionTagsUpdated, got {:?}", event),
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn set_tags_overwrites_previous() {
+        run_proptest(arb_session_state(), |mut state: SessionState| {
+            let sid = state.session_id.clone();
+            state.tags = vec!["old".into()];
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            let new_tags = vec!["new".into()];
+            assert!(reg.set_tags(&sid, new_tags.clone()));
+            let sessions = reg.list();
+            let info = sessions.iter().find(|s| s.session_id == sid).unwrap();
+            assert_eq!(info.tags, vec!["new"]);
+            assert!(!info.tags.contains(&"old".into()));
+        });
+    }
+
+    #[test]
+    fn set_tags_empty_replaces() {
+        run_proptest(arb_session_state(), |mut state: SessionState| {
+            let sid = state.session_id.clone();
+            state.tags = vec!["old".into()];
+            let mut reg = SessionRegistry::new();
+            reg.insert(state);
+            assert!(reg.set_tags(&sid, vec![]));
+            let sessions = reg.list();
+            let info = sessions.iter().find(|s| s.session_id == sid).unwrap();
+            assert!(info.tags.is_empty());
+        });
     }
 
     #[test]
