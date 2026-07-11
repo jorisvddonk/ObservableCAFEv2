@@ -51,3 +51,4 @@ docs/planning/
 .vscode/
 .idea/
 *.swp
+.opencode/
