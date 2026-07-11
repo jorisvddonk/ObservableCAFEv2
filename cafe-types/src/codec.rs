@@ -123,8 +123,9 @@ impl BusCodec for JsonLineCodec {
 
 /// Bincode length-prefixed codec — compact binary wire format.
 ///
-/// Messages are serialized with `bincode` (v2) and prefixed with a 4-byte
-/// little-endian length. The reader reads the length first, then the payload.
+/// Internally serializes to JSON (for full serde compatibility including tagged
+/// enums) and wraps with bincode native encoding for efficient framing.
+/// This avoids the bincode serde bridge which cannot handle `serde(tag = "...")`.
 #[cfg(feature = "bincode-codec")]
 pub struct BincodeLengthPrefixCodec;
 
@@ -133,7 +134,9 @@ impl BusCodec for BincodeLengthPrefixCodec {
     const NAME: &'static str = "bincode";
 
     fn encode<M: Serialize>(msg: &M) -> Result<Vec<u8>, BusCodecError> {
-        let payload = bincode::serde::encode_to_vec(msg, bincode::config::standard())
+        let json_bytes = serde_json::to_vec(msg)
+            .map_err(|e| BusCodecError::Serialize(format!("json: {}", e)))?;
+        let payload = bincode::encode_to_vec(json_bytes, bincode::config::standard())
             .map_err(|e| BusCodecError::Serialize(format!("bincode: {}", e)))?;
         let len = payload.len() as u32;
         let mut framed = Vec::with_capacity(4 + payload.len());
@@ -151,9 +154,11 @@ impl BusCodec for BincodeLengthPrefixCodec {
         if buf.len() < total {
             return Ok(None);
         }
-        let (msg, _): (M, usize) =
-            bincode::serde::decode_from_slice(&buf[4..total], bincode::config::standard())
+        let (json_bytes, _): (Vec<u8>, usize) =
+            bincode::decode_from_slice(&buf[4..total], bincode::config::standard())
                 .map_err(|e| BusCodecError::Deserialize(format!("bincode: {}", e)))?;
+        let msg: M = serde_json::from_slice(&json_bytes)
+            .map_err(|e| BusCodecError::Deserialize(format!("json: {}", e)))?;
         Ok(Some((msg, total)))
     }
 }
@@ -241,6 +246,38 @@ mod tests {
         assert_eq!(decoded.id, chunk.id);
         assert_eq!(decoded.content_type, chunk.content_type);
         assert_eq!(decoded.content, chunk.content);
+    }
+
+    #[cfg(feature = "bincode-codec")]
+    #[test]
+    fn bincode_client_message_roundtrip() {
+        let msg = ClientMessage::Ping;
+        let wire = BincodeLengthPrefixCodec::encode(&msg).unwrap();
+        let (decoded, _): (ClientMessage, _) = BincodeLengthPrefixCodec::decode(&wire)
+            .unwrap()
+            .expect("should decode Ping");
+        assert!(matches!(decoded, ClientMessage::Ping));
+
+        let msg = ClientMessage::Subscribe { session_id: "s-1".into() };
+        let wire = BincodeLengthPrefixCodec::encode(&msg).unwrap();
+        let (decoded, _): (ClientMessage, _) = BincodeLengthPrefixCodec::decode(&wire)
+            .unwrap()
+            .expect("should decode Subscribe");
+        match decoded {
+            ClientMessage::Subscribe { session_id } => assert_eq!(session_id, "s-1"),
+            _ => panic!("wrong variant"),
+        }
+
+        let chunk = test_chunk();
+        let msg = ClientMessage::Publish { session_id: "s-2".into(), chunk };
+        let wire = BincodeLengthPrefixCodec::encode(&msg).unwrap();
+        let (decoded, _): (ClientMessage, _) = BincodeLengthPrefixCodec::decode(&wire)
+            .unwrap()
+            .expect("should decode Publish");
+        match decoded {
+            ClientMessage::Publish { session_id, .. } => assert_eq!(session_id, "s-2"),
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[cfg(feature = "bincode-codec")]

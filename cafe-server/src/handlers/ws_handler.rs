@@ -49,8 +49,6 @@ pub async fn ws_session(
 async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: String) {
     let mut current_session = initial_session.clone();
 
-    // Subscribe with a persistent connection — publish reuses the same
-    // connection so source.connection stays alive for direct_to replies.
     let mut sub = match state.bus.subscribe_session_with_role(&current_session, "user").await {
         Ok(s) => s,
         Err(e) => {
@@ -61,7 +59,6 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
 
     loop {
         tokio::select! {
-            // ── Incoming from bus → forward to WebSocket ──
             bus_msg = sub.rx.recv() => {
                 let payload = match bus_msg {
                     Some(ServerMessage::Chunk { chunk, .. }) => {
@@ -84,9 +81,8 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                         })).unwrap_or_default()
                     }
                     Some(_) => continue,
-                    None => break, // bus disconnected
+                    None => break,
                 };
-                // Debug: log when forwarding write credentials
                 if payload.contains("cafe.binary.write_url") {
                     info!("ws_handler: forwarding write credentials to WebSocket client");
                 }
@@ -95,7 +91,6 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                 }
             }
 
-            // ── Incoming from WebSocket → handle action ──
             ws_msg = socket.recv() => {
                 match ws_msg {
                     Some(Ok(Message::Text(text))) => {
@@ -110,9 +105,6 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, initial_session: Stri
                         match action.op.as_str() {
                             "publish" => {
                                 if let Some(chunk) = action.chunk {
-                                    // Publish through the subscription's connection,
-                                    // so source.connection points to a live connection
-                                    // that can receive direct_to replies.
                                     if let Err(e) = sub.publish(chunk).await {
                                         warn!("ws_handler: publish error: {}", e);
                                     }

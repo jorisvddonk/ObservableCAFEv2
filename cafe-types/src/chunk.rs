@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 #[serde(rename_all = "snake_case")]
 pub enum ContentType {
     Text,
@@ -40,6 +41,7 @@ pub mod base64_option {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 pub struct Chunk {
     pub id: String,
     pub content_type: ContentType,
@@ -49,6 +51,7 @@ pub struct Chunk {
     pub data: Option<Vec<u8>>,
     pub mime_type: Option<String>,
     pub producer: String,
+    #[cfg_attr(feature = "bincode-codec", bincode(with_serde))]
     pub annotations: HashMap<String, serde_json::Value>,
     pub timestamp: i64,
 }

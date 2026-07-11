@@ -155,7 +155,7 @@ impl BusClient {
     pub fn unix(socket_path: impl Into<String>) -> BusClient<AnyTransport> {
         BusClient {
             transport: Arc::new(AnyTransport::unix(socket_path)),
-            preferred_codecs: vec![ClientCodec::Json],
+            preferred_codecs: vec![ClientCodec::Bincode, ClientCodec::Json],
             negotiated_codec: Arc::new(Mutex::new(None)),
         }
     }
@@ -175,7 +175,7 @@ impl BusClient {
     pub fn any(transport: AnyTransport) -> BusClient<AnyTransport> {
         BusClient {
             transport: Arc::new(transport),
-            preferred_codecs: vec![ClientCodec::Json],
+            preferred_codecs: vec![ClientCodec::Bincode, ClientCodec::Json],
             negotiated_codec: Arc::new(Mutex::new(None)),
         }
     }
@@ -191,7 +191,7 @@ impl<T: BusTransport> BusClient<T> {
     pub fn new(transport: T) -> Self {
         Self {
             transport: Arc::new(transport),
-            preferred_codecs: vec![ClientCodec::Json],
+            preferred_codecs: vec![ClientCodec::Bincode, ClientCodec::Json],
             negotiated_codec: Arc::new(Mutex::new(None)),
         }
     }

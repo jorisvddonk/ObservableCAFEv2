@@ -44,7 +44,6 @@ impl WsClient {
         let (tx, rx) = tokio::sync::mpsc::channel::<ServerMessage>(256);
         let sid = session_id.to_string();
 
-        // Background task: forward incoming WebSocket messages to channel
         tokio::spawn(async move {
             let mut reader = reader;
             while let Some(Ok(msg)) = reader.next().await {

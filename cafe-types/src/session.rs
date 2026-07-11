@@ -4,6 +4,7 @@ use crate::step::StepDef;
 
 /// Metadata about a session, returned by list_sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 pub struct SessionInfo {
     pub session_id: String,
     pub agent_id: String,

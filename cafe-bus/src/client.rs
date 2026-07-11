@@ -229,8 +229,6 @@ pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
 
     let result = match negotiated_codec {
         "json" => {
-            // Replay the first message (already consumed from stream) through
-            // the JSON client_loop. Use remaining buf for any trailing data.
             let frames = Frames::<JsonLineCodec, _>::with_buf(inner_reader, buf);
             client_loop::<JsonLineCodec, R>(
                 frames,
@@ -240,7 +238,6 @@ pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
         }
         #[cfg(feature = "bincode-listener")]
         "bincode" => {
-            // Process role from the already-read SetMeta
             if let Some(r) = role {
                 let meta = ConnectionMeta { role: Some(r) };
                 metas.write().await.insert(conn_id.clone(), meta);

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 /// Ephemeral session lifecycle config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 pub struct EphemeralConfig {
     /// Seconds to keep session alive after the last counted subscriber disconnects.
     /// 0 = delete immediately.
@@ -20,6 +21,7 @@ pub struct EphemeralConfig {
 
 /// Configuration passed when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 pub struct SessionConfig {
     pub backend: Option<String>,
     pub model: Option<String>,
@@ -35,6 +37,7 @@ pub struct SessionConfig {
 
 /// Filter for chunk subscriptions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 pub struct SubscribeFilter {
     /// Only forward chunks from sessions with these IDs. None = all sessions.
     pub sessions: Option<Vec<String>>,
@@ -43,6 +46,7 @@ pub struct SubscribeFilter {
     /// Only forward chunks matching these content types. None = all types.
     pub content_types: Option<Vec<ContentType>>,
     /// Only forward chunks whose annotations contain ALL specified key/value pairs.
+    #[cfg_attr(feature = "bincode-codec", bincode(with_serde))]
     pub annotations: Option<HashMap<String, serde_json::Value>>,
     /// Only forward from sessions that have at least one of these tags.
     #[serde(default)]
@@ -54,6 +58,7 @@ pub struct SubscribeFilter {
 
 /// Messages sent from a client to the bus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum ClientMessage {
     Subscribe {
@@ -97,6 +102,7 @@ pub enum ClientMessage {
 
 /// Messages sent from the bus to a client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "bincode-codec", derive(bincode::Encode, bincode::Decode))]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ServerMessage {
     Connected {
