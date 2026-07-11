@@ -1,5 +1,13 @@
 [workspace]
 resolver = "2"
+
+# Keep target/ small: skip debug symbols (the main source of bloat).
+# Use "line-tables-only" instead of false if you still want backtraces.
+[profile.dev]
+debug = false
+
+[profile.test]
+debug = false
 members = [
     "cafe-types",
     "cafe-bus",
