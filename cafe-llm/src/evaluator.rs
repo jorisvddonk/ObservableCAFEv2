@@ -50,7 +50,7 @@ pub async fn run_session(
     backend: Arc<dyn LlmBackend>,
     default_model: String,
 ) -> Result<()> {
-    let client = BusClient::new(&socket_path);
+    let client = BusClient::unix(&socket_path);
     let mut sub = client.subscribe_session(&session_id).await?;
 
     let (abort_tx, _abort_rx) = watch::channel(false);

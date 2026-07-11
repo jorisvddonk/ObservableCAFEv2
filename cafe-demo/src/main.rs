@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
 
     cafe_sdk::bus::wait_for_bus(SOCKET_PATH, Duration::from_millis(500), 60).await?;
 
-    let bus = BusClient::new(SOCKET_PATH);
+    let bus = BusClient::unix(SOCKET_PATH);
 
     bus.create_session(
         SESSION_ID,

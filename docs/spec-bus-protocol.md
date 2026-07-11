@@ -1,7 +1,7 @@
 # Bus Protocol Specification
 
 `cafe-bus` is the central message broker. All services connect to it as clients over
-a Unix domain socket.
+a Unix domain socket (local) or [iroh QUIC](#iroh-transport) (remote P2P).
 
 **Note on wire format**: The bus uses a pluggable `BusCodec` trait
 ([`cafe-types/src/codec.rs`](../cafe-types/src/codec.rs)).
@@ -15,11 +15,129 @@ with one at compile time.
 
 ## Connection
 
-Socket path: `$CAFE_BUS_SOCKET` (default `/tmp/cafe-bus.sock`)
+**Unix socket path:** `$CAFE_BUS_SOCKET` (default `/tmp/cafe-bus.sock`)
 
 Each client opens a persistent TCP-like connection to the socket. There is no
 authentication at the socket level — restrict socket permissions via filesystem
 (mode 0600, owned by the service user).
+
+**iroh (remote):** See [iroh transport](#iroh-transport) below.
+
+---
+
+## iroh transport
+
+iroh provides P2P QUIC connectivity so clients can connect to a single cafe-bus
+from remote machines, through NATs and firewalls. See [ADR-118](adr-118-iroh-transport.md).
+
+### Bus setup
+
+Set `CAFE_BUS_IROH_SECRET_KEY` to a hex-encoded (64 hex chars) Ed25519 secret key.
+The bus will bind an iroh endpoint alongside its Unix socket:
+
+```bash
+export CAFE_BUS_IROH_SECRET_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+cafe-bus
+```
+
+The bus writes its `EndpointAddr` (public key, relay URL, IP addresses) to
+`<socket-path>.iroh-addr` after startup. Clients can use this file for discovery.
+
+### Client setup (cafe-cli)
+
+Three ways to connect with cafe-cli:
+
+1. **Auto-discovery via addr file** — uses the bus-written `.iroh-addr` file:
+   ```
+   cafe-cli --bus /path/to/cafe-bus.sock create-session --agent default
+   ```
+
+2. **Explicit key + relay** — specify the bus endpoint ID and a relay URL:
+   ```
+   cafe-cli --bus-iroh-key <bus-public-key-hex> --bus-iroh-relay https://euc1-1.relay.n0.iroh.link./ create-session --agent default
+   ```
+
+3. **Env vars** — `CAFE_BUS_IROH_KEY`, `CAFE_BUS_IROH_RELAY`, `CAFE_BUS_IROH_ALPN`:
+   ```
+   CAFE_BUS_IROH_KEY=<key> CAFE_BUS_IROH_RELAY=<url> cafe-cli create-session --agent default
+   ```
+
+### Client setup (SDK)
+
+```rust
+use cafe_sdk::bus::{BusClient, IrohConfig};
+use std::str::FromStr;
+
+// From CLI args or env
+let cfg = IrohConfig::from_cli(
+    Some("bus-public-key-hex"),      // --bus-iroh-key
+    Some("https://relay.url"),       // --bus-iroh-relay
+    None,                            // --bus-iroh-alpn (default: cafe-bus/0)
+).expect("valid key");
+
+// Or from the bus's addr file
+let json = std::fs::read_to_string("/tmp/cafe-bus.sock.iroh-addr")?;
+let cfg = IrohConfig::from_bus_addr_json(&json).expect("valid addr");
+
+let client = BusClient::from_iroh_config(cfg).await?;
+// use client.publish(), client.subscribe(), etc. — same API as Unix
+```
+
+### Adding iroh to a service
+
+1. Enable the feature on cafe-sdk:
+   ```toml
+   cafe-sdk = { path = "../cafe-sdk", features = ["bus-client", "iroh-client"] }
+   ```
+
+2. Construct the client at startup:
+   ```rust
+   let client = if let Some(cfg) = IrohConfig::from_cli(
+       cli_bus_iroh_key.as_deref(),
+       cli_bus_iroh_relay.as_deref(),
+       cli_bus_iroh_alpn.as_deref(),
+   ) {
+       BusClient::from_iroh_config(cfg).await?
+   } else {
+       BusClient::unix(&socket_path)
+   };
+   ```
+
+### Architecture
+
+```
+Remote machine                  Local machine
+┌──────────────┐               ┌──────────────────────────────────┐
+│ cafe-llm     │               │ cafe-bus                         │
+│ (IrohTransport)│←─ QUIC ───→│ /tmp/cafe-bus.sock ←─ cafe-store │
+│              │    P2P       │ + iroh endpoint   ←─ cafe-server │
+└──────────────┘    via n0    │                   ←─ cafe-tui    │
+                    relay     └──────────────────────────────────┘
+```
+
+Both transports feed the same protocol (identical `ClientMessage`/`ServerMessage`
+NDJSON) — the bus treats all connections identically regardless of transport.
+
+### Relay servers
+
+By default, the bus and clients use [n0's public relay network](https://n0.computer).
+No infrastructure needed — both sides auto-discover the nearest relay. For production,
+you can run your own relay server and configure it via `--bus-iroh-relay`.
+
+### Peer-to-peer flow
+
+1. Both bus and client bind an iroh endpoint (connects to n0 relay)
+2. Client calls `endpoint.connect(bus_addr)` — routed through relay
+3. QUIC handshake completes (hole-punched direct if possible, relayed if not)
+4. Client opens a bidirectional stream, writes a `SetMeta` message
+5. Bus accepts the stream, sends `Connected`, starts processing messages
+6. Same NDJSON protocol runs over the QUIC stream
+
+### Limitations
+
+- No peer whitelist yet — any endpoint with the bus's public key + relay URL can connect
+- All clients share one bus endpoint; the bus does not federate between multiple instances
+- Relay servers are an external dependency (n0 public relays by default)
 
 ---
 

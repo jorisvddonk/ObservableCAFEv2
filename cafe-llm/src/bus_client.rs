@@ -32,7 +32,7 @@ async fn connect_and_run(
 ) -> anyhow::Result<()> {
     info!("cafe-llm: starting (subscribe-all mode) on {}", socket_path);
 
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
 
     // Accumulated set of all models ever discovered.
     // llama-swap kills backends when swapping, so /v1/models only shows the active one.

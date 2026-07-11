@@ -162,11 +162,11 @@ mod tests {
         );
         db.migrate().await.unwrap();
         AppState {
-            bus: BusClient::new(tmpdir.join("bus.sock").to_str().unwrap()),
+            bus: BusClient::unix(tmpdir.join("bus.sock").to_str().unwrap()),
             db,
             proxy_state: Arc::new(ProxyState {
                 registry: Arc::new(RouteRegistryInner::new(1024 * 1024, 30, 60)),
-                bus: BusClient::new(tmpdir.join("bus.sock").to_str().unwrap()),
+                bus: BusClient::unix(tmpdir.join("bus.sock").to_str().unwrap()),
                 pending: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             }),
         }

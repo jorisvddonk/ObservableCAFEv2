@@ -11,7 +11,7 @@ pub async fn run_session_loop(
     socket_path: String,
     executor: Arc<PipelineExecutor>,
 ) {
-    let client = BusClient::new(&socket_path);
+    let client = BusClient::unix(&socket_path);
     let bus = Arc::new(client);
 
     let mut rx = match bus.subscribe(&session_id).await {

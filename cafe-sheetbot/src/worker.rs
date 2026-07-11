@@ -21,7 +21,7 @@ async fn subscribe_sessions(
 ) -> anyhow::Result<()> {
     info!("cafe-sheetbot: starting (subscribe-all mode) on {}", socket_path);
 
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

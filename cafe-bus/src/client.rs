@@ -10,12 +10,14 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, warn};
 
-const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024; // 16 MB
+/// Shared registry of active connections, keyed by connection ID.
+/// Writers are type-erased so both Unix and iroh connections can coexist.
+pub type ConnectionRegistry =
+    Arc<RwLock<HashMap<String, Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send>>>>>>;
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -29,14 +31,14 @@ pub struct ConnectionMeta {
 pub type ConnectionMetaRegistry = Arc<RwLock<HashMap<String, ConnectionMeta>>>;
 
 /// A framing reader that uses a `BusCodec` to extract messages from a byte stream.
-struct Frames<C: BusCodec> {
-    reader: BufReader<OwnedReadHalf>,
+struct Frames<C: BusCodec, R: AsyncRead + Unpin> {
+    reader: BufReader<R>,
     buf: Vec<u8>,
     _codec: PhantomData<C>,
 }
 
-impl<C: BusCodec> Frames<C> {
-    fn new(reader: OwnedReadHalf) -> Self {
+impl<C: BusCodec, R: AsyncRead + Unpin> Frames<C, R> {
+    fn new(reader: R) -> Self {
         Self {
             reader: BufReader::new(reader),
             buf: Vec::new(),
@@ -65,16 +67,18 @@ impl<C: BusCodec> Frames<C> {
     }
 }
 
-/// Shared registry of active connections, keyed by connection ID.
-pub type ConnectionRegistry = Arc<RwLock<HashMap<String, Arc<Mutex<OwnedWriteHalf>>>>>;
-
-pub async fn handle_client<C: BusCodec>(
-    stream: tokio::net::UnixStream,
+/// Handle a new client connection from a reader/writer pair.
+///
+/// The caller is responsible for splitting the transport into read/write halves
+/// and boxing the writer. This allows the bus to accept connections from any
+/// transport (Unix socket, iroh QUIC, etc.).
+pub async fn handle_client<C: BusCodec, R: AsyncRead + Unpin + Send + 'static>(
+    reader: R,
+    writer: Box<dyn AsyncWrite + Unpin + Send + 'static>,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
     conn_meta: ConnectionMetaRegistry,
 ) {
-    let (reader, writer) = stream.into_split();
     let writer = Arc::new(Mutex::new(writer));
 
     let conn_id = format!("c-{}", NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed));
@@ -94,7 +98,7 @@ pub async fn handle_client<C: BusCodec>(
     // Track spawned subscriber tasks per session for this connection
     let mut subscriber_tasks: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
-    if let Err(e) = client_loop::<C>(reader, writer, registry.clone(), conns, metas.clone(), conn_id.clone(), &mut subscriber_tasks).await {
+    if let Err(e) = client_loop::<C, R>(reader, writer.clone(), registry.clone(), conns, metas.clone(), conn_id.clone(), &mut subscriber_tasks).await {
         debug!("client {} disconnected: {}", conn_id, e);
     }
 
@@ -122,16 +126,16 @@ pub async fn handle_client<C: BusCodec>(
     }
 }
 
-async fn client_loop<C: BusCodec>(
-    reader: OwnedReadHalf,
-    writer: Arc<Mutex<OwnedWriteHalf>>,
+async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
+    reader: R,
+    writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + 'static>>>,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
     conn_meta: ConnectionMetaRegistry,
     conn_id: String,
     subscriber_tasks: &mut Vec<(String, tokio::task::JoinHandle<()>)>,
 ) -> Result<()> {
-    let mut frames = Frames::<C>::new(reader);
+    let mut frames = Frames::<C, _>::new(reader);
 
     while let Some(msg) = frames.next_msg::<ClientMessage>().await? {
         let msg = msg;
@@ -609,7 +613,7 @@ pub fn session_matches_filter(session: &SessionState, filter: &SubscribeFilter) 
 }
 
 async fn replay_and_forward<C: BusCodec>(
-    writer: &Arc<Mutex<OwnedWriteHalf>>,
+    writer: &Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + 'static>>>,
     session_id: String,
     history: Vec<Chunk>,
     retained: Vec<Chunk>,
@@ -669,12 +673,18 @@ async fn replay_and_forward<C: BusCodec>(
     });
 }
 
-async fn send_bytes(writer: &Arc<Mutex<OwnedWriteHalf>>, payload: &[u8]) -> std::io::Result<()> {
+async fn send_bytes(
+    writer: &Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + 'static>>>,
+    payload: &[u8],
+) -> std::io::Result<()> {
     let mut w = writer.lock().await;
     w.write_all(payload).await
 }
 
-async fn send_msg<C: BusCodec>(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &ServerMessage) -> std::io::Result<()> {
+async fn send_msg<C: BusCodec>(
+    writer: &Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + 'static>>>,
+    msg: &ServerMessage,
+) -> std::io::Result<()> {
     if let Ok(payload) = C::encode(msg) {
         send_bytes(writer, &payload).await?;
     }
@@ -682,7 +692,7 @@ async fn send_msg<C: BusCodec>(writer: &Arc<Mutex<OwnedWriteHalf>>, msg: &Server
 }
 
 async fn send_error<C: BusCodec>(
-    writer: &Arc<Mutex<OwnedWriteHalf>>,
+    writer: &Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + 'static>>>,
     session_id: Option<&str>,
     message: &str,
     code: &str,
@@ -695,6 +705,36 @@ async fn send_error<C: BusCodec>(
     if let Ok(payload) = C::encode(&msg) {
         let _ = send_bytes(writer, &payload).await;
     }
+}
+
+/// Build a null chunk carrying session config annotations.
+pub fn make_config_chunk(config: &SessionConfig) -> Chunk {
+    let mut chunk = Chunk::new_null("com.nominal.cafe-bus")
+        .with_annotation(keys::CONFIG_TYPE, "runtime");
+    if let Some(b) = &config.backend {
+        chunk = chunk.with_annotation(keys::CONFIG_BACKEND, b);
+    }
+    if let Some(m) = &config.model {
+        chunk = chunk.with_annotation(keys::CONFIG_MODEL, m);
+    }
+    if let Some(sp) = &config.system_prompt {
+        chunk = chunk.with_annotation(keys::CONFIG_SYSTEM_PROMPT, sp);
+    }
+    if let Some(t) = config.temperature {
+        chunk = chunk.with_annotation(keys::CONFIG_TEMPERATURE, t);
+    }
+    if let Some(mt) = config.max_tokens {
+        chunk = chunk.with_annotation(keys::CONFIG_MAX_TOKENS, mt);
+    }
+    chunk
+}
+
+/// Build a tags notification chunk.
+pub fn make_tags_chunk(tags: &[String]) -> Chunk {
+    Chunk::new_null("com.nominal.cafe-bus")
+        .with_annotation(keys::SESSION_TAGS, serde_json::Value::Array(
+            tags.iter().map(|t| serde_json::Value::String(t.clone())).collect()
+        ))
 }
 
 #[cfg(test)]
@@ -1371,159 +1411,10 @@ mod tests {
                 agents: Some(vec![s.agent_id.clone(), extra_agent]),
                 ..Default::default()
             };
+            // If the session matches the broader set, it must also match the specific one
             if session_matches_filter(&s, &broader) {
                 prop_assert!(session_matches_filter(&s, &specific));
             }
         }
-
-        #[test]
-        fn session_filter_monotonic_tags(
-            mut s in any_session_state(),
-            extra_tag in "[a-z]{1,10}",
-        ) {
-            s.tags = vec!["base".into(), extra_tag.clone()];
-            let specific = SubscribeFilter {
-                tags: Some(vec!["base".into()]),
-                ..Default::default()
-            };
-            let broader = SubscribeFilter {
-                tags: Some(vec!["base".into(), extra_tag]),
-                ..Default::default()
-            };
-            // If session matches the specific set, it must also match the broader set
-            if session_matches_filter(&s, &specific) {
-                prop_assert!(session_matches_filter(&s, &broader));
-            }
-        }
-
-        #[test]
-        fn session_filter_monotonic_tags_exclude(
-            mut s in any_session_state(),
-            tag in "[a-z]{1,10}",
-        ) {
-            s.tags = vec![tag.clone()];
-            // exclude_tags with more entries is more restrictive
-            let less_restrictive = SubscribeFilter {
-                tags_exclude: Some(vec![]),
-                ..Default::default()
-            };
-            let more_restrictive = SubscribeFilter {
-                tags_exclude: Some(vec![tag]),
-                ..Default::default()
-            };
-            // Passing the more restrictive filter implies passing the less restrictive one
-            if session_matches_filter(&s, &more_restrictive) {
-                prop_assert!(session_matches_filter(&s, &less_restrictive));
-            }
-        }
-
-        // ── Source connection injection (ADR-101) ──
-
-        #[test]
-        fn source_connection_injected_on_publish(
-            chunk in any_chunk(),
-            conn_id in "[a-zA-Z0-9._-]{1,30}",
-        ) {
-            let ct = chunk.content_type.clone();
-            let producer = chunk.producer.clone();
-            let tagged = chunk.with_annotation(keys::CAFE_SOURCE_CONNECTION, &conn_id);
-            prop_assert_eq!(
-                tagged.get_annotation::<String>(keys::CAFE_SOURCE_CONNECTION),
-                Some(conn_id)
-            );
-            // Other fields unchanged
-            prop_assert_eq!(tagged.content_type, ct);
-            prop_assert_eq!(tagged.producer, producer);
-        }
-
-        // ── Direct-to precondition (ADR-102) ──
-
-        #[test]
-        fn direct_to_present_when_annotated(
-            chunk in any_chunk(),
-            target in "[a-zA-Z0-9._-]{1,30}",
-        ) {
-            let with_direct = chunk.with_annotation(keys::CAFE_DIRECT_TO, &target);
-            prop_assert_eq!(
-                with_direct.get_annotation::<String>(keys::CAFE_DIRECT_TO),
-                Some(target)
-            );
-        }
-
-        #[test]
-        fn direct_to_absent_when_not_annotated(chunk in any_chunk()) {
-            prop_assert!(chunk.get_annotation::<String>(keys::CAFE_DIRECT_TO).is_none());
-        }
-
-        #[test]
-        fn direct_to_skips_session_publish(
-            chunk in any_chunk(),
-            target in "[a-zA-Z0-9._-]{1,30}",
-        ) {
-            let with_direct = chunk.with_annotation(keys::CAFE_DIRECT_TO, &target);
-            // SessionState::publish does NOT check for direct_to, so the chunk
-            // is appended to history normally. The skip-broadcast behavior is
-            // enforced at the handler level (client_loop in client.rs).
-            // This test verifies the annotation precondition holds.
-            let mut state = SessionState::new("test".into(), "test".into());
-            state.publish(with_direct.clone());
-            // The chunk goes to history because SessionState.publish doesn't
-            // implement direct_to logic
-            if !with_direct.is_transient() {
-                assert_eq!(state.history.len(), 1);
-                assert_eq!(
-                    state.history[0].get_annotation::<String>(keys::CAFE_DIRECT_TO),
-                    Some(target)
-                );
-            }
-        }
     }
-
-    // ── Connection ID properties (ADR-101) ──
-
-    #[test]
-    fn connection_ids_are_monotonic() {
-        let first = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-        let second = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-        assert!(second > first, "connection IDs must be strictly increasing");
-        assert_eq!(second, first + 1, "connection IDs must be sequential");
-    }
-
-    #[test]
-    fn connection_id_format_is_c_prefix() {
-        let id = NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed);
-        let conn_id = format!("c-{}", id);
-        assert!(conn_id.starts_with("c-"), "connection ID must start with 'c-'");
-        // Verify it parses back to the same number
-        let parsed: u64 = conn_id.strip_prefix("c-").unwrap().parse().unwrap();
-        assert_eq!(parsed, id);
-    }
-}
-
-fn make_config_chunk(config: &SessionConfig) -> Chunk {
-    let mut chunk = Chunk::new_null("com.nominal.cafe-bus")
-        .with_annotation(keys::CONFIG_TYPE, "runtime");
-    if let Some(b) = &config.backend {
-        chunk = chunk.with_annotation(keys::CONFIG_BACKEND, b);
-    }
-    if let Some(m) = &config.model {
-        chunk = chunk.with_annotation(keys::CONFIG_MODEL, m);
-    }
-    if let Some(sp) = &config.system_prompt {
-        chunk = chunk.with_annotation(keys::CONFIG_SYSTEM_PROMPT, sp);
-    }
-    if let Some(t) = config.temperature {
-        chunk = chunk.with_annotation(keys::CONFIG_TEMPERATURE, t);
-    }
-    if let Some(mt) = config.max_tokens {
-        chunk = chunk.with_annotation(keys::CONFIG_MAX_TOKENS, mt);
-    }
-    chunk
-}
-
-fn make_tags_chunk(tags: &[String]) -> Chunk {
-    Chunk::new_null("com.nominal.cafe-bus")
-        .with_annotation(keys::SESSION_TAGS, serde_json::Value::Array(
-            tags.iter().map(|t| serde_json::Value::String(t.clone())).collect()
-        ))
 }

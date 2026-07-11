@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cafe-sdk = { path = "../cafe-sdk", features = ["bus-client", "http-client"] }
+cafe-sdk = { path = "../cafe-sdk", features = ["bus-client", "http-client", "iroh-client"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"

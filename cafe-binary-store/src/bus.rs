@@ -12,7 +12,7 @@ pub async fn run(
     db: Arc<Db>,
     jwt_key: Arc<Vec<u8>>,
 ) {
-    let bus = BusClient::new(&cfg.bus_socket);
+    let bus = BusClient::unix(&cfg.bus_socket);
 
     // Subscribe only for BinaryRef chunks
     let filter = SubscribeFilter {

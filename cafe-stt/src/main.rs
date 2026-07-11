@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
 }
 
 async fn subscribe_all(config: &Config) -> Result<()> {
-    let client = cafe_sdk::bus::BusClient::new(&config.socket_path);
+    let client = cafe_sdk::bus::BusClient::unix(&config.socket_path);
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

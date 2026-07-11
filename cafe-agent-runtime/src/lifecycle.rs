@@ -15,7 +15,7 @@ pub async fn create_agent_session(
     ephemeral_keepalive_secs: Option<u64>,
     ephemeral_count_role: Option<String>,
 ) -> Result<()> {
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
 
     let config = if let Some(keepalive) = ephemeral_keepalive_secs {
         SessionConfig {
@@ -74,7 +74,7 @@ pub async fn create_agent_session(
 /// Send a flow.signal: reset to an agent's session.
 #[allow(dead_code)]
 pub async fn reset_agent_session(socket_path: &str, agent_name: &str) -> Result<()> {
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
     let chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
         .with_annotation(keys::CAFE_FLOW_SIGNAL, "reset")
         .with_annotation(keys::CAFE_FLOW_AGENT_ID, agent_name);
@@ -84,7 +84,7 @@ pub async fn reset_agent_session(socket_path: &str, agent_name: &str) -> Result<
 
 /// Publish a cron tick to an agent's session.
 pub async fn tick_agent(socket_path: &str, agent_name: &str) -> Result<()> {
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
     let chunk = Chunk::new_null("com.nominal.cafe-agent-runtime")
         .with_annotation(keys::CAFE_FLOW_SIGNAL, "tick");
     client.publish(agent_name, chunk).await?;

@@ -6,6 +6,9 @@ pub struct Config {
     pub proxy_max_body_size: usize,
     pub proxy_gc_interval_secs: u64,
     pub proxy_stale_purge_secs: u64,
+    pub bus_iroh_key: Option<String>,
+    pub bus_iroh_relay: Option<String>,
+    pub bus_iroh_alpn: Option<String>,
 }
 
 impl Config {
@@ -31,6 +34,9 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(60),
+            bus_iroh_key: std::env::var("CAFE_BUS_IROH_KEY").ok(),
+            bus_iroh_relay: std::env::var("CAFE_BUS_IROH_RELAY").ok(),
+            bus_iroh_alpn: std::env::var("CAFE_BUS_IROH_ALPN").ok(),
         }
     }
 }

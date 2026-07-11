@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run(socket_path: &str) -> anyhow::Result<()> {
     info!("cafe-web-fetch: starting on {}", socket_path);
-    let client = cafe_sdk::bus::BusClient::new(socket_path);
+    let client = cafe_sdk::bus::BusClient::unix(socket_path);
 
     // Subscribe to the proxy session
     let mut rx = client.subscribe(proxy_sdk::PROXY_SESSION).await?;

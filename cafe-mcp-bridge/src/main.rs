@@ -178,7 +178,7 @@ async fn dispatch_meta(
     args: &serde_json::Map<String, Value>,
     bus_path: &str,
 ) -> Result<String> {
-    let client = BusClient::new(bus_path);
+    let client = BusClient::unix(bus_path);
     match name {
         "cafe_meta_ping" => meta_ping(&client).await,
         "cafe_meta_list_sessions" => meta_list_sessions(&client).await,
@@ -323,7 +323,7 @@ async fn rpc_dispatch(
         .rpc_method
         .ok_or_else(|| anyhow::anyhow!("tool {name} has no RPC method"))?;
 
-    let client = BusClient::new(bus_path);
+    let client = BusClient::unix(bus_path);
 
     let session_id = format!("_cafe_mcp_{}", Uuid::new_v4());
     let config = SessionConfig {

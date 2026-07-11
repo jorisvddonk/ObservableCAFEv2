@@ -142,7 +142,7 @@ async fn run_pipeline_subscriber(
     socket_path: String,
     agent_pipelines: Arc<HashMap<String, AgentPipelineInfo>>,
 ) {
-    let client = cafe_sdk::bus::BusClient::new(&socket_path);
+    let client = cafe_sdk::bus::BusClient::unix(&socket_path);
     let mut rx = match client.subscribe_all().await {
         Ok(rx) => rx,
         Err(e) => {

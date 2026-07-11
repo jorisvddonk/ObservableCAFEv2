@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         let app = Arc::new(App {
             kb: KnowledgeBase::new(db_path2.clone(), dim),
             embed_config: embed_config.clone(),
-            bus: cafe_sdk::bus::BusClient::new(&sp),
+            bus: cafe_sdk::bus::BusClient::unix(&sp),
             chunk_size,
             chunk_overlap,
         });

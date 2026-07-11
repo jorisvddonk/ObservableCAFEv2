@@ -15,7 +15,7 @@ pub async fn run(socket_path: String, db: Arc<Db>) {
 }
 
 async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> {
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
     let filter = SubscribeFilter {
         sessions: None,
         agents: None,

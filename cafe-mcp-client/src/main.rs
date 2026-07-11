@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     let socket_path = std::env::var("CAFE_BUS_SOCKET")
         .unwrap_or_else(|_| "/tmp/cafe-bus.sock".into());
 
-    let client = cafe_sdk::bus::BusClient::new(&socket_path);
+    let client = cafe_sdk::bus::BusClient::unix(&socket_path);
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

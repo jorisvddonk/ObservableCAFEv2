@@ -16,12 +16,14 @@ thiserror    = { workspace = true }
 reqwest      = { workspace = true, default-features = false, features = ["json", "stream"], optional = true }
 futures-util = { workspace = true, optional = true }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "__rustls-tls"], optional = true }
+iroh         = { version = "1", optional = true }
 
 [features]
 default      = []
 bus-client   = []
 http-client  = ["dep:reqwest", "dep:futures-util"]
 ws-client    = ["dep:tokio-tungstenite", "dep:futures-util"]
+iroh-client  = ["dep:iroh"]
 
 [dev-dependencies]
 proptest = "1"

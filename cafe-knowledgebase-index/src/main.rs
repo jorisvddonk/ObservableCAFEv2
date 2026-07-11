@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
 
     println!("Indexing {} bytes into namespace '{}'", text.len(), namespace);
 
-    let client = cafe_sdk::bus::BusClient::new(&bus_path);
+    let client = cafe_sdk::bus::BusClient::unix(&bus_path);
 
     let session_id = format!("_cafe_knowledgebase_index_{}", uuid::Uuid::new_v4());
     client.create_session(&session_id, "knowledgebase-index", cafe_sdk::SessionConfig::default()).await?;

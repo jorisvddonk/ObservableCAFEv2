@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn subscribe_all(socket_path: &str) -> anyhow::Result<()> {
     info!("cafe-dice: starting on {}", socket_path);
-    let client = BusClient::new(socket_path);
+    let client = BusClient::unix(socket_path);
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

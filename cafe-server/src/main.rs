@@ -48,7 +48,15 @@ async fn main() -> Result<()> {
     println!("ADMIN TOKEN (save this): {}", admin_token);
     println!("==============================================");
 
-    let bus = BusClient::new(config.socket_path.clone());
+    let bus = if let Some(cfg) = cafe_sdk::bus::IrohConfig::from_cli(
+        config.bus_iroh_key.as_deref(),
+        config.bus_iroh_relay.as_deref(),
+        config.bus_iroh_alpn.as_deref(),
+    ) {
+        BusClient::from_iroh_config(cfg).await?
+    } else {
+        BusClient::unix(config.socket_path.clone())
+    };
 
     // Set up the HTTP proxy route registry
     let registry = Arc::new(RouteRegistryInner::new(

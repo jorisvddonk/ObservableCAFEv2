@@ -1,5 +1,6 @@
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
+use cafe_sdk::bus::IrohConfig;
 use cafe_sdk::http::HttpClient;
 use cafe_sdk::{Chunk, ContentType, ServerMessage, SubscribeFilter};
 use clap::{Parser, Subcommand};
@@ -79,6 +80,18 @@ struct Cli {
 
     #[arg(short, long, help = "Logging to stderr")]
     verbose: bool,
+
+    /// iroh: bus public key (EndpointId)
+    #[arg(long)]
+    bus_iroh_key: Option<String>,
+
+    /// iroh: relay URL
+    #[arg(long)]
+    bus_iroh_relay: Option<String>,
+
+    /// iroh: ALPN (default: cafe-bus/0)
+    #[arg(long)]
+    bus_iroh_alpn: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -166,7 +179,32 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt::init();
     }
 
-    let client = BusClient::new(&cli.bus);
+    let iroh_requested = cli.bus_iroh_key.is_some()
+        || cli.bus_iroh_relay.is_some()
+        || cli.bus_iroh_alpn.is_some();
+
+    let client = if let Some(cfg) = IrohConfig::from_cli(
+        cli.bus_iroh_key.as_deref(),
+        cli.bus_iroh_relay.as_deref(),
+        cli.bus_iroh_alpn.as_deref(),
+    ) {
+        BusClient::from_iroh_config(cfg).await?
+    } else if iroh_requested {
+        anyhow::bail!("--bus-iroh-key is required and must be a valid EndpointId");
+    } else {
+        // Try local addr file from the bus
+        let addr_file = format!("{}.iroh-addr", cli.bus);
+        if let Ok(json) = std::fs::read_to_string(&addr_file) {
+            if let Some(cfg) = IrohConfig::from_bus_addr_json(&json) {
+                eprintln!("Using iroh addr from {}", addr_file);
+                BusClient::from_iroh_config(cfg).await?
+            } else {
+                BusClient::unix(&cli.bus)
+            }
+        } else {
+            BusClient::unix(&cli.bus)
+        }
+    };
 
     match cli.command {
         Command::Publish {
@@ -513,7 +551,7 @@ async fn main() -> Result<()> {
 
                 StoreAction::Download { chunk_id, output, store_url, session } => {
                     let session_id = session.as_deref().unwrap_or("_store_ops");
-                    let bus = BusClient::new(&cli.bus);
+                    let bus = BusClient::unix(&cli.bus);
 
                     // Find read credentials from history
                     let history = bus.get_history(session_id).await?;
@@ -534,7 +572,7 @@ async fn main() -> Result<()> {
 
                 StoreAction::Stream { chunk_id, store_url, session } => {
                     let session_id = session.as_deref().unwrap_or("_store_ops");
-                    let bus = BusClient::new(&cli.bus);
+                    let bus = BusClient::unix(&cli.bus);
 
                     let history = bus.get_history(session_id).await?;
                     let (read_url, read_token) = find_read_creds(&history, &chunk_id)?;

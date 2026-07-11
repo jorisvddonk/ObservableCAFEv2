@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(db::Db::connect(&cfg.data_dir).await?);
 
     // Create bus client for HTTP handlers (bus subscriber creates its own)
-    let bus = BusClient::new(&cfg.bus_socket);
+    let bus = BusClient::unix(&cfg.bus_socket);
 
     // Spawn bus subscriber (BinaryRef chunks + session events)
     let bus_cfg = cfg.clone();
