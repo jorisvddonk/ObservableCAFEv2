@@ -14,16 +14,14 @@ pub enum ContentType {
 /// base64 serde module for Option<Vec<u8>>
 pub mod base64_option {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(data: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match data {
-            None => serializer.serialize_none(),
-            Some(bytes) => serializer.serialize_str(&STANDARD.encode(bytes)),
-        }
+        let opt: Option<String> = data.as_ref().map(|bytes| STANDARD.encode(bytes));
+        opt.serialize(serializer)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>

@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
                         let metas = conn_meta.clone();
                         let (reader, writer) = stream.into_split();
                         let writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send + 'static> = Box::new(writer);
-                        tokio::spawn(client::handle_client::<cafe_types::JsonLineCodec, _>(reader, writer, reg, conns, metas));
+                        tokio::spawn(client::handle_connection(reader, writer, reg, conns, metas));
                     }
                     Err(e) => {
                         tracing::error!("accept error: {}", e);
@@ -183,7 +183,7 @@ async fn run_iroh_listener(
                             info!("iroh: bidirectional stream accepted");
                             let writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send + 'static> =
                                 Box::new(send);
-                            client::handle_client::<cafe_types::JsonLineCodec, _>(
+                            client::handle_connection(
                                 recv, writer, reg, conns, metas,
                             )
                             .await;

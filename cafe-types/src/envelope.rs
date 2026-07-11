@@ -72,6 +72,11 @@ pub enum ClientMessage {
         /// filter which subscribers count toward session lifecycle.
         #[serde(default)]
         role: Option<String>,
+        /// Preferred codecs for protocol negotiation, ordered by priority.
+        /// e.g. ["bincode", "json"]. If absent, the bus treats this as a
+        /// legacy connection and continues with JSON.
+        #[serde(default)]
+        codecs: Option<Vec<String>>,
     },
     CreateSession {
         session_id: String,
@@ -95,6 +100,10 @@ pub enum ClientMessage {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ServerMessage {
     Connected {
+        connection_id: String,
+    },
+    CodecSet {
+        codec: String,
         connection_id: String,
     },
     Chunk {
@@ -326,7 +335,7 @@ mod tests {
             (".{0,20}", any_chunk())
                 .prop_map(|(session_id, chunk)| ClientMessage::Publish { session_id, chunk }),
             proptest::option::of(".{0,20}")
-                .prop_map(|role| ClientMessage::SetMeta { role }),
+                .prop_map(|role| ClientMessage::SetMeta { role, codecs: None }),
             (".{0,20}", ".{0,20}", any_session_config()).prop_map(
                 |(session_id, agent_id, config)| ClientMessage::CreateSession {
                     session_id,
@@ -347,6 +356,12 @@ mod tests {
         prop_oneof![
             ".{0,20}"
                 .prop_map(|connection_id| ServerMessage::Connected { connection_id }),
+            (".{1,10}", ".{0,20}").prop_map(|(codec, connection_id)| {
+                ServerMessage::CodecSet {
+                    codec,
+                    connection_id,
+                }
+            }),
             (".{0,20}", any_chunk())
                 .prop_map(|(session_id, chunk)| ServerMessage::Chunk { session_id, chunk }),
             (".{0,20}", ".{0,20}").prop_map(

@@ -23,8 +23,9 @@ libc               = "0.2"
 iroh               = { version = "1", optional = true }
 
 [features]
-default = ["iroh-listener"]
+default = ["iroh-listener", "bincode-listener"]
 iroh-listener = ["dep:iroh"]
+bincode-listener = ["cafe-types/bincode-codec"]
 
 [[bench]]
 name = "bus_benchmarks"

@@ -47,9 +47,17 @@ class BusConnection:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(socket_path)
         self.buf = b""
-        # Consume the initial Connected message
+        # Send SetMeta to trigger the bus handshake. The bus now waits
+        # for the first client message before sending Connected/CodecSet.
+        self.send_msg({"op": "set_meta", "role": None})
+        # Consume the initial response (Connected or CodecSet)
         msg = self.read_msg()
-        assert msg.get("event") == "connected", f"expected Connected, got {msg}"
+        if msg.get("event") == "codec_set":
+            # Negotiation response — read next message (could be Connected or other)
+            # Bus only sends CodecSet for negotiated connections. For legacy
+            # (no codecs in SetMeta), it sends Connected.
+            pass
+        assert msg.get("event") in ("connected", "codec_set"), f"expected Connected/CodecSet, got {msg}"
 
     def send_msg(self, msg: dict):
         """Send a JSON-line message."""

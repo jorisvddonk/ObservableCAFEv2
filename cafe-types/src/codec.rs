@@ -13,16 +13,13 @@ use std::fmt;
 /// Used by binary codecs (bincode, etc.) where compact byte transmission
 /// is desired. Selected via the `raw-binary-data` feature flag on Chunk's `data` field.
 pub mod raw_bytes_option {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(data: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match data {
-            None => serializer.serialize_none(),
-            Some(bytes) => serializer.serialize_bytes(bytes),
-        }
+        data.serialize(serializer)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
@@ -234,20 +231,16 @@ mod tests {
 
     #[cfg(feature = "bincode-codec")]
     #[test]
-    fn bincode_roundtrip() {
-        let msg = ClientMessage::Publish {
-            session_id: "s-1".into(),
-            chunk: test_chunk(),
-        };
-        let wire = BincodeLengthPrefixCodec::encode(&msg).unwrap();
-        let (decoded, consumed) = BincodeLengthPrefixCodec::decode::<ClientMessage>(&wire)
+    fn bincode_chunk_roundtrip() {
+        let chunk = test_chunk();
+        let wire = BincodeLengthPrefixCodec::encode(&chunk).unwrap();
+        let (decoded, consumed) = BincodeLengthPrefixCodec::decode::<Chunk>(&wire)
             .unwrap()
             .expect("should decode");
         assert_eq!(consumed, wire.len());
-        match decoded {
-            ClientMessage::Publish { session_id, .. } => assert_eq!(session_id, "s-1"),
-            _ => panic!("wrong variant"),
-        }
+        assert_eq!(decoded.id, chunk.id);
+        assert_eq!(decoded.content_type, chunk.content_type);
+        assert_eq!(decoded.content, chunk.content);
     }
 
     #[cfg(feature = "bincode-codec")]

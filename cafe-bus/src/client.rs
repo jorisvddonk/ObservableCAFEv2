@@ -2,9 +2,11 @@ use crate::registry::SessionRegistry;
 use crate::session::SessionState;
 use anyhow::Result;
 use cafe_types::{
-    keys, BusCodec, BusCodecError, Chunk, ClientMessage, ServerMessage,
-    SessionConfig, SubscribeFilter,
+    keys, BusCodec, BusCodecError, Chunk, ClientMessage, JsonLineCodec,
+    ServerMessage, SessionConfig, SubscribeFilter,
 };
+#[cfg(feature = "bincode-listener")]
+use cafe_types::BincodeLengthPrefixCodec;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,6 +48,18 @@ impl<C: BusCodec, R: AsyncRead + Unpin> Frames<C, R> {
         }
     }
 
+    fn with_buf(reader: R, buf: Vec<u8>) -> Self {
+        Self {
+            reader: BufReader::new(reader),
+            buf,
+            _codec: PhantomData,
+        }
+    }
+
+    fn into_parts(self) -> (R, Vec<u8>) {
+        (self.reader.into_inner(), self.buf)
+    }
+
     /// Read the next framed message, blocking until a complete frame arrives.
     async fn next_msg<M: serde::de::DeserializeOwned>(&mut self) -> Result<Option<M>, BusCodecError> {
         loop {
@@ -72,6 +86,8 @@ impl<C: BusCodec, R: AsyncRead + Unpin> Frames<C, R> {
 /// The caller is responsible for splitting the transport into read/write halves
 /// and boxing the writer. This allows the bus to accept connections from any
 /// transport (Unix socket, iroh QUIC, etc.).
+///
+/// Uses JSON as the default codec. For codec negotiation, use [`handle_connection`].
 pub async fn handle_client<C: BusCodec, R: AsyncRead + Unpin + Send + 'static>(
     reader: R,
     writer: Box<dyn AsyncWrite + Unpin + Send + 'static>,
@@ -98,7 +114,10 @@ pub async fn handle_client<C: BusCodec, R: AsyncRead + Unpin + Send + 'static>(
     // Track spawned subscriber tasks per session for this connection
     let mut subscriber_tasks: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
-    if let Err(e) = client_loop::<C, R>(reader, writer.clone(), registry.clone(), conns, metas.clone(), conn_id.clone(), &mut subscriber_tasks).await {
+    if let Err(e) = client_loop::<C, R>(
+        Frames::<C, _>::new(reader),
+        writer.clone(), registry.clone(), conns, metas.clone(), conn_id.clone(), &mut subscriber_tasks,
+    ).await {
         debug!("client {} disconnected: {}", conn_id, e);
     }
 
@@ -126,8 +145,143 @@ pub async fn handle_client<C: BusCodec, R: AsyncRead + Unpin + Send + 'static>(
     }
 }
 
-async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
+/// Handle a new client connection with codec negotiation.
+///
+/// Always decodes the first message as JSON. If the client sends `SetMeta` with
+/// a `codecs` field, the bus negotiates the codec and sends `CodecSet`. Otherwise,
+/// it sends `Connected` and stays on JSON. This is backward-compatible: old clients
+/// don't send `codecs`, and old buses (using `handle_client`) ignore it.
+///
+/// After negotiation, all subsequent messages use the selected codec.
+pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
     reader: R,
+    writer: Box<dyn AsyncWrite + Unpin + Send + 'static>,
+    registry: Arc<RwLock<SessionRegistry>>,
+    connections: ConnectionRegistry,
+    conn_meta: ConnectionMetaRegistry,
+) {
+    let writer = Arc::new(Mutex::new(writer));
+    let conn_id = format!("c-{}", NEXT_CONN_ID.fetch_add(1, Ordering::Relaxed));
+    connections.write().await.insert(conn_id.clone(), writer.clone());
+
+    // Read the first message as JSON, buffering manually so we preserve
+    // the raw reader for the subsequent codec (no BufReader loss).
+    let mut buf = Vec::new();
+    let mut inner_reader = reader;
+
+    let first_msg: ClientMessage = loop {
+        if let Some((msg, consumed)) = JsonLineCodec::decode::<ClientMessage>(&buf)
+            .ok()
+            .flatten()
+        {
+            buf.drain(..consumed);
+            break msg;
+        }
+        let mut tmp = [0u8; 8192];
+        match inner_reader.read(&mut tmp).await {
+            Ok(0) => {
+                connections.write().await.remove(&conn_id);
+                return;
+            }
+            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+            Err(e) => {
+                error!("connection {} initial read error: {}", conn_id, e);
+                connections.write().await.remove(&conn_id);
+                return;
+            }
+        }
+    };
+
+    // Determine negotiated codec from the first message
+    let (negotiated_codec, role) = match &first_msg {
+        ClientMessage::SetMeta { codecs: Some(cs), role } => {
+            let selected = cs.iter().find_map(|c| match c.as_str() {
+                "json" => Some("json"),
+                #[cfg(feature = "bincode-listener")]
+                "bincode" => Some("bincode"),
+                _ => None,
+            })
+            .unwrap_or("json");
+            (selected, role.clone())
+        }
+        _ => ("json", None),
+    };
+
+    // Send the initial response as JSON
+    let response = if let ClientMessage::SetMeta { codecs: Some(_), .. } = &first_msg {
+        ServerMessage::CodecSet {
+            codec: negotiated_codec.to_string(),
+            connection_id: conn_id.clone(),
+        }
+    } else {
+        ServerMessage::Connected {
+            connection_id: conn_id.clone(),
+        }
+    };
+
+    if let Ok(payload) = JsonLineCodec::encode(&response) {
+        let _ = send_bytes(&writer, &payload).await;
+    }
+
+    let conns = connections.clone();
+    let metas = conn_meta.clone();
+    let mut subscriber_tasks: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
+
+    let result = match negotiated_codec {
+        "json" => {
+            // Replay the first message (already consumed from stream) through
+            // the JSON client_loop. Use remaining buf for any trailing data.
+            let frames = Frames::<JsonLineCodec, _>::with_buf(inner_reader, buf);
+            client_loop::<JsonLineCodec, R>(
+                frames,
+                writer.clone(), registry.clone(), conns, metas.clone(),
+                conn_id.clone(), &mut subscriber_tasks,
+            ).await
+        }
+        #[cfg(feature = "bincode-listener")]
+        "bincode" => {
+            // Process role from the already-read SetMeta
+            if let Some(r) = role {
+                let meta = ConnectionMeta { role: Some(r) };
+                metas.write().await.insert(conn_id.clone(), meta);
+            }
+            // Start bincode loop. buf should be empty (client waits for
+            // CodecSet before sending more), but we discard it anyway
+            // since it's JSON data that can't be decoded as bincode.
+            let frames = Frames::<BincodeLengthPrefixCodec, _>::new(inner_reader);
+            client_loop::<BincodeLengthPrefixCodec, R>(
+                frames,
+                writer.clone(), registry.clone(), conns, metas.clone(),
+                conn_id.clone(), &mut subscriber_tasks,
+            ).await
+        }
+        _ => unreachable!(),
+    };
+
+    if let Err(e) = result {
+        debug!("client {} disconnected: {}", conn_id, e);
+    }
+
+    // Cleanup
+    for (_sid, handle) in &subscriber_tasks {
+        handle.abort();
+    }
+    metas.write().await.remove(&conn_id);
+    connections.write().await.remove(&conn_id);
+    let mut reg = registry.write().await;
+    for (sid, _handle) in &subscriber_tasks {
+        if let Some(session) = reg.get_mut(sid) {
+            session.remove_subscriber(&conn_id);
+            if session.is_ephemeral() && session.counted_subscriber_count() == 0 {
+                let keepalive = session.ephemeral.as_ref().map(|c| Duration::from_secs(c.keepalive_secs));
+                reg.schedule_deletion(sid, keepalive, registry.clone());
+            }
+        }
+    }
+}
+
+async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
+    frames: Frames<C, R>,
     writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + 'static>>>,
     registry: Arc<RwLock<SessionRegistry>>,
     connections: ConnectionRegistry,
@@ -135,7 +289,7 @@ async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
     conn_id: String,
     subscriber_tasks: &mut Vec<(String, tokio::task::JoinHandle<()>)>,
 ) -> Result<()> {
-    let mut frames = Frames::<C, _>::new(reader);
+    let mut frames = frames;
 
     while let Some(msg) = frames.next_msg::<ClientMessage>().await? {
         let msg = msg;
@@ -145,7 +299,7 @@ async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
                 let _ = send_msg::<C>(&writer, &ServerMessage::Pong).await;
             }
 
-            ClientMessage::SetMeta { role } => {
+            ClientMessage::SetMeta { role, .. } => {
                 let meta = ConnectionMeta { role };
                 conn_meta.write().await.insert(conn_id.clone(), meta);
             }
@@ -1359,14 +1513,15 @@ mod tests {
             value1 in arb_json_value(),
             value2 in arb_json_value(),
         ) {
+            // Restrictive: only requires {key: value1}
             let mut ann_restrictive = HashMap::new();
-            ann_restrictive.insert(key.clone(), value2.clone());
+            ann_restrictive.insert(key.clone(), value1.clone());
             let restrictive = SubscribeFilter {
                 annotations: Some(ann_restrictive),
                 ..Default::default()
             };
-            // 2-key filter (more restrictive) implies 1-key filter (less restrictive)
-            // But only if the chunk doesn't have key mapped to a different value
+            // Broad: requires {key: value1} AND {another.key: value2}
+            // If chunk matches broad, it must also match restrictive (monotonic)
             let mut ann_broad = HashMap::new();
             ann_broad.insert(key.clone(), value1);
             ann_broad.insert("another.key".to_string(), value2);

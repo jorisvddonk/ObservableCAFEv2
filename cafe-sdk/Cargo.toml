@@ -19,11 +19,12 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["c
 iroh         = { version = "1", optional = true }
 
 [features]
-default      = []
+default      = ["bincode-client"]
 bus-client   = []
 http-client  = ["dep:reqwest", "dep:futures-util"]
 ws-client    = ["dep:tokio-tungstenite", "dep:futures-util"]
 iroh-client  = ["dep:iroh"]
+bincode-client = ["cafe-types/bincode-codec"]
 
 [dev-dependencies]
 proptest = "1"
