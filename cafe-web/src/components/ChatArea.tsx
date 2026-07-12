@@ -80,18 +80,20 @@ export function ChatArea() {
 
     // /addchunk <type> [key=value...] — publish a chunk directly, bypassing LLM
     if (text.startsWith('/addchunk ')) {
-      const parts = text.slice('/addchunk '.length).split(/\s+/);
-      const contentType = parts[0];
+      const rest = text.slice('/addchunk '.length);
+      const space = rest.indexOf(' ');
+      const contentType = space === -1 ? rest : rest.slice(0, space);
+      const annotStr = space === -1 ? '' : rest.slice(space + 1);
       const annotations: Record<string, unknown> = {};
-      for (let i = 1; i < parts.length; i++) {
-        const eq = parts[i].indexOf('=');
-        if (eq > 0) {
-          const k = parts[i].slice(0, eq);
-          let v: unknown = parts[i].slice(eq + 1);
-          if (v === 'true') v = true;
-          else if (v === 'false') v = false;
-          annotations[k] = v;
+      const re = /(\S+)=("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(annotStr)) !== null) {
+        const k = m[1];
+        let v = m[2];
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+          v = v.slice(1, -1).replace(/\\(.)/g, '$1');
         }
+        annotations[k] = v === 'true' ? true : v === 'false' ? false : v;
       }
       try {
         await publishChunk(state.activeSessionId, contentType, annotations);
