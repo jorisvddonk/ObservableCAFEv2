@@ -70,23 +70,35 @@ impl LlmBackend for OpenAiBackend {
         let byte_stream = response.bytes_stream();
 
         let token_stream = byte_stream
-            .map(|result| -> Result<String> {
-                let bytes = result?;
-                let text = String::from_utf8_lossy(&bytes);
-                let mut tokens = String::new();
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line == "data: [DONE]" {
-                        continue;
-                    }
-                    let data = line.strip_prefix("data: ").unwrap_or(line);
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
-                            tokens.push_str(content);
+            .scan(Vec::<u8>::new(), |buf, result| {
+                let mut tokens = Vec::new();
+                let bytes = match result {
+                    Ok(b) => b,
+                    Err(e) => return futures_util::future::ready(Some(Err(anyhow::anyhow!("{e}")))),
+                };
+                buf.extend_from_slice(&bytes);
+
+                while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+                    let frame = buf.drain(..pos + 2).collect::<Vec<_>>();
+                    let text = String::from_utf8_lossy(&frame);
+                    for line in text.lines() {
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let data = line.strip_prefix("data: ").unwrap_or(line);
+                        if data == "[DONE]" {
+                            continue;
+                        }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                                tokens.push(content.to_string());
+                            }
                         }
                     }
                 }
-                Ok(tokens)
+
+                futures_util::future::ready(Some(Ok(tokens.join(""))))
             })
             .filter(|r| {
                 let keep = match r {
