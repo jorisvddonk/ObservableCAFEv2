@@ -30,6 +30,71 @@ fn parse_keyval(s: &str) -> Result<(String, String)> {
     Ok((key, val))
 }
 
+/// Manage the bus iroh peer-ID allowlist database.
+async fn run_allowlist(db_arg: &str, action: &AllowlistAction) -> Result<()> {
+    use std::str::FromStr;
+
+    if let AllowlistAction::MyId = action {
+        let secret = std::env::var("CAFE_BUS_IROH_CLIENT_SECRET_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .and_then(|s| iroh::SecretKey::from_str(&s).ok());
+        match secret {
+            Some(key) => {
+                // Stable key is configured; report its public peer id.
+                println!("{}", key.public());
+            }
+            None => {
+                // Generate a fresh key and print both the secret (to deploy as
+                // the env var) and its public peer id (to register in the allowlist).
+                let key = iroh::SecretKey::generate();
+                let hex: String = key
+                    .to_bytes()
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                let pk = key.public();
+                println!("secret (set CAFE_BUS_IROH_CLIENT_SECRET_KEY to this): {}", hex);
+                println!("peer id (register with `iroh-allowlist add`):      {}", pk);
+            }
+        }
+        return Ok(());
+    }
+
+    let path = if db_arg.is_empty() {
+        std::env::var("CAFE_BUS_IROH_ALLOWLIST_DB").map_err(|_| {
+            anyhow::anyhow!("specify --db <path> or set CAFE_BUS_IROH_ALLOWLIST_DB")
+        })?
+    } else {
+        db_arg.to_string()
+    };
+
+    let allow = cafe_bus::allowlist::Allowlist::connect(&path).await?;
+    match action {
+        AllowlistAction::Add { peer_id, label } => {
+            allow.add(peer_id, label.as_deref()).await?;
+            println!("added {}", peer_id);
+        }
+        AllowlistAction::Remove { peer_id } => {
+            if allow.remove(peer_id).await? {
+                println!("removed {}", peer_id);
+            } else {
+                println!("{} not found", peer_id);
+            }
+        }
+        AllowlistAction::List => {
+            for (peer, label) in allow.list().await? {
+                match label {
+                    Some(l) => println!("{}\t{}", peer, l),
+                    None => println!("{}", peer),
+                }
+            }
+        }
+        AllowlistAction::MyId => unreachable!(),
+    }
+    Ok(())
+}
+
 #[derive(Subcommand)]
 enum StoreAction {
     /// Upload a file to the binary-store
@@ -169,6 +234,32 @@ enum Command {
         #[arg(long, default_value = "30")]
         timeout_secs: u64,
     },
+    /// Manage the bus iroh peer-ID allowlist database
+    IrohAllowlist {
+        /// Path to the allowlist SQLite DB (default: $CAFE_BUS_IROH_ALLOWLIST_DB)
+        #[arg(long, default_value = "")]
+        db: String,
+        #[command(subcommand)]
+        action: AllowlistAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AllowlistAction {
+    /// Add a peer ID to the allowlist
+    Add {
+        peer_id: String,
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Remove a peer ID from the allowlist
+    Remove {
+        peer_id: String,
+    },
+    /// List allowed peer IDs
+    List,
+    /// Print this client's stable peer ID (from CAFE_BUS_IROH_CLIENT_SECRET_KEY, or generate one)
+    MyId,
 }
 
 #[tokio::main]
@@ -177,6 +268,11 @@ async fn main() -> Result<()> {
 
     if cli.verbose {
         tracing_subscriber::fmt::init();
+    }
+
+    // Allowlist admin operates on the DB directly and doesn't need a bus connection.
+    if let Command::IrohAllowlist { db, action } = &cli.command {
+        return run_allowlist(db, action).await;
     }
 
     let iroh_requested = cli.bus_iroh_key.is_some()
@@ -614,6 +710,9 @@ async fn main() -> Result<()> {
                 let json = serde_json::to_string(&chunk)?;
                 println!("{}", json);
             }
+        }
+        Command::IrohAllowlist { .. } => {
+            // Handled earlier (before connecting to the bus); this arm is unreachable.
         }
     }
 

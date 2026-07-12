@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio::sync::{Notify, RwLock};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Raise the per-process file descriptor limit so we don't hit "Too many open files".
 fn raise_fd_limit() {
@@ -65,6 +65,34 @@ async fn main() -> Result<()> {
     // Optionally start iroh listener if configured
     let iroh_secret_key = std::env::var("CAFE_BUS_IROH_SECRET_KEY").ok();
 
+    // Optional peer-ID allowlist for iroh connections.
+    #[cfg(feature = "iroh-listener")]
+    let allowlist: Option<Arc<cafe_bus::allowlist::Allowlist>> = {
+        let db_path = std::env::var("CAFE_BUS_IROH_ALLOWLIST_DB").ok();
+        let disabled = std::env::var("CAFE_BUS_IROH_ALLOWLIST_DISABLED")
+            .ok()
+            .map_or(false, |v| v == "1" || v == "true");
+        match (db_path, disabled) {
+            (Some(path), false) => match cafe_bus::allowlist::Allowlist::connect(&path).await {
+                Ok(a) => {
+                    let a = Arc::new(a);
+                    a.spawn_refresh_task();
+                    info!("cafe-bus iroh allowlist enabled ({})", path);
+                    Some(a)
+                }
+                Err(e) => {
+                    tracing::error!("failed to open iroh allowlist DB {}: {}", path, e);
+                    None
+                }
+            },
+            (Some(_), true) => {
+                warn!("CAFE_BUS_IROH_ALLOWLIST_DISABLED set — iroh allowlist bypassed");
+                None
+            }
+            (None, _) => None,
+        }
+    };
+
     #[cfg(feature = "iroh-listener")]
     let _iroh_handle: Option<tokio::task::JoinHandle<()>> = iroh_secret_key.as_ref().map(|key| {
         info!("cafe-bus starting iroh listener");
@@ -72,8 +100,9 @@ async fn main() -> Result<()> {
         let conns = connections.clone();
         let metas = conn_meta.clone();
         let key = key.clone();
+        let allowlist = allowlist.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_iroh_listener(key, reg, conns, metas).await {
+            if let Err(e) = run_iroh_listener(key, reg, conns, metas, allowlist).await {
                 tracing::error!("iroh listener failed: {}", e);
             }
         })
@@ -137,6 +166,7 @@ async fn run_iroh_listener(
     registry: Arc<RwLock<SessionRegistry>>,
     connections: client::ConnectionRegistry,
     conn_meta: client::ConnectionMetaRegistry,
+    allowlist: Option<Arc<cafe_bus::allowlist::Allowlist>>,
 ) -> Result<()> {
     use std::str::FromStr;
 
@@ -150,12 +180,17 @@ async fn run_iroh_listener(
         iroh::RelayMode::Default
     };
 
-    let ep = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
+    let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(secret_key)
         .alpns(vec![b"cafe-bus/0".to_vec()])
-        .relay_mode(relay_mode)
-        .bind()
-        .await?;
+        .relay_mode(relay_mode);
+
+    // Gate incoming connections against the peer-ID allowlist.
+    if let Some(ref allowlist) = allowlist {
+        builder = builder.hooks(cafe_bus::allowlist::AllowlistHook::new(allowlist.clone()));
+    }
+
+    let ep = builder.bind().await?;
 
     ep.online().await;
 

@@ -21,10 +21,11 @@ tracing-subscriber = { workspace = true }
 anyhow             = { workspace = true }
 libc               = "0.2"
 iroh               = { version = "1", optional = true }
+sqlx               = { version = "0.7", features = ["sqlite", "runtime-tokio"], optional = true }
 
 [features]
 default = ["iroh-listener", "bincode-listener"]
-iroh-listener = ["dep:iroh"]
+iroh-listener = ["dep:iroh", "dep:sqlx"]
 bincode-listener = ["cafe-types/bincode-codec"]
 
 [[bench]]

@@ -85,6 +85,14 @@ impl IrohConfig {
 
         let bus_id = iroh::EndpointId::from_str(&key_str).ok()?;
 
+        // Optional stable client identity. When set, the client dials with a
+        // fixed secret key so its `remote_id()` is stable and can be allowlisted
+        // by the bus. When unset, iroh generates an ephemeral key per endpoint.
+        let client_secret = std::env::var("CAFE_BUS_IROH_CLIENT_SECRET_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .and_then(|s| iroh::SecretKey::from_str(&s).ok());
+
         let relay_str = relay
             .filter(|s| !s.is_empty())
             .map(String::from)
@@ -114,6 +122,9 @@ impl IrohConfig {
         if let Some(url) = relay_url {
             cfg = cfg.with_relay(url);
         }
+        if let Some(key) = client_secret {
+            cfg = cfg.with_secret_key(key);
+        }
         if let Some(addr) = dns_ns {
             cfg = cfg.with_dns_nameserver(addr);
         }
@@ -127,6 +138,13 @@ impl IrohConfig {
         let alpn = b"cafe-bus/0".to_vec();
         let mut cfg = Self::new(addr.id).with_alpn(&alpn);
         cfg.bus_addr = Some(addr);
+        if let Some(key) = std::env::var("CAFE_BUS_IROH_CLIENT_SECRET_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .and_then(|s| iroh::SecretKey::from_str(&s).ok())
+        {
+            cfg = cfg.with_secret_key(key);
+        }
         Some(cfg)
     }
 
