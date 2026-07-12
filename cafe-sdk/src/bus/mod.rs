@@ -338,6 +338,7 @@ impl<T: BusTransport> BusClient<T> {
     }
 
     /// Publish a chunk to a session.
+    #[deprecated = "publish opens a temp connection that dies before direct replies arrive. Use subscribe_session() + sub.publish() instead."]
     pub async fn publish(&self, session_id: &str, chunk: Chunk) -> Result<(), SdkError> {
         let codec = self.negotiate().await?;
         match codec {
