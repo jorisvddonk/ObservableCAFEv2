@@ -1,9 +1,26 @@
 use crate::config::resolve_session_config;
 use crate::executor::{PipelineContext, PipelineExecutor, TriggerType};
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, roles, ContentType, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, ContentType, ServerMessage};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+
+/// Find the most recent assistant text chunk in history (reverse scan).
+fn extract_last_assistant_text(history: &[Chunk]) -> Option<String> {
+    for chunk in history.iter().rev() {
+        if chunk.content_type == ContentType::Text
+            && chunk.role() == Some(roles::ASSISTANT)
+            && chunk.producer == "com.nominal.cafe-llm"
+        {
+            if let Some(ref text) = chunk.content {
+                if !text.is_empty() {
+                    return Some(text.clone());
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Subscribe to a session and route incoming chunks to the pipeline executor.
 pub async fn run_session_loop(
@@ -90,7 +107,8 @@ pub async fn run_session_loop(
             let config = resolve_session_config(&history);
 
             let assembled_llm_text = if trigger_type == TriggerType::LlmComplete {
-                chunk.content.clone()
+                let text = extract_last_assistant_text(&history);
+                text.or_else(|| chunk.content.clone())
             } else {
                 None
             };
