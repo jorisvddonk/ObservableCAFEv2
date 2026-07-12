@@ -1,6 +1,34 @@
 import { useCallback, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { listSessions, createSession, deleteSession, getHistory } from 'cafe-web-sdk';
+import type { Chunk } from 'cafe-web-sdk';
+
+function applyMutations(chunks: Chunk[]): Chunk[] {
+  const mutations = chunks.filter(
+    (c) => c.annotations['cafe.mutates.target_id'] as string
+      || c.annotations['mutates.target_id'] as string,
+  );
+  if (mutations.length === 0) return chunks;
+  const mutationByTarget = new Map<string, Chunk>();
+  for (const m of mutations) {
+    const target = (m.annotations['cafe.mutates.target_id'] as string
+      || m.annotations['mutates.target_id'] as string)!;
+    if (!mutationByTarget.has(target)) {
+      mutationByTarget.set(target, m);
+    }
+  }
+  return chunks.map((c) => {
+    const mutation = mutationByTarget.get(c.id);
+    if (!mutation) return c;
+    const merged = { ...c, annotations: { ...c.annotations } };
+    for (const k in mutation.annotations) {
+      if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
+        merged.annotations[k] = mutation.annotations[k];
+      }
+    }
+    return merged;
+  });
+}
 
 export function useSessions() {
   const store = useSessionStore();
@@ -20,11 +48,9 @@ export function useSessions() {
     window.location.hash = chunkViewerOpen ? `${id}?chunkViewer=1` : id;
     try {
       const { chunks } = await getHistory(id);
-      // Raw full history for the chunk viewer
-      store.setAllChunks(chunks);
-      // Show text chat messages AND binary media (audio/image) from assistant.
-      // Includes both full binary chunks and binary-ref placeholders.
-      const chatChunks = chunks.filter(
+      const merged = applyMutations(chunks);
+      store.setAllChunks(merged);
+      const chatChunks = merged.filter(
         (c) =>
           (c.content_type === 'text' &&
             (c.annotations['chat.role'] === 'user' ||
