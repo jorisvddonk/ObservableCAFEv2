@@ -48,22 +48,37 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set({ allChunks: chunks });
   },
   appendChunk: (chunk) => {
-    // Handle mutation: merge annotations into target chunk
+    // Handle mutation: merge annotations into target chunk in both allChunks and messages
     const mutationKey = chunk.annotations['cafe.mutates.target_id'] as string
       || chunk.annotations['mutates.target_id'] as string;
     if (mutationKey) {
       const targetId = mutationKey;
-      set((s) => {
-        const target = s.allChunks.find((c) => c.id === targetId);
-        if (target) {
-          for (const k in chunk.annotations) {
-            if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
-              target.annotations[k] = chunk.annotations[k];
+      set((s) => ({
+        messages: s.messages.map((c) => {
+          if (c.id === targetId) {
+            const merged = { ...c, annotations: { ...c.annotations } };
+            for (const k in chunk.annotations) {
+              if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
+                merged.annotations[k] = chunk.annotations[k];
+              }
             }
+            return merged;
           }
-        }
-        return s;
-      });
+          return c;
+        }),
+        allChunks: s.allChunks.map((c) => {
+          if (c.id === targetId) {
+            const merged = { ...c, annotations: { ...c.annotations } };
+            for (const k in chunk.annotations) {
+              if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
+                merged.annotations[k] = chunk.annotations[k];
+              }
+            }
+            return merged;
+          }
+          return c;
+        }),
+      }));
       return;
     }
     console.log('[store] appendChunk id=', chunk.id, 'role=', chunk.annotations['chat.role']);
@@ -77,22 +92,39 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set((s) => ({ streamingText: s.streamingText + text }));
   },
   finaliseStream: (chunk) => {
-    // Handle mutation: merge annotations into target chunk
+    // Handle mutation: merge annotations into target chunk in both allChunks and messages
     const mutationKey = chunk.annotations['cafe.mutates.target_id'] as string
       || chunk.annotations['mutates.target_id'] as string;
     if (mutationKey) {
       const targetId = mutationKey;
-      set((s) => {
-        const target = s.allChunks.find((c) => c.id === targetId);
-        if (target) {
-          for (const k in chunk.annotations) {
-            if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
-              target.annotations[k] = chunk.annotations[k];
+      set((s) => ({
+        messages: s.messages.map((c) => {
+          if (c.id === targetId) {
+            const merged = { ...c, annotations: { ...c.annotations } };
+            for (const k in chunk.annotations) {
+              if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
+                merged.annotations[k] = chunk.annotations[k];
+              }
             }
+            return merged;
           }
-        }
-        return { ...s, streamingText: '', streaming: false };
-      });
+          return c;
+        }),
+        allChunks: s.allChunks.map((c) => {
+          if (c.id === targetId) {
+            const merged = { ...c, annotations: { ...c.annotations } };
+            for (const k in chunk.annotations) {
+              if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
+                merged.annotations[k] = chunk.annotations[k];
+              }
+            }
+            return merged;
+          }
+          return c;
+        }),
+        streamingText: '',
+        streaming: false,
+      }));
       return;
     }
     console.log('[store] finaliseStream contentLen=', typeof chunk.content === 'string' ? chunk.content.length : 0);

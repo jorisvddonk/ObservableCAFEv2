@@ -39,9 +39,21 @@ Never mention local setup — launchd, servers, locally available models, or any
 GitHub Actions workflow at `.github/workflows/ci.yml` runs on push/PR to `main`:
 - `cargo build --release --workspace`
 - `cargo test --release --workspace`
-- E2E bus tests: `bus-filters-e2e.py` and `source-connection-e2e.py`
+- E2E bus tests: `bus-filters-e2e.py`, `source-connection-e2e.py`, `ephemeral-sessions-e2e.py`, `tts-e2e.py`
 
 **When adding a new E2E test script to `tests/`, add it to the CI workflow's `Run E2E bus tests` step.**
+
+## E2E test philosophy
+
+**Zero tolerance for silent failures.** Every test must hard-fail on any unexpected condition. Specifically:
+
+- **NO graceful fallbacks** — never accept a degraded result (e.g. "API unavailable, moving on")
+- **NO conditional PASS** — either all assertions hold or the test exits non-zero
+- **NO `⚠️` warnings in place of asserts** — if a condition matters, assert it
+- **Assert every phase** — if a test exercises a multi-step flow (publish → process → result), every step must be verified with a hard assertion
+- **Infrastructure failures are test failures** — if an LLM model is missing or a service is down, the test fails. Fix the infra, don't paper over it
+
+Every E2E test must print exactly `=== ALL ... TESTS PASSED ===` on stdout or crash. No partial passes.
 
 ## Doc rules
 

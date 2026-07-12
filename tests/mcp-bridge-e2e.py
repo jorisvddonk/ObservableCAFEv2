@@ -154,10 +154,8 @@ def main():
         })
         text = resp["result"]["content"][0]["text"]
         assert text, "kb_search returned empty"
-        if resp["result"].get("isError"):
-            print("  kb_search dispatched (embed API unavailable) ⚠️", file=sys.stderr)
-        else:
-            print("  kb_search succeeded ✅", file=sys.stderr)
+        assert not resp["result"].get("isError"), f"kb_search returned error: {text[:200]}"
+        print("  kb_search succeeded ✅", file=sys.stderr)
 
         bridge.close()
         kb_proc.kill()
