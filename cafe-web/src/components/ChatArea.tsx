@@ -7,6 +7,8 @@ import type { Chunk } from 'cafe-web-sdk';
 
 /** True if a chunk should appear in the chat message list. */
 function isChatMessage(chunk: Chunk): boolean {
+  // Skip transient chunks — streaming tokens, RPC envelopes, etc.
+  if (chunk.annotations['cafe.transient']) return false;
   if (
     chunk.content_type === 'text' &&
     (chunk.annotations['chat.role'] === 'user' ||

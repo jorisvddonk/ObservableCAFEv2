@@ -52,11 +52,12 @@ export function useSessions() {
       store.setAllChunks(merged);
       const chatChunks = merged.filter(
         (c) =>
-          (c.content_type === 'text' &&
+          !c.annotations['cafe.transient'] &&
+          ((c.content_type === 'text' &&
             (c.annotations['chat.role'] === 'user' ||
               c.annotations['chat.role'] === 'assistant')) ||
           ((c.content_type === 'binary' || c.content_type === 'binary-ref') &&
-            c.annotations['chat.role'] === 'assistant'),
+            c.annotations['chat.role'] === 'assistant')),
       );
       store.setMessages(chatChunks);
     } catch (err) {
