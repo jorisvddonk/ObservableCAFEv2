@@ -1,6 +1,28 @@
 import { create } from 'zustand';
 import type { Chunk, SessionInfo } from 'cafe-web-sdk';
 
+function applyMutations(chunks: Chunk[]): Chunk[] {
+  const mutations = chunks.filter(
+    (c) => c.annotations['cafe.mutates.target_id'] as string
+      || c.annotations['mutates.target_id'] as string,
+  );
+  if (mutations.length === 0) return chunks;
+  return chunks.map((c) => {
+    const mutation = mutations.find(
+      (m) => (m.annotations['cafe.mutates.target_id'] as string
+        || m.annotations['mutates.target_id'] as string) === c.id,
+    );
+    if (!mutation) return c;
+    const merged = { ...c, annotations: { ...c.annotations } };
+    for (const k in mutation.annotations) {
+      if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
+        merged.annotations[k] = mutation.annotations[k];
+      }
+    }
+    return merged;
+  });
+}
+
 interface SessionStore {
   sessions: SessionInfo[];
   activeSessionId: string | null;
@@ -41,11 +63,13 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set({ activeSessionId: id, messages: [], allChunks: [], streamingText: '' });
   },
   setMessages: (messages) => {
-    console.log('[store] setMessages count=', messages.length);
-    set({ messages });
+    const merged = applyMutations(messages);
+    console.log('[store] setMessages count=', merged.length);
+    set({ messages: merged });
   },
   setAllChunks: (chunks) => {
-    set({ allChunks: chunks });
+    const merged = applyMutations(chunks);
+    set({ allChunks: merged });
   },
   appendChunk: (chunk) => {
     // Handle mutation: merge annotations into target chunk in both allChunks and messages
