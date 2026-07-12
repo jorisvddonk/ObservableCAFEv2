@@ -142,6 +142,7 @@ export function App() {
                 borderRight: '1px solid #2a2a4a',
                 boxShadow: '4px 0 20px rgba(0,0,0,0.3)',
                 animation: 'slideIn 0.2s ease',
+                overflowY: 'auto',
               }}
             >
               <Sidebar onSelectSession={() => setSidebarOpen(false)} />
