@@ -259,7 +259,8 @@ def main():
             # Phases 2 (read creds) and 3 (completion) are broadcast.
             print("=== Verifying binary upload ===", file=sys.stderr)
             ref_id = tts_binary_ref["id"]
-            read_creds_found = False
+            read_url = None
+            read_token = None
             completed_found = False
 
             sub_sock.settimeout(60)
@@ -274,8 +275,9 @@ def main():
                         ann = chunk.get("annotations", {})
                         target = ann.get("cafe.mutates.target_id")
                         if target == ref_id:
-                            if ann.get("cafe.binary.read_url"):
-                                read_creds_found = True
+                            if ann.get("cafe.binary.read_url") and ann.get("cafe.binary.read_token"):
+                                read_url = ann.get("cafe.binary.read_url")
+                                read_token = ann.get("cafe.binary.read_token")
                                 print(f"  phase 2/3: read credentials received", file=sys.stderr)
                             if ann.get("cafe.binary.completed"):
                                 completed_found = True
@@ -285,9 +287,29 @@ def main():
             except socket.timeout:
                 print("  timeout waiting for upload lifecycle", file=sys.stderr)
 
-            assert read_creds_found, "Binary upload failed: no read credentials mutation"
+            assert read_url is not None, "Binary upload failed: no read credentials mutation"
+            assert read_token is not None, "Binary upload failed: no read token"
             assert completed_found, "Binary upload failed: no upload completion mutation"
             print("  binary upload lifecycle verified", file=sys.stderr)
+
+            # Verify the actual audio file is downloadable
+            print("=== Verifying audio download ===", file=sys.stderr)
+            import urllib.request
+            download_url = f"{read_url}?token={read_token}"
+            try:
+                resp = urllib.request.urlopen(download_url)
+                audio_data = resp.read()
+                assert resp.status == 200, f"Audio download HTTP {resp.status}"
+                assert len(audio_data) > 0, "Downloaded audio is empty"
+                assert len(audio_data) == byte_size, \
+                    f"Downloaded {len(audio_data)} bytes, expected {byte_size}"
+                content_type = resp.headers.get("Content-Type", "")
+                assert "audio" in content_type or "octet-stream" in content_type, \
+                    f"Unexpected Content-Type: {content_type}"
+                print(f"  audio downloaded: {len(audio_data)} bytes, type={content_type}", file=sys.stderr)
+            except Exception as e:
+                assert False, f"Audio download failed: {e}"
+            print("  audio download verified", file=sys.stderr)
 
             sub_sock.close()
 
