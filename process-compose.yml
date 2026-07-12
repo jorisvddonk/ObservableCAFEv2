@@ -110,7 +110,7 @@ processes:
         condition: process_healthy
 
   cafe-web-static:
-    command: npx http-server dist -p 8081 --cors
+    command: npx http-server dist -p 8088 --cors
     working_dir: ./cafe-web
     readiness_probe:
       exec:
