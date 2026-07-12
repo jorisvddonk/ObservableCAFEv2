@@ -39,6 +39,22 @@ export async function setTags(
   });
 }
 
+export async function publishChunk(
+  sessionId: string,
+  content_type: string,
+  annotations?: Record<string, unknown>,
+  content?: string,
+): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/chunks`, {
+    method: 'POST',
+    body: JSON.stringify({
+      content_type,
+      content: content ?? null,
+      annotations: annotations ?? null,
+    }),
+  });
+}
+
 export function getBinaryUrl(sessionId: string, chunkId: string): string {
   const token = encodeURIComponent(getToken());
   return `${getBaseUrl()}/api/sessions/${sessionId}/chunks/${chunkId}/binary?token=${token}`;

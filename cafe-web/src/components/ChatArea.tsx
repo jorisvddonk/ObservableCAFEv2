@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
-import { streamChat, openSessionStream } from 'cafe-web-sdk';
+import { streamChat, openSessionStream, publishChunk } from 'cafe-web-sdk';
 import { Message } from './Message';
 import type { Chunk } from 'cafe-web-sdk';
 
@@ -77,6 +77,45 @@ export function ChatArea() {
     const state = useSessionStore.getState();
     if (!text || state.streaming || !state.activeSessionId) return;
     setInput('');
+
+    // /addchunk <type> [key=value...] — publish a chunk directly, bypassing LLM
+    if (text.startsWith('/addchunk ')) {
+      const parts = text.slice('/addchunk '.length).split(/\s+/);
+      const contentType = parts[0];
+      const annotations: Record<string, unknown> = {};
+      for (let i = 1; i < parts.length; i++) {
+        const eq = parts[i].indexOf('=');
+        if (eq > 0) {
+          const k = parts[i].slice(0, eq);
+          let v: unknown = parts[i].slice(eq + 1);
+          if (v === 'true') v = true;
+          else if (v === 'false') v = false;
+          annotations[k] = v;
+        }
+      }
+      try {
+        await publishChunk(state.activeSessionId, contentType, annotations);
+      } catch (err) {
+        console.error('[ChatArea] publishChunk error', err);
+      }
+      return;
+    }
+
+    // /voice <name> — shorthand for changing TTS voice profile
+    if (text.startsWith('/voice ')) {
+      const profile = text.slice('/voice '.length).trim();
+      if (profile) {
+        try {
+          await publishChunk(state.activeSessionId, 'null', {
+            'config.type': 'runtime',
+            'config.tts.profile': profile,
+          });
+        } catch (err) {
+          console.error('[ChatArea] /voice error', err);
+        }
+      }
+      return;
+    }
 
     state.setStreaming(true);
 
