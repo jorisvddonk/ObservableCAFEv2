@@ -96,7 +96,7 @@ async fn run_session_handler(
                                 url, token, sid
                             );
                             match http
-                                .put(&upload_url)
+                                .post(&upload_url)
                                 .header("Content-Type", &mime)
                                 .body(audio)
                                 .send()

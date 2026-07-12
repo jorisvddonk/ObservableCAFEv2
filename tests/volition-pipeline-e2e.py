@@ -205,7 +205,6 @@ def main():
             sub_sock.settimeout(TIMEOUT_SECS)
             assistant_text = None
             tts_binary_ref = None
-            tts_error = None
 
             try:
                 while True:
@@ -217,7 +216,6 @@ def main():
                         chunk = msg["chunk"]
                         ann = chunk.get("annotations", {})
 
-                        # Collect assistant text from LLM (non-transient, chat.role=assistant)
                         ct = chunk.get("content_type")
                         if ct == "text" and ann.get("chat.role") == "assistant":
                             content = chunk.get("content", "")
@@ -225,85 +223,62 @@ def main():
                                 assistant_text = assistant_text or content
                                 print(f"  assistant: '{content[:80]}'", file=sys.stderr)
 
-                        # Collect TTS binary_ref audio
                         if ct == "binary_ref" and chunk.get("producer") == "com.nominal.cafe-tts":
                             tts_binary_ref = chunk
                             print(f"  TTS audio chunk: {chunk.get('id', '')[:20]}...", file=sys.stderr)
 
-                        # Check for TTS errors (RPC or pipeline)
-                        rpc_resp = ann.get("cafe.jsonrpc.response")
-                        if rpc_resp and rpc_resp.get("error"):
-                            if tts_error is None:
-                                tts_error = rpc_resp["error"].get("message", "")
-                                print(f"  TTS error: {tts_error[:100]}", file=sys.stderr)
+                        if assistant_text is not None and tts_binary_ref is not None:
+                            break
 
-                        # Pipeline error (e.g. TTS step failed)
-                        err_msg = ann.get("cafe.error.message")
-                        if err_msg and ann.get("error.source") == "pipeline":
-                            print(f"  pipeline error: {err_msg[:120]}", file=sys.stderr)
+            except socket.timeout:
+                assert False, "Timeout waiting for LLM response + TTS audio"
 
-                        # Break when we have both or when TTS failed
-                        if assistant_text is not None:
-                            if tts_binary_ref is not None or tts_error is not None:
+            assert assistant_text is not None, "No assistant text received from LLM"
+            print(f"  LLM response: {assistant_text[:80]}", file=sys.stderr)
+
+            assert tts_binary_ref is not None, "No TTS BinaryRef audio chunk received"
+            ann = tts_binary_ref.get("annotations", {})
+            byte_size = ann.get("cafe.binary.byte_size")
+            assert byte_size is not None, "BinaryRef chunk missing cafe.binary.byte_size"
+            assert byte_size > 0, "BinaryRef byte_size is zero"
+            print(f"  TTS audio: {byte_size} bytes", file=sys.stderr)
+
+            # Verify binary upload lifecycle via broadcast mutations.
+            # Phase 1 (write creds) goes via publish_direct — not visible here.
+            # Phases 2 (read creds) and 3 (completion) are broadcast.
+            print("=== Verifying binary upload ===", file=sys.stderr)
+            ref_id = tts_binary_ref["id"]
+            read_creds_found = False
+            completed_found = False
+
+            sub_sock.settimeout(60)
+            try:
+                while True:
+                    line = recv_line(sub_sock)
+                    if not line:
+                        break
+                    msg = json.loads(line)
+                    if msg.get("event") == "chunk":
+                        chunk = msg["chunk"]
+                        ann = chunk.get("annotations", {})
+                        target = ann.get("cafe.mutates.target_id")
+                        if target == ref_id:
+                            if ann.get("cafe.binary.read_url"):
+                                read_creds_found = True
+                                print(f"  phase 2/3: read credentials received", file=sys.stderr)
+                            if ann.get("cafe.binary.completed"):
+                                completed_found = True
+                                print(f"  phase 3/3: upload completed", file=sys.stderr)
                                 break
 
             except socket.timeout:
-                print("  timeout waiting for pipeline output", file=sys.stderr)
+                print("  timeout waiting for upload lifecycle", file=sys.stderr)
+
+            assert read_creds_found, "Binary upload failed: no read credentials mutation"
+            assert completed_found, "Binary upload failed: no upload completion mutation"
+            print("  binary upload lifecycle verified", file=sys.stderr)
 
             sub_sock.close()
-
-            assert assistant_text is not None, "No assistant text received from LLM"
-            print(f"  LLM response verified: {assistant_text[:80]}", file=sys.stderr)
-
-            if tts_error is not None:
-                print(f"  TTS model not loaded (pipeline flow verified)", file=sys.stderr)
-            elif tts_binary_ref is not None:
-                ann = tts_binary_ref.get("annotations", {})
-                byte_size = ann.get("cafe.binary.byte_size")
-                if byte_size:
-                    print(f"  TTS audio size: {byte_size} bytes", file=sys.stderr)
-                assert byte_size is not None, "BinaryRef chunk missing byte size annotation"
-                print("  TTS audio verified", file=sys.stderr)
-
-                # Verify binary upload lifecycle
-                print("=== Verifying binary upload ===", file=sys.stderr)
-                ref_id = tts_binary_ref["id"]
-                write_creds_found = False
-                read_creds_found = False
-                completed_found = False
-
-                sub_sock.settimeout(60)
-                try:
-                    while True:
-                        line = recv_line(sub_sock)
-                        if not line:
-                            break
-                        msg = json.loads(line)
-                        if msg.get("event") == "chunk":
-                            chunk = msg["chunk"]
-                            ann = chunk.get("annotations", {})
-                            target = ann.get("cafe.mutates.target_id")
-                            if target == ref_id:
-                                if ann.get("cafe.binary.write_url"):
-                                    write_creds_found = True
-                                    print(f"  write credentials received", file=sys.stderr)
-                                if ann.get("cafe.binary.read_url"):
-                                    read_creds_found = True
-                                    print(f"  read credentials received", file=sys.stderr)
-                                if ann.get("cafe.binary.completed"):
-                                    completed_found = True
-                                    print(f"  upload completed", file=sys.stderr)
-                                    break
-
-                except socket.timeout:
-                    print("  timeout waiting for upload lifecycle", file=sys.stderr)
-
-                assert write_creds_found, "No write credentials mutation received"
-                assert read_creds_found, "No read credentials mutation received"
-                assert completed_found, "No upload completion mutation received"
-                print("  binary upload lifecycle verified", file=sys.stderr)
-            else:
-                assert False, "Neither TTS audio nor TTS error received"
 
             run([CLI, "--bus", bus_socket, "delete-session", session_id])
 
@@ -331,10 +306,7 @@ def main():
                     p.wait()
 
     print(file=sys.stderr)
-    if tts_binary_ref is not None:
-        print("=== ALL VOLITION PIPELINE E2E TESTS PASSED ===", file=sys.stderr)
-    else:
-        print("=== VOLITION PIPELINE E2E: partial (TTS model not loaded, LLM+agent pipeline verified) ===", file=sys.stderr)
+    print("=== ALL VOLITION PIPELINE E2E TESTS PASSED ===", file=sys.stderr)
 
 
 if __name__ == "__main__":

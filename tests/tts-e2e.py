@@ -4,9 +4,11 @@
 # dependencies = []
 # ///
 """
-End-to-end test: text-to-speech via cafe-tts.
+End-to-end test: text-to-speech + binary upload via cafe-tts.
 
-Tests: text → bus RPC (tts.invoke) → cafe-tts → voicebox /generate/stream → audio BinaryRef + result.
+Tests: bus RPC (tts.invoke) → cafe-tts → voicebox /generate/stream →
+       BinaryRef → cafe-binary-store → write credentials →
+       HTTP upload → read credentials → upload completion.
 
 Usage:
     cargo build --release
@@ -27,6 +29,7 @@ RELEASE_DIR = os.path.join(PROJECT_ROOT, "target", "release")
 CLI = os.path.join(RELEASE_DIR, "cafe-cli")
 BUS_BIN = os.path.join(RELEASE_DIR, "cafe-bus")
 TTS_BIN = os.path.join(RELEASE_DIR, "cafe-tts")
+BINARY_STORE_BIN = os.path.join(RELEASE_DIR, "cafe-binary-store")
 
 VOICEBOX_URL = os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493")
 
@@ -64,32 +67,60 @@ def send_msg(sock, msg):
 
 
 def main():
-    for name, path in [("cafe-bus", BUS_BIN), ("cafe-tts", TTS_BIN), ("cafe-cli", CLI)]:
+    binaries = {
+        "cafe-bus": BUS_BIN,
+        "cafe-tts": TTS_BIN,
+        "cafe-cli": CLI,
+        "cafe-binary-store": BINARY_STORE_BIN,
+    }
+    for name, path in binaries.items():
         if not os.path.exists(path):
             print(f"Build {name} first: cargo build --release -p {name}", file=sys.stderr)
             sys.exit(1)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
+        binary_data_dir = os.path.join(tmpdir, "binary-store-data")
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["VOICEBOX_URL"] = VOICEBOX_URL
 
+        procs = {}
+
         bus_log = open(os.path.join(tmpdir, "bus.log"), "w", buffering=1)
         print("=== Starting cafe-bus ===", file=sys.stderr)
-        bus_proc = subprocess.Popen([BUS_BIN], env=env, stdout=bus_log, stderr=bus_log)
+        procs["cafe-bus"] = subprocess.Popen([BUS_BIN], env=env, stdout=bus_log, stderr=bus_log)
+        time.sleep(2)
+
+        print("=== Starting cafe-binary-store ===", file=sys.stderr)
+        bs_log = open(os.path.join(tmpdir, "binary-store.log"), "w", buffering=1)
+        procs["cafe-binary-store"] = subprocess.Popen(
+            [BINARY_STORE_BIN,
+             "--bus-socket", bus_socket,
+             "--port", "4003",
+             "--data-dir", binary_data_dir,
+             "--public-host", "localhost"],
+            env=env, stdout=bs_log, stderr=subprocess.STDOUT,
+        )
         time.sleep(2)
 
         print("=== Starting cafe-tts ===", file=sys.stderr)
         tts_log = os.path.join(tmpdir, "tts.log")
         tts_out = os.path.join(tmpdir, "tts.out")
         tts_err = open(tts_log, "w", buffering=1)
-        tts_proc = subprocess.Popen([TTS_BIN], env=env, stdout=open(tts_out, "w"), stderr=tts_err)
+        procs["cafe-tts"] = subprocess.Popen([TTS_BIN], env=env, stdout=open(tts_out, "w"), stderr=tts_err)
         time.sleep(4)
 
-        if tts_proc.poll() is not None:
-            with open(tts_log) as f:
-                print(f"TTS exited with code {tts_proc.returncode}, log: {f.read()[:200]}", file=sys.stderr)
+        for name, p in list(procs.items()):
+            if p.poll() is not None:
+                print(f"  {name} exited with code {p.returncode}", file=sys.stderr)
+                for n, lp in procs.items():
+                    log_path = os.path.join(tmpdir, f"{n}.log")
+                    if os.path.exists(log_path):
+                        with open(log_path) as f:
+                            print(f"  --- {n} log ---", file=sys.stderr)
+                            print(f.read()[-1000:], file=sys.stderr)
+                assert False, f"Service {name} failed to start"
 
         try:
             print("=== Create session ===", file=sys.stderr)
@@ -147,7 +178,8 @@ def main():
             print("=== Reading response ===", file=sys.stderr)
             sub_sock.settimeout(60)
             result = None
-            binary_ref_found = False
+            binary_ref_id = None
+            audio_byte_size = None
             try:
                 while True:
                     line = recv_line(sub_sock)
@@ -159,76 +191,97 @@ def main():
                         ann = chunk.get("annotations", {})
                         rpc_resp = ann.get("cafe.jsonrpc.response")
                         if rpc_resp and rpc_resp.get("id") == call_id:
-                            print(f"  rpc response received", file=sys.stderr)
                             result = rpc_resp
+                            print(f"  rpc response received", file=sys.stderr)
                         if chunk.get("content_type") == "binary_ref":
-                            binary_ref_found = True
-                            print(f"  BinaryRef audio chunk found: {chunk.get('id', '')[:20]}...", file=sys.stderr)
-                        if result is not None and binary_ref_found:
+                            binary_ref_id = chunk["id"]
+                            audio_byte_size = ann.get("cafe.binary.byte_size")
+                            print(f"  BinaryRef audio chunk: {binary_ref_id[:20]}... ({audio_byte_size} bytes)", file=sys.stderr)
+                        if result is not None and binary_ref_id is not None:
                             break
             except socket.timeout:
                 print("  timeout waiting for response", file=sys.stderr)
+                assert False, "Timeout waiting for tts.invoke RPC response or BinaryRef chunk"
 
-            sub_sock.close()
-
-            if result is None:
-                print("  no RPC response received", file=sys.stderr)
-                assert False, "No tts.invoke RPC response received"
+            assert result is not None, "No tts.invoke RPC response received"
+            assert binary_ref_id is not None, "No BinaryRef audio chunk received"
+            assert audio_byte_size is not None, "BinaryRef missing cafe.binary.byte_size"
+            assert audio_byte_size > 0, "BinaryRef byte_size is zero"
 
             err = result.get("error")
-            if err is not None:
-                print(f"  voicebox TTS error: {err.get('message', '')[:200]}", file=sys.stderr)
-                print("  TTS model not loaded (RPC flow verified)", file=sys.stderr)
-            else:
-                r = result.get("result", {})
-                chunk_id = r.get("chunk_id", "")
-                if chunk_id:
-                    print(f"  audio chunk_id: {chunk_id}", file=sys.stderr)
-                    assert binary_ref_found, "BinaryRef audio chunk was not published"
-                    print("  TTS synthesis successful", file=sys.stderr)
-                else:
-                    print(f"  unexpected result: {json.dumps(result, indent=2)}", file=sys.stderr)
-                    assert False, "Unexpected RPC result format"
+            assert err is None, f"TTS synthesis failed: {err.get('message', '')}"
+
+            r = result.get("result", {})
+            chunk_id = r.get("chunk_id", "")
+            assert chunk_id, f"Missing chunk_id in TTS result: {json.dumps(result, indent=2)}"
+            print(f"  TTS synthesis successful (chunk_id={chunk_id})", file=sys.stderr)
+
+            # Verify binary upload lifecycle via broadcast mutations.
+            # Phase 1 (write creds) goes via publish_direct — not visible here.
+            # Phases 2 (read creds) and 3 (completion) are broadcast.
+            print("=== Verifying binary upload lifecycle ===", file=sys.stderr)
+            read_creds_found = False
+            completed_found = False
+
+            sub_sock.settimeout(60)
+            try:
+                while True:
+                    line = recv_line(sub_sock)
+                    if not line:
+                        break
+                    msg = json.loads(line)
+                    if msg.get("event") == "chunk":
+                        chunk = msg["chunk"]
+                        ann = chunk.get("annotations", {})
+                        target = ann.get("cafe.mutates.target_id")
+                        if target == binary_ref_id:
+                            if ann.get("cafe.binary.read_url"):
+                                read_creds_found = True
+                                print(f"  phase 2/3: read credentials received", file=sys.stderr)
+                            if ann.get("cafe.binary.completed"):
+                                completed_found = True
+                                print(f"  phase 3/3: upload completed", file=sys.stderr)
+                                break
+            except socket.timeout:
+                print("  timeout waiting for upload lifecycle", file=sys.stderr)
+
+            assert read_creds_found, "Binary upload failed: no read credentials mutation"
+            assert completed_found, "Binary upload failed: no upload completion mutation"
+            print("  binary upload lifecycle verified", file=sys.stderr)
 
             run([CLI, "--bus", bus_socket, "delete-session", session_id])
 
         finally:
-            try:
-                bus_log_path = os.path.join(tmpdir, "bus.log")
-                if os.path.exists(bus_log_path):
-                    with open(bus_log_path) as f:
-                        bus_log_text = f.read()
-                    if bus_log_text.strip():
-                        print("=== BUS LOG ===", file=sys.stderr)
-                        for line in bus_log_text.strip().split("\n")[-30:]:
-                            print(f"  {line}", file=sys.stderr)
-                tts_log_path = os.path.join(tmpdir, "tts.log")
-                if os.path.exists(tts_log_path):
+            for name in ["cafe-bus", "cafe-tts", "cafe-binary-store"]:
+                log_path = os.path.join(tmpdir, f"{name}.log")
+                if os.path.exists(log_path):
+                    try:
+                        with open(log_path) as f:
+                            content = f.read().strip()
+                        if content:
+                            print(f"=== {name} LOG ===", file=sys.stderr)
+                            for line in content.split("\n")[-30:]:
+                                print(f"  {line}", file=sys.stderr)
+                    except Exception:
+                        pass
+            tts_log_path = os.path.join(tmpdir, "tts.log")
+            if os.path.exists(tts_log_path):
+                try:
                     with open(tts_log_path) as f:
-                        tts_log_text = f.read()
-                    print("=== TTS STDERR ===", file=sys.stderr)
-                    for line in tts_log_text.strip().split("\n")[-30:]:
-                        print(f"  {line}", file=sys.stderr)
-                tts_out_path = os.path.join(tmpdir, "tts.out")
-                if os.path.exists(tts_out_path):
-                    with open(tts_out_path) as f:
-                        tts_out_text = f.read()
-                    if tts_out_text.strip():
-                        print("=== TTS STDOUT ===", file=sys.stderr)
-                        for line in tts_out_text.strip().split("\n")[-10:]:
+                        content = f.read().strip()
+                    if content:
+                        print("=== TTS STDERR ===", file=sys.stderr)
+                        for line in content.split("\n")[-20:]:
                             print(f"  {line}", file=sys.stderr)
-            except Exception as e:
-                print(f"=== TTS LOG ERROR: {e} ===", file=sys.stderr)
-            for p in [bus_proc, tts_proc]:
+                except Exception:
+                    pass
+            for p in procs.values():
                 p.kill()
-            for p in [bus_proc, tts_proc]:
+            for p in procs.values():
                 p.wait()
 
     print(file=sys.stderr)
-    if result and result.get("error") is None:
-        print("=== ALL TTS E2E TESTS PASSED ===", file=sys.stderr)
-    else:
-        print("=== TTS E2E: partial (RPC flow OK, voicebox /generate/stream unavailable) ===", file=sys.stderr)
+    print("=== ALL TTS E2E TESTS PASSED ===", file=sys.stderr)
 
 
 if __name__ == "__main__":
