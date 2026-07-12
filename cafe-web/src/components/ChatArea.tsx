@@ -193,10 +193,9 @@ export function ChatArea() {
           onKeyDown={handleKeyDown}
           placeholder={
             store.streaming
-              ? 'Waiting for response…'
+              ? 'Responding…'
               : 'Type a message… (Enter to send, Shift+Enter for newline)'
           }
-          disabled={store.streaming}
           rows={1}
           style={{
             flex: 1,
