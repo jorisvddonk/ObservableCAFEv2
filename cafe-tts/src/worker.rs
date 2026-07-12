@@ -177,6 +177,13 @@ async fn handle_tts_request(
         anyhow::bail!("tts.invoke: text param is empty");
     }
 
+    let gen_chunk = Chunk::new_null("com.nominal.cafe-tts")
+        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+        .with_annotation("chat.audio_streaming", true)
+        .as_transient()
+        .with_retain(30);
+    sub.publish(gen_chunk).await?;
+
     let (audio_bytes, mime_type) = voicebox.synthesize(text, profile, engine).await?;
 
     let chunk = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
@@ -187,6 +194,11 @@ async fn handle_tts_request(
     let byte_size = audio_bytes.len();
 
     sub.publish(chunk).await?;
+
+    let done_chunk = Chunk::new_null("com.nominal.cafe-tts")
+        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+        .with_annotation("chat.audio_complete", true);
+    sub.publish(done_chunk).await?;
 
     info!(
         "cafe-tts: published BinaryRef chunk {} for session {} ({} bytes)",

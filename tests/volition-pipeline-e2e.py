@@ -205,6 +205,8 @@ def main():
             sub_sock.settimeout(TIMEOUT_SECS)
             assistant_text = None
             tts_binary_ref = None
+            tts_streaming = False
+            tts_complete = False
 
             try:
                 while True:
@@ -223,11 +225,19 @@ def main():
                                 assistant_text = assistant_text or content
                                 print(f"  assistant: '{content[:80]}'", file=sys.stderr)
 
+                        if ct == "null" and ann.get("chat.audio_streaming") and chunk.get("producer") == "com.nominal.cafe-tts":
+                            tts_streaming = True
+                            print(f"  TTS generating signal", file=sys.stderr)
+
                         if ct == "binary_ref" and chunk.get("producer") == "com.nominal.cafe-tts":
                             tts_binary_ref = chunk
                             print(f"  TTS audio chunk: {chunk.get('id', '')[:20]}...", file=sys.stderr)
 
-                        if assistant_text is not None and tts_binary_ref is not None:
+                        if ct == "null" and ann.get("chat.audio_complete") and chunk.get("producer") == "com.nominal.cafe-tts":
+                            tts_complete = True
+                            print(f"  TTS complete signal", file=sys.stderr)
+
+                        if assistant_text is not None and tts_complete:
                             break
 
             except socket.timeout:
@@ -236,6 +246,7 @@ def main():
             assert assistant_text is not None, "No assistant text received from LLM"
             print(f"  LLM response: {assistant_text[:80]}", file=sys.stderr)
 
+            assert tts_streaming, "No TTS audio_streaming signal received"
             assert tts_binary_ref is not None, "No TTS BinaryRef audio chunk received"
             ann = tts_binary_ref.get("annotations", {})
             byte_size = ann.get("cafe.binary.byte_size")

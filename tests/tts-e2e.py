@@ -180,6 +180,8 @@ def main():
             result = None
             binary_ref_id = None
             audio_byte_size = None
+            audio_streaming_received = False
+            audio_complete_received = False
             try:
                 while True:
                     line = recv_line(sub_sock)
@@ -189,24 +191,36 @@ def main():
                     if msg.get("event") == "chunk":
                         chunk = msg["chunk"]
                         ann = chunk.get("annotations", {})
-                        rpc_resp = ann.get("cafe.jsonrpc.response")
-                        if rpc_resp and rpc_resp.get("id") == call_id:
-                            result = rpc_resp
-                            print(f"  rpc response received", file=sys.stderr)
+
+                        if chunk.get("content_type") == "null" and ann.get("chat.audio_streaming"):
+                            audio_streaming_received = True
+                            print(f"  phase 1/4: audio streaming signal", file=sys.stderr)
+
                         if chunk.get("content_type") == "binary_ref":
                             binary_ref_id = chunk["id"]
                             audio_byte_size = ann.get("cafe.binary.byte_size")
-                            print(f"  BinaryRef audio chunk: {binary_ref_id[:20]}... ({audio_byte_size} bytes)", file=sys.stderr)
-                        if result is not None and binary_ref_id is not None:
+                            print(f"  phase 2/4: BinaryRef audio chunk: {binary_ref_id[:20]}... ({audio_byte_size} bytes)", file=sys.stderr)
+
+                        if chunk.get("content_type") == "null" and ann.get("chat.audio_complete"):
+                            audio_complete_received = True
+                            print(f"  phase 3/4: audio complete signal", file=sys.stderr)
+
+                        rpc_resp = ann.get("cafe.jsonrpc.response")
+                        if rpc_resp and rpc_resp.get("id") == call_id:
+                            result = rpc_resp
+                            print(f"  phase 4/4: rpc response received", file=sys.stderr)
+
+                        if result is not None and audio_complete_received:
                             break
             except socket.timeout:
                 print("  timeout waiting for response", file=sys.stderr)
                 assert False, "Timeout waiting for tts.invoke RPC response or BinaryRef chunk"
 
-            assert result is not None, "No tts.invoke RPC response received"
+            assert audio_streaming_received, "No audio_streaming signal received"
             assert binary_ref_id is not None, "No BinaryRef audio chunk received"
-            assert audio_byte_size is not None, "BinaryRef missing cafe.binary.byte_size"
-            assert audio_byte_size > 0, "BinaryRef byte_size is zero"
+            assert audio_byte_size is not None and audio_byte_size > 0, "BinaryRef missing cafe.binary.byte_size"
+            assert audio_complete_received, "No audio_complete signal received"
+            assert result is not None, "No tts.invoke RPC response received"
 
             err = result.get("error")
             assert err is None, f"TTS synthesis failed: {err.get('message', '')}"
