@@ -278,7 +278,7 @@ def main():
                 assert len(audio_data) == audio_byte_size, \
                     f"Downloaded {len(audio_data)} bytes, expected {audio_byte_size}"
                 content_type = resp.headers.get("Content-Type", "")
-                assert "audio" in content_type or "octet-stream" in content_type, \
+                assert "audio" in content_type or "wav" in content_type, \
                     f"Unexpected Content-Type: {content_type}"
                 print(f"  audio downloaded: {len(audio_data)} bytes, type={content_type}", file=sys.stderr)
             except Exception as e:

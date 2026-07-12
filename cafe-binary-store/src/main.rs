@@ -250,15 +250,19 @@ async fn read_handler(
         .unwrap_or(0);
 
     match state.storage.read(&chunk_id, offset, 1024 * 1024 * 8).await {
-        Ok((data, _file_size, _done)) => {
+        Ok((data, file_size, _done)) => {
+            let data_end = offset + data.len() as u64 - 1;
             let response = axum::response::Response::builder()
-                .header("Content-Type", "application/octet-stream")
+                .header("Content-Type", "audio/wav")
                 .header("Content-Length", data.len().to_string())
                 .header("Accept-Ranges", "bytes")
                 .header("Access-Control-Allow-Origin", "*");
 
             if offset > 0 {
-                let response = response.status(StatusCode::PARTIAL_CONTENT);
+                let range_header = format!("bytes {}-{}/{}", offset, data_end, file_size);
+                let response = response
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header("Content-Range", &range_header);
                 response
                     .body(axum::body::Body::from(data))
                     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
