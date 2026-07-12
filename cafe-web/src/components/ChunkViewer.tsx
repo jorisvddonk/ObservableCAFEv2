@@ -262,7 +262,7 @@ function applyFilter(chunks: Chunk[], filter: FilterType, search: string): Chunk
 
 // ── main panel ────────────────────────────────────────────────────────────────
 
-export function ChunkViewer() {
+export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
   const { allChunks, chunkViewerOpen, toggleChunkViewer, activeSessionId } = useSessionStore();
   const [selected, setSelected] = useState<Chunk | null>(null);
   const [filter, setFilter] = useState<FilterType>('all');
@@ -307,7 +307,7 @@ export function ChunkViewer() {
         borderTop: '2px solid #2a2a4a',
         display: 'flex',
         flexDirection: 'column',
-        zIndex: 1000,
+        zIndex,
         fontFamily: 'monospace',
       }}
     >

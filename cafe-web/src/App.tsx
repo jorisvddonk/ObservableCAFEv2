@@ -110,7 +110,7 @@ export function App() {
       >
         {/* Desktop sidebar — always visible */}
         {!isMobile && (
-          <div style={{ display: 'flex', flexDirection: 'column', width: 240, flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', width: 240, flexShrink: 0, minHeight: 0 }}>
             <Sidebar />
             <QuickiesPanel />
           </div>
@@ -154,7 +154,7 @@ export function App() {
         <ChatArea />
       </div>
 
-      <ChunkViewer />
+      <ChunkViewer zIndex={isMobile && sidebarOpen ? 5 : 1000} />
     </div>
   );
 }

@@ -186,7 +186,7 @@ export function ChatArea() {
       >
         <span style={{ fontWeight: 600, color: '#4fc3f7', fontSize: 14 }}>
           {store.sessions.find((s) => s.session_id === store.activeSessionId)
-            ?.display_name ?? store.activeSessionId?.slice(0, 12) + '…'}
+            ?.display_name ?? store.activeSessionId}
         </span>
         <button
           onClick={() => store.activeSessionId && removeSession(store.activeSessionId)}

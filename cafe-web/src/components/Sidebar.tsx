@@ -62,7 +62,8 @@ export function Sidebar({ onSelectSession }: { onSelectSession?: () => void }) {
         borderRight: '1px solid #2a2a4a',
         display: 'flex',
         flexDirection: 'column',
-        flexShrink: 0,
+        flex: 1,
+        minHeight: 0,
       }}
     >
       <div
@@ -187,7 +188,7 @@ function SessionItem({
   onSelect: () => void;
 }) {
   const name =
-    session.display_name ?? session.session_id.slice(0, 8) + '…';
+    session.display_name ?? session.session_id;
 
   return (
     <button
