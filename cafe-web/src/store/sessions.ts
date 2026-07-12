@@ -49,13 +49,15 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   appendChunk: (chunk) => {
     // Handle mutation: merge annotations into target chunk
-    if (chunk.annotations['mutates.target_id']) {
-      const targetId = chunk.annotations['mutates.target_id'];
+    const mutationKey = chunk.annotations['cafe.mutates.target_id'] as string
+      || chunk.annotations['mutates.target_id'] as string;
+    if (mutationKey) {
+      const targetId = mutationKey;
       set((s) => {
         const target = s.allChunks.find((c) => c.id === targetId);
         if (target) {
           for (const k in chunk.annotations) {
-            if (k !== 'mutates.target_id') {
+            if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
               target.annotations[k] = chunk.annotations[k];
             }
           }
@@ -76,13 +78,15 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   finaliseStream: (chunk) => {
     // Handle mutation: merge annotations into target chunk
-    if (chunk.annotations['mutates.target_id']) {
-      const targetId = chunk.annotations['mutates.target_id'];
+    const mutationKey = chunk.annotations['cafe.mutates.target_id'] as string
+      || chunk.annotations['mutates.target_id'] as string;
+    if (mutationKey) {
+      const targetId = mutationKey;
       set((s) => {
         const target = s.allChunks.find((c) => c.id === targetId);
         if (target) {
           for (const k in chunk.annotations) {
-            if (k !== 'mutates.target_id') {
+            if (k !== 'cafe.mutates.target_id' && k !== 'mutates.target_id') {
               target.annotations[k] = chunk.annotations[k];
             }
           }

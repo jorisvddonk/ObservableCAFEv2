@@ -71,10 +71,15 @@ function MediaMessage({ chunk }: { chunk: Chunk }) {
   const ref = asBinaryRef(chunk);
 
   // Resolve the media src:
-  //  - binary-ref → URL endpoint (fetched + cached by browser)
+  //  - binary-ref with read_url annotation → binary-store endpoint
+  //  - binary-ref without read_url → fallback constructed URL
   //  - full binary → inline data URI
+  const readUrl = chunk.annotations['cafe.binary.read_url'] as string | undefined;
+  const readToken = chunk.annotations['cafe.binary.read_token'] as string | undefined;
   const src = ref
-    ? getBinaryUrl(activeSessionId ?? '', ref.chunk_id)
+    ? readUrl
+      ? `${readUrl}?token=${encodeURIComponent(readToken ?? '')}`
+      : getBinaryUrl(activeSessionId ?? '', ref.chunk_id)
     : chunk.data
       ? `data:${mime};base64,${chunk.data}`
       : null;
