@@ -10,6 +10,14 @@ pub trait BusTransport {
 
     async fn connect(&self) -> Result<(Self::Writer, Self::Reader), SdkError>;
     fn description(&self) -> &str;
+
+    /// Log connection path information (relay vs direct). Default no-op.
+    fn log_connection_paths(&self) {}
+
+    /// Return connection path information (relay vs direct) as JSON. Default None.
+    fn connection_info(&self) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 #[derive(Clone)]

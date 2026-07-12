@@ -24,6 +24,7 @@ members = [
     "cafe-mcp-client",
     "cafe-rot13",
     "cafe-stt",
+    "cafe-beacon",
 ]
 
 # Keep target/ small: skip debug symbols (the main source of bloat).

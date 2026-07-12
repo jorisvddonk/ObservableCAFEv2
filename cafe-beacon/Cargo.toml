@@ -1,0 +1,12 @@
+[package]
+name = "cafe-beacon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cafe-sdk      = { path = "../cafe-sdk", features = ["bus-client", "iroh-client"] }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow        = { workspace = true }
+libc          = "0.2"

@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 use crate::error::SdkError;
@@ -12,6 +13,10 @@ pub struct IrohTransport {
     bus_addr: iroh::EndpointAddr,
     alpn: Vec<u8>,
     description: String,
+    /// Tracked connections for path inspection (relay vs direct).
+    connections: Arc<Mutex<Vec<iroh::endpoint::Connection>>>,
+    /// Most recent connection — the one used for publishes.
+    latest_connection: Arc<Mutex<Option<iroh::endpoint::Connection>>>,
 }
 
 pub struct IrohConfig {
@@ -21,6 +26,7 @@ pub struct IrohConfig {
     secret_key: Option<iroh::SecretKey>,
     disable_relay: bool,
     bus_addr: Option<iroh::EndpointAddr>,
+    dns_nameserver: Option<std::net::SocketAddr>,
 }
 
 impl IrohConfig {
@@ -32,6 +38,7 @@ impl IrohConfig {
             secret_key: None,
             disable_relay: false,
             bus_addr: None,
+            dns_nameserver: None,
         }
     }
 
@@ -54,6 +61,14 @@ impl IrohConfig {
     /// Useful for localhost / same-machine deployments where relay isn't needed.
     pub fn with_direct(mut self) -> Self {
         self.disable_relay = true;
+        self
+    }
+
+    /// Use a specific DNS nameserver instead of reading system config.
+    /// Hickory-resolver (used internally by iroh) doesn't handle all
+    /// /etc/resolv.conf formats (e.g. Tailscale's options lines).
+    pub fn with_dns_nameserver(mut self, addr: std::net::SocketAddr) -> Self {
+        self.dns_nameserver = Some(addr);
         self
     }
 
@@ -85,9 +100,22 @@ impl IrohConfig {
             .map(|s| s.as_bytes().to_vec())
             .unwrap_or_else(|| b"cafe-bus/0".to_vec());
 
+        let direct = std::env::var("CAFE_BUS_IROH_DIRECT").ok()
+            .map_or(false, |v| v == "1" || v == "true");
+
+        let dns_ns = std::env::var("CAFE_BUS_IROH_NAMESERVER").ok()
+            .filter(|s| !s.is_empty())
+            .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
+
         let mut cfg = Self::new(bus_id).with_alpn(&alpn_vec);
+        if direct {
+            cfg = cfg.with_direct();
+        }
         if let Some(url) = relay_url {
             cfg = cfg.with_relay(url);
+        }
+        if let Some(addr) = dns_ns {
+            cfg = cfg.with_dns_nameserver(addr);
         }
         Some(cfg)
     }
@@ -126,10 +154,17 @@ impl IrohConfig {
         if let Some(ref sk) = self.secret_key {
             builder = builder.secret_key(sk.clone());
         }
+        if let Some(addr) = self.dns_nameserver {
+            builder = builder.dns_resolver(
+                iroh::dns::DnsResolver::with_nameserver(addr)
+            );
+        }
         let endpoint = builder.bind().await
             .map_err(|e| SdkError::BusConnect(e.into()))?;
 
-        endpoint.online().await;
+        if !self.disable_relay {
+            endpoint.online().await;
+        }
 
         let description = format!("iroh ({} → {:?})",
             alpn_short(&self.alpn),
@@ -143,6 +178,8 @@ impl IrohConfig {
             bus_addr: addr,
             alpn: self.alpn,
             description,
+            connections: Arc::new(Mutex::new(Vec::new())),
+            latest_connection: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -162,6 +199,8 @@ impl IrohTransport {
             bus_addr,
             alpn: alpn.to_vec(),
             description,
+            connections: Arc::new(Mutex::new(Vec::new())),
+            latest_connection: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -188,12 +227,76 @@ impl BusTransport for IrohTransport {
             .await
             .map_err(|e| SdkError::BusConnect(e.into()))?;
 
+        // Track connection for path inspection
+        self.connections.lock().unwrap().push(conn.clone());
+        *self.latest_connection.lock().unwrap() = Some(conn);
+
         tracing::info!("iroh: stream opened");
         Ok((send, recv))
     }
 
     fn description(&self) -> &str {
         &self.description
+    }
+
+    fn log_connection_paths(&self) {
+        for (i, info) in self.collect_connection_info().iter().enumerate() {
+            tracing::info!(
+                "iroh conn {}: peer={}, relay_paths={:?}, direct_paths={:?}",
+                i, info.peer, info.relay, info.direct,
+            );
+        }
+    }
+
+    fn connection_info(&self) -> Option<serde_json::Value> {
+        let conn = self.latest_connection.lock().unwrap().clone()?;
+        let peer = conn.remote_id().to_string();
+        let mut relay = Vec::new();
+        let mut direct = Vec::new();
+        for path in conn.paths().iter() {
+            let sel = if path.is_selected() { " [selected]" } else { "" };
+            let addr = format!("{}{}", path.remote_addr(), sel);
+            if path.is_relay() {
+                relay.push(addr);
+            } else if path.is_ip() {
+                direct.push(addr);
+            }
+        }
+        Some(serde_json::json!({
+            "mode": if direct.iter().any(|p| p.contains("[selected]")) { "direct" } else { "relay" },
+            "relay": relay,
+            "direct": direct,
+        }))
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ConnInfo {
+    peer: String,
+    relay: Vec<String>,
+    direct: Vec<String>,
+}
+
+impl IrohTransport {
+    fn collect_connection_info(&self) -> Vec<ConnInfo> {
+        let mut conns = self.connections.lock().unwrap();
+        conns.retain(|c| !c.paths().is_empty());
+
+        conns.iter().map(|conn| {
+            let peer = conn.remote_id().to_string();
+            let mut relay = Vec::new();
+            let mut direct = Vec::new();
+            for path in conn.paths().iter() {
+                let sel = if path.is_selected() { " [selected]" } else { "" };
+                let addr = format!("{}{}", path.remote_addr(), sel);
+                if path.is_relay() {
+                    relay.push(addr);
+                } else if path.is_ip() {
+                    direct.push(addr);
+                }
+            }
+            ConnInfo { peer, relay, direct }
+        }).collect()
     }
 }
 

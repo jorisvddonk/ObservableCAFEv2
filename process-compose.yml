@@ -284,3 +284,17 @@ processes:
     # One-shot demo: publishes demo chunks (text, audio, image, error) to a "demo" session.
     # Set disabled: false to run on startup.
     disabled: true
+
+  cafe-beacon:
+    command: ./target/debug/cafe-beacon
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy

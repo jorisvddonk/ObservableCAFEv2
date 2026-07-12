@@ -123,6 +123,22 @@ impl BusTransport for AnyTransport {
             Self::Iroh(t) => t.description(),
         }
     }
+
+    fn log_connection_paths(&self) {
+        match self {
+            Self::Unix(_) => {}
+            #[cfg(feature = "iroh-client")]
+            Self::Iroh(t) => t.log_connection_paths(),
+        }
+    }
+
+    fn connection_info(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Unix(_) => None,
+            #[cfg(feature = "iroh-client")]
+            Self::Iroh(t) => t.connection_info(),
+        }
+    }
 }
 
 #[cfg(test)]

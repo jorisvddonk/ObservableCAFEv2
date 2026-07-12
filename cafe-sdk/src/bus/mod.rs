@@ -204,6 +204,16 @@ impl<T: BusTransport> BusClient<T> {
         }
     }
 
+    /// Log connection path information (relay vs direct).
+    pub fn log_connection_paths(&self) {
+        self.transport.log_connection_paths();
+    }
+
+    /// Return connection path information (relay vs direct) as JSON.
+    pub fn connection_info(&self) -> Option<serde_json::Value> {
+        self.transport.connection_info()
+    }
+
     /// Negotiate the codec with the bus. Called lazily on first use.
     /// Opens a dedicated connection, sends `SetMeta` with `codecs` field,
     /// and reads the bus response (`CodecSet` or legacy `Connected`).
