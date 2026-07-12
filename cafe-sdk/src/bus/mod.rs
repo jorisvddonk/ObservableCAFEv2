@@ -143,6 +143,18 @@ impl<W: tokio::io::AsyncWrite + Unpin + Send> SessionSubscription<W> {
         }
         Ok(())
     }
+
+    /// Shut down the write stream, flushing any buffered data.
+    pub async fn shutdown(&mut self) -> Result<(), SdkError> {
+        use tokio::io::AsyncWriteExt;
+        if let Some(mut writer) = self.writer.take() {
+            writer.shutdown().await.map_err(|e| SdkError::BusError {
+                message: format!("shutdown failed: {}", e),
+                code: None,
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl<W: tokio::io::AsyncWrite + Unpin + Send> Drop for SessionSubscription<W> {

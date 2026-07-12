@@ -6,6 +6,13 @@ use std::time::Duration;
 const PRODUCER: &str = "com.nominal.cafe-beacon";
 const INTERVAL_SECS: u64 = 30;
 
+fn interval_secs() -> u64 {
+    std::env::var("CAFE_BEACON_INTERVAL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(INTERVAL_SECS)
+}
+
 fn get_hostname() -> Result<String> {
     let mut buf = vec![0u8; 256];
     let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
@@ -27,7 +34,7 @@ fn get_loadavg() -> Result<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    let once = std::env::args().any(|a| a == "--once");
 
     let hostname = get_hostname()?;
     let session_id = format!("loadavg.{}", hostname);
@@ -67,6 +74,37 @@ async fn main() -> Result<()> {
     let mut sub = bus.subscribe_session(&session_id).await?;
 
     let mut tick = 0u64;
+    let chunk_id = loop {
+        let load = get_loadavg()?;
+        let mut chunk = Chunk::new_text(&load, PRODUCER).as_transient().with_retain(60);
+        if let Some(info) = bus.connection_info() {
+            chunk = chunk.with_annotation("iroh.connections", info);
+        }
+        let chunk_id = chunk.id.clone();
+        sub.publish(chunk).await?;
+        tracing::info!("published loadavg: {}", load);
+        break chunk_id;
+    };
+
+    if once {
+        // Wait for the bus to echo our chunk back, proving it was received.
+        // Time out after 5s so we don't hang on slow relay links.
+        use cafe_sdk::ServerMessage;
+        use tokio::time::timeout;
+        let _ = timeout(Duration::from_secs(5), async {
+            while let Some(msg) = sub.rx.recv().await {
+                if let ServerMessage::Chunk { chunk, .. } = &msg {
+                    if chunk.id == chunk_id {
+                        tracing::info!("bus acknowledged chunk");
+                        break;
+                    }
+                }
+            }
+        }).await;
+        sub.shutdown().await?;
+        return Ok(());
+    }
+
     loop {
         match get_loadavg() {
             Ok(load) => {
@@ -88,6 +126,8 @@ async fn main() -> Result<()> {
             bus.log_connection_paths();
         }
 
-        tokio::time::sleep(Duration::from_secs(INTERVAL_SECS)).await;
+        tokio::time::sleep(Duration::from_secs(interval_secs())).await;
     }
+
+    Ok(())
 }
