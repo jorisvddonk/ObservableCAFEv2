@@ -39,7 +39,7 @@ export function TokenSetup({ onDone }: Props) {
         }}
       >
         <h1 style={{ color: '#4fc3f7', fontSize: 20, fontWeight: 700 }}>
-          ObservableCAFE
+          CAFE
         </h1>
         <p style={{ color: '#888', fontSize: 13 }}>
           Enter your API token to continue. The admin token is printed to the

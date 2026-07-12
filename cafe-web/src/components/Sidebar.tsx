@@ -75,7 +75,7 @@ export function Sidebar({ onSelectSession }: { onSelectSession?: () => void }) {
           letterSpacing: 0.5,
         }}
       >
-        ObservableCAFE
+        CAFE
       </div>
 
       {/* New session button */}
