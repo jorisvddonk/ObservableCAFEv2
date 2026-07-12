@@ -3,7 +3,7 @@ import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
 import { listAgents, type SessionInfo, type AgentInfo } from 'cafe-web-sdk';
 
-export function Sidebar() {
+export function Sidebar({ onSelectSession }: { onSelectSession?: () => void }) {
   const { sessions, activeSessionId } = useSessionStore();
   const { switchSession, newSession } = useSessions();
 
@@ -168,8 +168,8 @@ export function Sidebar() {
           <SessionItem
             key={s.session_id}
             session={s}
-            active={s.session_id === activeSessionId}
-            onSelect={() => switchSession(s.session_id)}
+              active={s.session_id === activeSessionId}
+              onSelect={() => { switchSession(s.session_id); onSelectSession?.(); }}
           />
         ))}
       </div>

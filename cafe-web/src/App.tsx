@@ -8,10 +8,22 @@ import { QuickiesPanel } from './components/QuickiesPanel';
 import { TokenSetup } from './components/TokenSetup';
 import { ChunkViewer } from './components/ChunkViewer';
 
+function useIsMobile() {
+  const [m, setM] = useState(() => window.innerWidth < 640);
+  useEffect(() => {
+    const h = () => setM(window.innerWidth < 640);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return m;
+}
+
 export function App() {
   const [hasToken, setHasToken] = useState(() => !!getToken());
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const { refresh } = useSessions();
   const { chunkViewerOpen, toggleChunkViewer, activeSessionId } = useSessionStore();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     console.log('[App] mount origin=', window.location.origin);
@@ -42,13 +54,30 @@ export function App() {
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'flex-end',
+          justifyContent: isMobile ? 'space-between' : 'flex-end',
           padding: '4px 12px',
           background: '#16213e',
           borderBottom: '1px solid #2a2a4a',
           flexShrink: 0,
         }}
       >
+        {isMobile && (
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            style={{
+              background: 'transparent',
+              color: '#aaa',
+              border: '1px solid #2a2a4a',
+              borderRadius: 4,
+              padding: '3px 8px',
+              fontSize: 16,
+              cursor: 'pointer',
+              lineHeight: 1,
+            }}
+          >
+            {sidebarOpen ? '✕' : '☰'}
+          </button>
+        )}
         <button
           onClick={toggleChunkViewer}
           disabled={!activeSessionId}
@@ -76,14 +105,51 @@ export function App() {
           display: 'flex',
           flex: 1,
           minHeight: 0,
-          // Leave room at the bottom when chunk viewer is open
           paddingBottom: chunkViewerOpen ? '40vh' : 0,
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', width: 240, flexShrink: 0 }}>
-          <Sidebar />
-          <QuickiesPanel />
-        </div>
+        {/* Desktop sidebar — always visible */}
+        {!isMobile && (
+          <div style={{ display: 'flex', flexDirection: 'column', width: 240, flexShrink: 0 }}>
+            <Sidebar />
+            <QuickiesPanel />
+          </div>
+        )}
+
+        {/* Mobile sidebar — overlay when open */}
+        {isMobile && sidebarOpen && (
+          <>
+            <div
+              onClick={() => setSidebarOpen(false)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.5)',
+                zIndex: 10,
+              }}
+            />
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                bottom: 0,
+                width: 260,
+                zIndex: 11,
+                display: 'flex',
+                flexDirection: 'column',
+                background: '#16213e',
+                borderRight: '1px solid #2a2a4a',
+                boxShadow: '4px 0 20px rgba(0,0,0,0.3)',
+                animation: 'slideIn 0.2s ease',
+              }}
+            >
+              <Sidebar onSelectSession={() => setSidebarOpen(false)} />
+              <QuickiesPanel />
+            </div>
+          </>
+        )}
+
         <ChatArea />
       </div>
 
