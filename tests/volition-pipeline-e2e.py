@@ -37,7 +37,7 @@ STORE_BIN = os.path.join(RELEASE_DIR, "cafe-store")
 
 VOICEBOX_URL = os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493")
 LLM_URL = os.environ.get("OPENAI_URL", "http://localhost:8080")
-LLM_MODEL = os.environ.get("OPENAI_MODEL", "Ornith-1.0-9B-4bit")
+LLM_MODEL = os.environ.get("OPENAI_MODEL", "mlx-community/Ornith-1.0-9B-4bit")
 
 TIMEOUT_SECS = 90
 
