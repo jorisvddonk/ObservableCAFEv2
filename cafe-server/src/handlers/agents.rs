@@ -22,6 +22,10 @@ pub async fn list_agents(
     {
         dirs.extend(paths_str.split(':').map(String::from));
     }
+    // Deduplicate — env var may also include ./agents
+    use std::collections::HashSet;
+    let seen: HashSet<_> = dirs.into_iter().collect();
+    let dirs: Vec<_> = seen.into_iter().collect();
 
     let mut agents: Vec<AgentInfo> = Vec::new();
 
@@ -62,6 +66,9 @@ pub async fn list_agents(
             }
         }
     }
+
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    agents.retain(|a| seen_ids.insert(a.id.clone()));
 
     // Sort: foreground agents first, then alphabetically
     agents.sort_by(|a, b| {
