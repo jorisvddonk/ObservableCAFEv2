@@ -34,6 +34,7 @@ LLM_BIN = os.path.join(RELEASE_DIR, "cafe-llm")
 AGENT_BIN = os.path.join(RELEASE_DIR, "cafe-agent-runtime")
 TTS_BIN = os.path.join(RELEASE_DIR, "cafe-tts")
 STORE_BIN = os.path.join(RELEASE_DIR, "cafe-store")
+BINARY_STORE_BIN = os.path.join(RELEASE_DIR, "cafe-binary-store")
 
 VOICEBOX_URL = os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493")
 LLM_URL = os.environ.get("OPENAI_URL", "http://localhost:8080")
@@ -82,6 +83,7 @@ def main():
         "cafe-tts": TTS_BIN,
         "cafe-cli": CLI,
         "cafe-store": STORE_BIN,
+        "cafe-binary-store": BINARY_STORE_BIN,
     }
     for name, path in binaries.items():
         if not os.path.exists(path):
@@ -136,10 +138,29 @@ def main():
         start("tts", TTS_BIN)
         time.sleep(4)
 
+        binary_data_dir = os.path.join(tmpdir, "binary-store-data")
+        print("=== Starting cafe-binary-store ===", file=sys.stderr)
+        procs["binary-store"] = subprocess.Popen(
+            [BINARY_STORE_BIN,
+             "--bus-socket", bus_socket,
+             "--port", "4003",
+             "--data-dir", binary_data_dir,
+             "--public-host", "localhost"],
+            env=env,
+            stdout=open(os.path.join(tmpdir, "binary-store.log"), "w"),
+            stderr=subprocess.STDOUT,
+        )
+        time.sleep(2)
+
         if any(p.poll() is not None for p in procs.values()):
-            for name, p in procs.items():
+            for name, p in list(procs.items()):
                 if p.poll() is not None:
                     print(f"  {name} exited with code {p.returncode}", file=sys.stderr)
+                    log_path = os.path.join(tmpdir, f"{name}.log")
+                    if os.path.exists(log_path):
+                        with open(log_path) as f:
+                            print(f"  --- {name} log ---", file=sys.stderr)
+                            print(f.read()[-1000:], file=sys.stderr)
             assert False, "A service failed to start"
 
         try:
@@ -243,13 +264,51 @@ def main():
                     print(f"  TTS audio size: {byte_size} bytes", file=sys.stderr)
                 assert byte_size is not None, "BinaryRef chunk missing byte size annotation"
                 print("  TTS audio verified", file=sys.stderr)
+
+                # Verify binary upload lifecycle
+                print("=== Verifying binary upload ===", file=sys.stderr)
+                ref_id = tts_binary_ref["id"]
+                write_creds_found = False
+                read_creds_found = False
+                completed_found = False
+
+                sub_sock.settimeout(60)
+                try:
+                    while True:
+                        line = recv_line(sub_sock)
+                        if not line:
+                            break
+                        msg = json.loads(line)
+                        if msg.get("event") == "chunk":
+                            chunk = msg["chunk"]
+                            ann = chunk.get("annotations", {})
+                            target = ann.get("cafe.mutates.target_id")
+                            if target == ref_id:
+                                if ann.get("cafe.binary.write_url"):
+                                    write_creds_found = True
+                                    print(f"  write credentials received", file=sys.stderr)
+                                if ann.get("cafe.binary.read_url"):
+                                    read_creds_found = True
+                                    print(f"  read credentials received", file=sys.stderr)
+                                if ann.get("cafe.binary.completed"):
+                                    completed_found = True
+                                    print(f"  upload completed", file=sys.stderr)
+                                    break
+
+                except socket.timeout:
+                    print("  timeout waiting for upload lifecycle", file=sys.stderr)
+
+                assert write_creds_found, "No write credentials mutation received"
+                assert read_creds_found, "No read credentials mutation received"
+                assert completed_found, "No upload completion mutation received"
+                print("  binary upload lifecycle verified", file=sys.stderr)
             else:
                 assert False, "Neither TTS audio nor TTS error received"
 
             run([CLI, "--bus", bus_socket, "delete-session", session_id])
 
         finally:
-            for name in ["cafe-bus", "store", "llm", "agent", "tts"]:
+            for name in ["cafe-bus", "store", "llm", "agent", "tts", "binary-store"]:
                 p = procs.get(name)
                 if p:
                     try:
@@ -262,11 +321,11 @@ def main():
                                 print(f"  {line}", file=sys.stderr)
                     except Exception:
                         pass
-            for name in ["cafe-bus", "store", "llm", "agent", "tts"]:
+            for name in ["cafe-bus", "store", "llm", "agent", "tts", "binary-store"]:
                 p = procs.get(name)
                 if p:
                     p.kill()
-            for name in ["cafe-bus", "store", "llm", "agent", "tts"]:
+            for name in ["cafe-bus", "store", "llm", "agent", "tts", "binary-store"]:
                 p = procs.get(name)
                 if p:
                     p.wait()
