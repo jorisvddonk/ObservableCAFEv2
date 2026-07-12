@@ -263,12 +263,14 @@ function applyFilter(chunks: Chunk[], filter: FilterType, search: string): Chunk
 // ── main panel ────────────────────────────────────────────────────────────────
 
 export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
-  const { allChunks, chunkViewerOpen, toggleChunkViewer, activeSessionId } = useSessionStore();
-  const [selected, setSelected] = useState<Chunk | null>(null);
+  const { allChunks, chunkViewerOpen, toggleChunkViewer, activeSessionId, selectedChunkId, setSelectedChunkId } = useSessionStore();
   const [filter, setFilter] = useState<FilterType>('all');
   const [search, setSearch] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
+
+  const selected = selectedChunkId ? (allChunks.find((c) => c.id === selectedChunkId) ?? null) : null;
 
   // Auto-scroll list to bottom when new chunks arrive
   useEffect(() => {
@@ -277,9 +279,18 @@ export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
     }
   }, [allChunks, autoScroll]);
 
+  // Scroll selected chunk into view when selection changes
+  useEffect(() => {
+    if (!selectedChunkId || !listRef.current) return;
+    const el = rowRefs.current.get(selectedChunkId);
+    if (el) {
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedChunkId]);
+
   // Reset selection when session changes
   useEffect(() => {
-    setSelected(null);
+    setSelectedChunkId(null);
   }, [activeSessionId]);
 
   if (!chunkViewerOpen) return null;
@@ -437,12 +448,16 @@ export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
             <div style={{ padding: 16, color: '#444', fontSize: 12 }}>No chunks match.</div>
           ) : (
             visible.map((c) => (
-              <ChunkRow
+              <div
                 key={c.id}
-                chunk={c}
-                selected={selected?.id === c.id}
-                onSelect={() => setSelected(selected?.id === c.id ? null : c)}
-              />
+                ref={(el) => { if (el) rowRefs.current.set(c.id, el); else rowRefs.current.delete(c.id); }}
+              >
+                <ChunkRow
+                  chunk={c}
+                  selected={selectedChunkId === c.id}
+                  onSelect={() => setSelectedChunkId(selectedChunkId === c.id ? null : c.id)}
+                />
+              </div>
             ))
           )}
         </div>

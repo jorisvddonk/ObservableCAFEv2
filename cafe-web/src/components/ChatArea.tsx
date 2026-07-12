@@ -234,7 +234,13 @@ export function ChatArea() {
         }}
       >
         {displayMessages.map((chunk) => (
-          <Message key={chunk.id} chunk={chunk} />
+          <div
+            key={chunk.id}
+            onClick={() => store.setSelectedChunkId(chunk.id)}
+            style={{ cursor: store.chunkViewerOpen ? 'pointer' : undefined }}
+          >
+            <Message chunk={chunk} />
+          </div>
         ))}
         <div ref={bottomRef} />
       </div>
