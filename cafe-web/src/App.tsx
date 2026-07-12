@@ -22,7 +22,7 @@ export function App() {
   const [hasToken, setHasToken] = useState(() => !!getToken());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { refresh } = useSessions();
-  const { chunkViewerOpen, toggleChunkViewer, activeSessionId } = useSessionStore();
+  const { chunkViewerOpen, toggleChunkViewer, activeSessionId, showAllChunks } = useSessionStore();
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -33,15 +33,19 @@ export function App() {
     });
   }, [hasToken]);
 
-  // Sync chunk viewer open state to URL hash
+  // Sync chunk viewer and raw state to URL hash
   useEffect(() => {
     if (!activeSessionId) return;
     const hash = window.location.hash.slice(1);
     const qIdx = hash.indexOf('?');
     const sessionId = qIdx === -1 ? hash : hash.slice(0, qIdx);
     if (!sessionId) return;
-    window.location.hash = chunkViewerOpen ? `${sessionId}?chunkViewer=1` : sessionId;
-  }, [chunkViewerOpen, activeSessionId]);
+    const params = new URLSearchParams();
+    if (chunkViewerOpen) params.set('chunkViewer', '1');
+    if (showAllChunks) params.set('raw', '1');
+    const qs = params.toString();
+    window.location.hash = qs ? `${sessionId}?${qs}` : sessionId;
+  }, [chunkViewerOpen, showAllChunks, activeSessionId]);
 
   if (!hasToken) {
     return <TokenSetup onDone={() => setHasToken(true)} />;

@@ -18,15 +18,16 @@ export function Message({ chunk }: Props) {
     if (trustLevel?.trusted === false) {
       return <TrustPrompt chunk={chunk} />;
     }
-    return null;
+    return <SystemEvent chunk={chunk} />;
   }
 
   const role = chunk.annotations['chat.role'] as string | undefined;
   const isUser = role === 'user';
+  const sourceLabel = role ?? chunk.producer.replace('com.nominal.', '');
 
   return (
     <div
-      className={`message message--${role ?? 'system'}`}
+      className={`message message--${role ?? 'source'}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -42,7 +43,7 @@ export function Message({ chunk }: Props) {
           textTransform: 'capitalize',
         }}
       >
-        {role ?? 'system'}
+        {sourceLabel}
       </span>
       <div
         style={{
@@ -199,6 +200,54 @@ function TrustPrompt({ chunk }: { chunk: Chunk }) {
       <p style={{ marginTop: 4, fontSize: 11, color: '#888' }}>
         Chunk ID: {chunk.id}
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// System event (config, RPC, stream_complete, etc.)
+// ---------------------------------------------------------------------------
+
+function SystemEvent({ chunk }: { chunk: Chunk }) {
+  let label = 'system';
+  let detail = chunk.id;
+
+  if (chunk.annotations['jsonrpc.request']) {
+    const r = chunk.annotations['jsonrpc.request'] as { method?: string };
+    label = 'RPC request';
+    detail = r.method ?? chunk.id;
+  } else if (chunk.annotations['jsonrpc.response']) {
+    const r = chunk.annotations['jsonrpc.response'] as { id?: string; error?: unknown };
+    label = r.error ? 'RPC error' : 'RPC response';
+    detail = r.id ?? chunk.id;
+  } else if (chunk.annotations['config.type']) {
+    label = 'config';
+    detail = String(chunk.annotations['config.type']);
+  } else if (chunk.annotations['chat.stream_complete']) {
+    const reason = chunk.annotations['chat.finish_reason'] as string | undefined;
+    label = 'done';
+    detail = reason ? `finish_reason=${reason}` : '';
+  }
+
+  const producer = chunk.producer.replace('com.nominal.', '');
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 12px',
+        marginBottom: 4,
+        fontSize: 11,
+        fontFamily: 'monospace',
+        color: '#555',
+        borderLeft: '2px solid #333',
+      }}
+    >
+      <span style={{ color: '#888', fontWeight: 600 }}>{label}</span>
+      <span style={{ color: '#666' }}>{producer}</span>
+      <span>{detail}</span>
     </div>
   );
 }

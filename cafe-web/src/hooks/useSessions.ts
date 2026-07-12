@@ -44,8 +44,12 @@ export function useSessions() {
 
   const switchSession = useCallback(async (id: string) => {
     store.setActiveSession(id);
-    const chunkViewerOpen = useSessionStore.getState().chunkViewerOpen;
-    window.location.hash = chunkViewerOpen ? `${id}?chunkViewer=1` : id;
+    const { chunkViewerOpen, showAllChunks } = useSessionStore.getState();
+    const params = new URLSearchParams();
+    if (chunkViewerOpen) params.set('chunkViewer', '1');
+    if (showAllChunks) params.set('raw', '1');
+    const qs = params.toString();
+    window.location.hash = qs ? `${id}?${qs}` : id;
     try {
       const { chunks } = await getHistory(id);
       const merged = applyMutations(chunks);
@@ -95,6 +99,9 @@ export function useSessions() {
       const params = new URLSearchParams(hash.slice(qIdx + 1));
       if (params.get('chunkViewer') === '1') {
         store.setChunkViewerOpen(true);
+      }
+      if (params.get('raw') === '1') {
+        store.setShowAllChunks(true);
       }
     }
     if (sessionId) {

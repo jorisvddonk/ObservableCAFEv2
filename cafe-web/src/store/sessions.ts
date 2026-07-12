@@ -31,6 +31,7 @@ interface SessionStore {
   streaming: boolean;
   streamingText: string;
   chunkViewerOpen: boolean;
+  showAllChunks: boolean;
 
   setSessions: (sessions: SessionInfo[]) => void;
   setActiveSession: (id: string | null) => void;
@@ -43,6 +44,8 @@ interface SessionStore {
   clearStreamingText: () => void;
   toggleChunkViewer: () => void;
   setChunkViewerOpen: (v: boolean) => void;
+  toggleShowAllChunks: () => void;
+  setShowAllChunks: (v: boolean) => void;
 }
 
 export const useSessionStore = create<SessionStore>((set) => ({
@@ -53,6 +56,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   streaming: false,
   streamingText: '',
   chunkViewerOpen: false,
+  showAllChunks: false,
 
   setSessions: (sessions) => {
     console.log('[store] setSessions count=', sessions.length);
@@ -172,5 +176,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   setChunkViewerOpen: (v) => {
     set({ chunkViewerOpen: v });
+  },
+  toggleShowAllChunks: () => {
+    set((s) => ({ showAllChunks: !s.showAllChunks }));
+  },
+  setShowAllChunks: (v: boolean) => {
+    set({ showAllChunks: v });
   },
 }));

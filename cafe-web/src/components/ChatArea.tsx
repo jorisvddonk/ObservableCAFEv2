@@ -169,7 +169,9 @@ export function ChatArea() {
   }
 
   // Filter messages for the chat display
-  const displayMessages = store.messages.filter(isChatMessage);
+  const displayMessages = store.showAllChunks
+    ? store.allChunks
+    : store.messages.filter(isChatMessage);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -188,8 +190,24 @@ export function ChatArea() {
           {store.sessions.find((s) => s.session_id === store.activeSessionId)
             ?.display_name ?? store.activeSessionId}
         </span>
-        <button
-          onClick={() => store.activeSessionId && removeSession(store.activeSessionId)}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button
+            onClick={store.toggleShowAllChunks}
+            style={{
+              background: store.showAllChunks ? '#4fc3f7' : '#0f3460',
+              color: store.showAllChunks ? '#1a1a2e' : '#888',
+              border: '1px solid #444',
+              borderRadius: 4,
+              padding: '2px 8px',
+              cursor: 'pointer',
+              fontSize: 12,
+              fontWeight: store.showAllChunks ? 600 : 400,
+            }}
+          >
+            Raw
+          </button>
+          <button
+            onClick={() => store.activeSessionId && removeSession(store.activeSessionId)}
           style={{
             background: 'transparent',
             border: '1px solid #444',
@@ -202,6 +220,7 @@ export function ChatArea() {
         >
           Delete
         </button>
+        </div>
       </div>
 
       {/* Messages */}
