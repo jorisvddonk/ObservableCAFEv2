@@ -42,7 +42,7 @@ fn parse_tool_query(query: Option<&str>) -> Vec<String> {
 }
 
 fn url_decode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
     let mut bytes = s.bytes();
     while let Some(b) = bytes.next() {
         if b == b'%' {
@@ -50,14 +50,28 @@ fn url_decode(s: &str) -> String {
             let h2 = bytes.next();
             if let (Some(h1), Some(h2)) = (h1, h2) {
                 if let Ok(d) = u8::from_str_radix(&format!("{}{}", h1 as char, h2 as char), 16) {
-                    out.push(d as char);
+                    out.push(d);
                     continue;
                 }
+                // Malformed escape: re-emit the literal `%XX` bytes.
+                out.push(b'%');
+                out.push(h1);
+                out.push(h2);
+                continue;
             }
+            // Incomplete escape (not enough bytes): re-emit literally, don't drop.
+            out.push(b'%');
+            if let Some(h1) = h1 {
+                out.push(h1);
+            }
+            if let Some(h2) = h2 {
+                out.push(h2);
+            }
+            continue;
         }
-        out.push(b as char);
+        out.push(b);
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[derive(serde::Deserialize)]
@@ -95,12 +109,23 @@ async fn sse_handler(
     State((_app_state, sessions)): State<(Arc<AppState>, SseSessions)>,
     RawQuery(raw_query): RawQuery,
 ) -> impl IntoResponse {
+    let (_id, stream) = build_sse_response(sessions, raw_query.as_deref()).await;
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Build the SSE stream for a new session: registers the session, then returns
+/// a stream that removes the session from the map as soon as the stream ends
+/// or the client disconnects (never via a fixed timeout).
+async fn build_sse_response(
+    sessions: SseSessions,
+    raw_query: Option<&str>,
+) -> (String, SessionStream) {
     let session_id = Uuid::new_v4().to_string();
     let (tx, rx) = tokio::sync::mpsc::channel::<String>(256);
 
     // Parse tool patterns from query params. Empty = all tools.
     let tool_patterns = {
-        let raw = parse_tool_query(raw_query.as_deref());
+        let raw = parse_tool_query(raw_query);
         let filtered: Vec<String> = raw.into_iter().filter(|p| p != "*").collect();
         if filtered.is_empty() { None } else { Some(filtered) }
     };
@@ -116,21 +141,88 @@ async fn sse_handler(
         .event("endpoint")
         .data(format!("/message?sessionId={session_id}"));
 
-    let stream = futures_util::stream::once(async { Ok::<_, std::convert::Infallible>(endpoint_event) })
+    let inner = futures_util::stream::once(async { Ok::<_, std::convert::Infallible>(endpoint_event) })
         .chain(ReceiverStream::new(rx).map(|msg| {
             Ok::<_, std::convert::Infallible>(Event::default().event("message").data(msg))
         }));
 
-    // Cleanup on disconnect
-    let sid = session_id.clone();
-    let sessions_clone = sessions.clone();
-    tokio::spawn(async move {
-        // Wait a brief moment for the initial messages, then clean up
-        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-        sessions_clone.write().await.remove(&sid);
-    });
+    let stream = SessionStream::new(
+        inner,
+        SessionCleanup {
+            sessions: sessions.clone(),
+            session_id: session_id.clone(),
+        },
+    );
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    (session_id, stream)
+}
+
+async fn remove_session(sessions: &SseSessions, id: &str) {
+    sessions.write().await.remove(id);
+}
+
+/// Guard that removes a session from the map when dropped (client disconnect
+/// or stream completion).
+struct SessionCleanup {
+    sessions: SseSessions,
+    session_id: String,
+}
+
+impl Drop for SessionCleanup {
+    fn drop(&mut self) {
+        let sessions = self.sessions.clone();
+        let sid = self.session_id.clone();
+        tokio::spawn(async move {
+            remove_session(&sessions, &sid).await;
+        });
+    }
+}
+
+/// Stream wrapper that fires `SessionCleanup` when the stream ends (poll
+/// returns `None`) or when the wrapper itself is dropped.
+struct SessionStream {
+    inner: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
+    >,
+    cleanup: Option<SessionCleanup>,
+}
+
+impl SessionStream {
+    fn new<S>(inner: S, cleanup: SessionCleanup) -> Self
+    where
+        S: futures_util::Stream<Item = Result<Event, std::convert::Infallible>> + Send + 'static,
+    {
+        SessionStream {
+            inner: Box::pin(inner),
+            cleanup: Some(cleanup),
+        }
+    }
+}
+
+impl futures_util::Stream for SessionStream {
+    type Item = Result<Event, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let res = this.inner.as_mut().poll_next(cx);
+        if matches!(res, std::task::Poll::Ready(None)) {
+            if let Some(cleanup) = this.cleanup.take() {
+                drop(cleanup);
+            }
+        }
+        res
+    }
+}
+
+impl Drop for SessionStream {
+    fn drop(&mut self) {
+        if let Some(cleanup) = self.cleanup.take() {
+            drop(cleanup);
+        }
+    }
 }
 
 /// POST endpoint: client sends JSON-RPC messages here.
@@ -164,4 +256,106 @@ async fn message_handler(
     }
 
     (axum::http::StatusCode::ACCEPTED, Json(serde_json::json!({"ok": true})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    // ---- Bug A: url_decode ----
+    #[test]
+    fn test_url_decode_multibyte_utf8() {
+        // %E2%82%AC decodes to the Euro sign (3 UTF-8 bytes).
+        assert_eq!(url_decode("%E2%82%AC"), "€");
+    }
+
+    #[test]
+    fn test_url_decode_ascii_space() {
+        assert_eq!(url_decode("hello%20world"), "hello world");
+    }
+
+    #[test]
+    fn test_url_decode_malformed_trailing_percent() {
+        // A lone trailing '%' must be re-emitted literally, not dropped.
+        assert_eq!(url_decode("a%"), "a%");
+    }
+
+    #[test]
+    fn test_url_decode_malformed_nonhex() {
+        // A '%' followed by non-hex digits must be re-emitted literally.
+        assert_eq!(url_decode("%ZZ"), "%ZZ");
+    }
+
+    #[test]
+    fn test_url_decode_mixed() {
+        assert_eq!(url_decode("price%E2%82%AC%20now"), "price€ now");
+    }
+
+    // ---- Bug B: SSE session lifecycle ----
+    #[tokio::test]
+    async fn test_sse_session_removed_on_disconnect() {
+        let sessions: SseSessions = Arc::new(RwLock::new(HashMap::new()));
+
+        // Build a session + SSE stream.
+        let (_id, stream) = build_sse_response(sessions.clone(), None).await;
+
+        // Confirm the session was registered.
+        assert_eq!(sessions.read().await.len(), 1);
+
+        // Simulate client disconnect: drop the SSE stream. This must trigger
+        // prompt removal of the session (not a 3600s sleep).
+        drop(stream);
+
+        // Allow the spawned cleanup task to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert_eq!(
+            sessions.read().await.len(),
+            0,
+            "session must be removed on disconnect, not after a 3600s timer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sse_session_removed_on_stream_end() {
+        let sessions: SseSessions = Arc::new(RwLock::new(HashMap::new()));
+        let id = Uuid::new_v4().to_string();
+
+        // Register a session.
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(16);
+        sessions
+            .write()
+            .await
+            .insert(id.clone(), SseSession { tx, tool_patterns: None });
+        assert_eq!(sessions.read().await.len(), 1);
+
+        // Build a finite inner stream that ends on its own, wrapping it with the
+        // cleanup wrapper. When the stream reaches `None`, the session must be
+        // removed (not after a 3600s timer).
+        let inner = futures_util::stream::iter(vec![Ok::<_, std::convert::Infallible>(
+            Event::default().event("message").data("x"),
+        )]);
+        let mut stream = SessionStream::new(
+            inner,
+            SessionCleanup {
+                sessions: sessions.clone(),
+                session_id: id.clone(),
+            },
+        );
+
+        // Consume the stream to completion.
+        let mut count = 0;
+        while let Some(_item) = stream.next().await {
+            count += 1;
+        }
+        assert_eq!(count, 1);
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            sessions.read().await.len(),
+            0,
+            "session must be removed when the SSE stream ends"
+        );
+    }
 }
