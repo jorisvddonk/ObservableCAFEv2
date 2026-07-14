@@ -90,6 +90,8 @@ impl Db {
             "INSERT INTO sessions (id, agent_id, is_background, tags, ui_mode, created_at, updated_at)
              VALUES (?, ?, ?, ?, 'chat', ?, ?)
              ON CONFLICT(id) DO UPDATE SET
+                 agent_id = excluded.agent_id,
+                 is_background = excluded.is_background,
                  tags = excluded.tags,
                  updated_at = excluded.updated_at",
         )
@@ -241,4 +243,26 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn upsert_session_with_tags_updates_agent_id() {
+        let db = Db::connect(":memory:").await.expect("connect");
+        db.migrate().await.expect("migrate");
+        db.upsert_session("s1", "unknown", false).await.expect("seed");
+        db.upsert_session_with_tags("s1", "real-agent", true, &["t1".to_string()])
+            .await
+            .expect("upsert");
+        let row = sqlx::query("SELECT agent_id, is_background FROM sessions WHERE id = ?")
+            .bind("s1")
+            .fetch_one(&db.pool)
+            .await
+            .expect("query");
+        assert_eq!(row.get::<String, _>("agent_id"), "real-agent");
+        assert_eq!(row.get::<i64, _>("is_background"), 1);
+    }
 }
