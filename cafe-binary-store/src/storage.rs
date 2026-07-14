@@ -18,7 +18,7 @@ impl Storage {
         self.data_dir.join("binary").join(shard).join(chunk_id)
     }
 
-    fn writing_path(&self, chunk_id: &str) -> PathBuf {
+    pub(crate) fn writing_path(&self, chunk_id: &str) -> PathBuf {
         let mut p = self.chunk_path(chunk_id);
         let name = format!("{}.writing", p.file_name().unwrap().to_string_lossy());
         p.set_file_name(name);
