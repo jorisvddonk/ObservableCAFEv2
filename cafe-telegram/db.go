@@ -106,9 +106,10 @@ func (d *DB) GetSubscriptions(userID int64) ([]string, error) {
 	var sessions []string
 	for rows.Next() {
 		var s string
-		if err := rows.Scan(&s); err == nil {
-			sessions = append(sessions, s)
+		if err := rows.Scan(&s); err != nil {
+			return sessions, err
 		}
+		sessions = append(sessions, s)
 	}
 	return sessions, rows.Err()
 }

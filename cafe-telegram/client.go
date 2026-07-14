@@ -90,7 +90,10 @@ func (c *CafeClient) CreateSession(agentID string) (string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
-	id, _ := result["id"].(string)
+	id, ok := result["id"].(string)
+	if !ok || id == "" {
+		return "", fmt.Errorf("create session response missing \"id\" field: %v", result)
+	}
 	return id, nil
 }
 
@@ -111,6 +114,8 @@ func (c *CafeClient) StreamChat(sessionID, message string, out chan<- Chunk) err
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
+	// SSE data lines can exceed bufio's default 64KB max token; grow the buffer.
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {

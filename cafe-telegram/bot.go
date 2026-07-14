@@ -10,8 +10,20 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// BotAPI is the subset of the Telegram bot API used by Bot. It is an interface
+// so that Send/GetUpdatesChan can be mocked in tests. *tgbotapi.BotAPI is a
+// concrete implementation.
+type BotAPI interface {
+	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	GetUpdatesChan(config tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel
+}
+
+// maxTelegramMessageLen is the maximum number of characters Telegram allows in
+// a single message.
+const maxTelegramMessageLen = 4096
+
 type Bot struct {
-	api    *tgbotapi.BotAPI
+	api    BotAPI
 	client *CafeClient
 	db     *DB
 	cfg    Config
@@ -54,6 +66,9 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 }
 
 func (b *Bot) isTrusted(user *tgbotapi.User) bool {
+	if user == nil {
+		return false
+	}
 	if len(b.cfg.TrustedUsers) == 0 {
 		return true // open access if no list configured
 	}
@@ -66,10 +81,47 @@ func (b *Bot) isTrusted(user *tgbotapi.User) bool {
 	return false
 }
 
+// splitMessage splits text into chunks that fit within Telegram's per-message
+// character limit, breaking on newlines where possible.
+func splitMessage(text string) []string {
+	if len(text) <= maxTelegramMessageLen {
+		return []string{text}
+	}
+	var parts []string
+	runes := []rune(text)
+	for len(runes) > 0 {
+		n := maxTelegramMessageLen
+		if len(runes) < n {
+			n = len(runes)
+		}
+		// Prefer to break at a newline within the chunk.
+		if idx := strings.LastIndex(string(runes[:n]), "\n"); idx >= 0 {
+			n = idx + 1
+		}
+		parts = append(parts, string(runes[:n]))
+		runes = runes[n:]
+	}
+	return parts
+}
+
+// sendMessage sends text to a chat, splitting it into chunks no larger than
+// Telegram's limit and checking each Send result.
+func (b *Bot) sendMessage(chatID int64, text string, opts ...func(*tgbotapi.MessageConfig)) {
+	for _, part := range splitMessage(text) {
+		m := tgbotapi.NewMessage(chatID, part)
+		for _, opt := range opts {
+			opt(&m)
+		}
+		if _, err := b.api.Send(m); err != nil {
+			slog.Error("failed to send message", "err", err)
+		}
+	}
+}
+
 func (b *Bot) reply(msg *tgbotapi.Message, text string) {
-	m := tgbotapi.NewMessage(msg.Chat.ID, text)
-	m.ReplyToMessageID = msg.MessageID
-	b.api.Send(m)
+	b.sendMessage(msg.Chat.ID, text, func(m *tgbotapi.MessageConfig) {
+		m.ReplyToMessageID = msg.MessageID
+	})
 }
 
 func (b *Bot) handleCommand(msg *tgbotapi.Message) {
@@ -264,7 +316,9 @@ func (b *Bot) streamToTelegram(chatID int64, sessionID, userMessage string) {
 		}
 		if time.Since(lastEdit) > 800*time.Millisecond && accumulated.Len() > 0 {
 			edit := tgbotapi.NewEditMessageText(chatID, placeholder.MessageID, accumulated.String())
-			b.api.Send(edit)
+			if _, err := b.api.Send(edit); err != nil {
+				slog.Error("failed to edit message", "err", err)
+			}
 			lastEdit = time.Now()
 		}
 	}
@@ -274,6 +328,19 @@ func (b *Bot) streamToTelegram(chatID int64, sessionID, userMessage string) {
 	if text == "" {
 		text = "(no response)"
 	}
-	edit := tgbotapi.NewEditMessageText(chatID, placeholder.MessageID, text)
-	b.api.Send(edit)
+	parts := splitMessage(text)
+	if len(parts) == 1 {
+		edit := tgbotapi.NewEditMessageText(chatID, placeholder.MessageID, parts[0])
+		if _, err := b.api.Send(edit); err != nil {
+			slog.Error("failed to edit message", "err", err)
+		}
+		return
+	}
+	// The reply is too long for a single message: edit the placeholder with the
+	// first part and send the rest as new messages.
+	edit := tgbotapi.NewEditMessageText(chatID, placeholder.MessageID, parts[0])
+	if _, err := b.api.Send(edit); err != nil {
+		slog.Error("failed to edit message", "err", err)
+	}
+	b.sendMessage(chatID, strings.Join(parts[1:], ""))
 }
