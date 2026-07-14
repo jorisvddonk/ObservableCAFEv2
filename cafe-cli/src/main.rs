@@ -2,7 +2,7 @@ use anyhow::Result;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::bus::IrohConfig;
 use cafe_sdk::http::HttpClient;
-use cafe_sdk::{Chunk, ContentType, ServerMessage, SubscribeFilter};
+use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SubscribeFilter};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -13,8 +13,8 @@ fn find_read_creds(history: &[Chunk], chunk_id: &str) -> Result<(String, String)
     for c in history.iter().rev() {
         if let Some(target) = c.is_mutation() {
             if target == chunk_id {
-                if let Some(ru) = c.annotations.get("binary.read_url").and_then(|v| v.as_str()) {
-                    let rt = c.annotations.get("binary.read_token").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(ru) = c.annotations.get(keys::CAFE_BINARY_READ_URL).and_then(|v| v.as_str()) {
+                    let rt = c.annotations.get(keys::CAFE_BINARY_READ_TOKEN).and_then(|v| v.as_str()).unwrap_or("");
                     return Ok((ru.to_string(), rt.to_string()));
                 }
             }
@@ -599,9 +599,9 @@ async fn main() -> Result<()> {
                                 match msg {
                                     Some(ServerMessage::Chunk { chunk, .. }) => {
                                         let ann = &chunk.annotations;
-                                        if ann.contains_key("binary.read_url") {
-                                            read_url = ann.get("binary.read_url").and_then(|v| v.as_str().map(String::from));
-                                            read_token = ann.get("binary.read_token").and_then(|v| v.as_str().map(String::from));
+                                        if ann.contains_key(keys::CAFE_BINARY_READ_URL) {
+                                            read_url = ann.get(keys::CAFE_BINARY_READ_URL).and_then(|v| v.as_str().map(String::from));
+                                            read_token = ann.get(keys::CAFE_BINARY_READ_TOKEN).and_then(|v| v.as_str().map(String::from));
                                             if read_url.is_some() {
                                                 break;
                                             }
@@ -622,9 +622,9 @@ async fn main() -> Result<()> {
                             for c in &history {
                                 if let Some(target) = c.is_mutation() {
                                     if target == chunk_id {
-                                        if let Some(ru) = c.annotations.get("binary.read_url").and_then(|v| v.as_str()) {
+                                        if let Some(ru) = c.annotations.get(keys::CAFE_BINARY_READ_URL).and_then(|v| v.as_str()) {
                                             read_url = Some(ru.to_string());
-                                            read_token = c.annotations.get("binary.read_token").and_then(|v| v.as_str().map(String::from));
+                                            read_token = c.annotations.get(keys::CAFE_BINARY_READ_TOKEN).and_then(|v| v.as_str().map(String::from));
                                         }
                                     }
                                 }
@@ -717,4 +717,23 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_read_creds_uses_cafe_prefixed_keys() {
+        let chunk_id = "abc";
+        // The binary-store emits cafe.binary.read_url / read_token, NOT the
+        // unprefixed binary.read_url the old code looked up.
+        let creds = Chunk::mutation(chunk_id, "cafe-cli")
+            .with_annotation(keys::CAFE_BINARY_READ_URL, &"https://read/abc".to_string())
+            .with_annotation(keys::CAFE_BINARY_READ_TOKEN, &"tok".to_string());
+        let history = vec![creds];
+        let (url, token) = find_read_creds(&history, chunk_id).expect("creds found");
+        assert_eq!(url, "https://read/abc");
+        assert_eq!(token, "tok");
+    }
 }
