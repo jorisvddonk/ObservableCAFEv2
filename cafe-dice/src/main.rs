@@ -1,5 +1,5 @@
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage, ToolCall};
+use cafe_sdk::{keys, Chunk, JsonRpcResponse, rpc_errors, ServerMessage, ToolCall};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tracing::{info, warn};
@@ -81,11 +81,23 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
             "dice.roll" => {
                 let count = request.params["count"].as_u64().unwrap_or(1);
                 let sides = request.params["sides"].as_u64().unwrap_or(6);
-                let mut total: i64 = 0;
-                let mut rng = StdRng::from_entropy();
-                for _ in 0..count {
-                    total += rng.gen_range(1..=sides) as i64;
-                }
+                let rolls = match roll_dice(count, sides) {
+                    Ok(rolls) => rolls,
+                    Err(e) => {
+                        let response = JsonRpcResponse::err(
+                            &call_id,
+                            rpc_errors::INVALID_PARAMS,
+                            format!("invalid dice parameters: {}", e),
+                        );
+                        let resp_chunk = Chunk::new_null("com.nominal.cafe-dice")
+                            .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
+                            .as_transient()
+                            .with_retain(60);
+                        let _ = client.publish(&session_id, resp_chunk).await;
+                        continue;
+                    }
+                };
+                let total: i64 = rolls.iter().map(|v| *v as i64).sum();
                 info!("cafe-dice: rolled {}d{} = {}", count, sides, total);
 
                 let response = JsonRpcResponse::ok(&call_id, serde_json::json!({"result": total}));
@@ -101,6 +113,32 @@ async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()
     }
 
     Ok(())
+}
+
+const MAX_DICE_COUNT: u64 = 10_000;
+
+/// Roll `count` dice each with `sides` sides. Returns the individual rolls.
+///
+/// Validates inputs so it can be called directly from the `dice.roll` RPC
+/// handler (which receives raw, untrusted params) without panicking on
+/// `sides == 0` or stalling on an unbounded `count`.
+pub(crate) fn roll_dice(count: u64, sides: u64) -> Result<Vec<u64>, String> {
+    if sides < 1 {
+        return Err(format!("sides must be >= 1, got {}", sides));
+    }
+    if count == 0 {
+        return Err(format!("count must be >= 1, got {}", count));
+    }
+    if count > MAX_DICE_COUNT {
+        return Err(format!("count must be <= {}, got {}", MAX_DICE_COUNT, count));
+    }
+
+    let mut rng = StdRng::from_entropy();
+    let mut rolls = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        rolls.push(rng.gen_range(1..=sides));
+    }
+    Ok(rolls)
 }
 
 /// Parse "!roll 2d6" or "!r 1d20" into (count, sides). Returns None if not a roll.
@@ -155,5 +193,32 @@ mod tests {
     fn invalid() {
         assert!(parse_roll("!roll abc").is_none());
         assert!(parse_roll("hello").is_none());
+    }
+
+    #[test]
+    fn roll_zero_sides_is_err() {
+        let r = roll_dice(2, 0);
+        assert!(r.is_err(), "sides==0 must error, not panic");
+    }
+
+    #[test]
+    fn roll_zero_count_is_err() {
+        let r = roll_dice(0, 6);
+        assert!(r.is_err(), "count==0 must error");
+    }
+
+    #[test]
+    fn roll_huge_count_is_err() {
+        let r = roll_dice(MAX_DICE_COUNT + 1, 6);
+        assert!(r.is_err(), "excessive count must error, not DoS");
+    }
+
+    #[test]
+    fn roll_valid_returns_bounded_values() {
+        let rolls = roll_dice(2, 6).expect("valid roll should succeed");
+        assert_eq!(rolls.len(), 2);
+        for v in &rolls {
+            assert!((1..=6).contains(v), "roll {} out of range 1..=6", v);
+        }
     }
 }
