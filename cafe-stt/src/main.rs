@@ -294,22 +294,49 @@ fn find_read_credentials<'a>(
 
 /// Convert audio bytes to 16kHz mono PCM WAV via ffmpeg.
 async fn convert_to_wav(input: &[u8]) -> Result<Vec<u8>> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::process::Command;
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.args([
+        "-y",
+        "-i",
+        "pipe:0",
+        "-f",
+        "wav",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "pipe:1",
+    ]);
+    convert_to_wav_with_timeout(input, cmd, std::time::Duration::from_secs(30)).await
+}
 
-    let mut child = Command::new("ffmpeg")
-        .args(["-y", "-i", "pipe:0", "-f", "wav", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "pipe:1"])
+/// Convert audio bytes to WAV by running the given command (which must read
+/// input on stdin and emit WAV bytes on stdout). The timeout is parameterized
+/// so tests can exercise the timeout/cleanup path without waiting 30s.
+///
+/// On timeout the spawned child is killed and reaped before returning an error,
+/// so no ffmpeg (or other) process is leaked.
+pub(crate) async fn convert_to_wav_with_timeout(
+    input: &[u8],
+    mut cmd: tokio::process::Command,
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut child = cmd
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| anyhow::anyhow!("ffmpeg not found: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("command not found: {}", e))?;
 
     let mut stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("no stdin"))?;
     let mut stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("no stdout"))?;
 
     // Spawn stdout reader in background, write stdin in foreground
-    let output = tokio::spawn(async move {
+    let reader = tokio::spawn(async move {
         let mut buf = Vec::new();
         stdout.read_to_end(&mut buf).await?;
         Ok::<_, anyhow::Error>(buf)
@@ -319,16 +346,84 @@ async fn convert_to_wav(input: &[u8]) -> Result<Vec<u8>> {
     stdin.flush().await?;
     drop(stdin);
 
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), output)
-        .await
-        .map_err(|_| anyhow::anyhow!("ffmpeg timed out"))?
-        .map_err(|e| anyhow::anyhow!("ffmpeg read error: {}", e))?;
-
-    let status = child.wait().await?;
-    if !status.success() {
-        anyhow::bail!("ffmpeg failed (exit={:?})", status.code());
+    match tokio::time::timeout(timeout, reader).await {
+        Ok(join) => {
+            let result = join
+                .map_err(|e| anyhow::anyhow!("ffmpeg read error: {}", e))??;
+            let status = child.wait().await?;
+            if !status.success() {
+                anyhow::bail!("ffmpeg failed (exit={:?})", status.code());
+            }
+            Ok(result)
+        }
+        Err(_) => {
+            // The reader task was consumed/cancelled by `timeout`; it will finish
+            // on its own once the child's stdout pipe closes. Kill and reap the
+            // child so no process is leaked.
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            Err(anyhow::anyhow!("ffmpeg timed out"))
+        }
     }
-    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::process::Command;
+
+    /// Returns true if a process with the given pid is alive (via `kill -0`).
+    fn process_alive(pid: i32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Reproduces the leak bug: a conversion that never terminates must time out
+    /// AND have its child killed/reaped. The fake child writes its pid to a file
+    /// then sleeps forever; `child.kill()` (SIGKILL) + `child.wait()` must reap
+    /// it. The pre-fix code returned early without killing, so the pid stays
+    /// alive and the test fails (process leak).
+    #[tokio::test]
+    async fn timeout_kills_child_no_leak() {
+        let pidfile =
+            std::env::temp_dir().join(format!("cafe_stt_pid_{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&pidfile);
+        let pidfile_str = pidfile.to_str().unwrap();
+
+        // `exec sleep` keeps the same pid as the shell so the pidfile tracks the
+        // actual child process that tokio will kill.
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            &format!("echo $$ > {}; exec sleep 1000", pidfile_str),
+        ]);
+
+        let res =
+            convert_to_wav_with_timeout(b"dummy", cmd, std::time::Duration::from_millis(200)).await;
+        assert!(res.is_err(), "expected Err on timeout, got {:?}", res);
+
+        // Give the killed child a moment to be reaped, then assert it is gone.
+        let reaped = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Ok(pids) = std::fs::read_to_string(&pidfile) {
+                    if let Ok(pid) = pids.trim().parse::<i32>() {
+                        if !process_alive(pid) {
+                            return true;
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+
+        let _ = std::fs::remove_file(&pidfile);
+        assert!(reaped, "child was not killed/reaped on timeout (process leak bug)");
+    }
 }
 
 fn base64_decode(encoded: &str) -> Result<Vec<u8>> {
