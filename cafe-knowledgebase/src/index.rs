@@ -287,8 +287,7 @@ impl KnowledgeBase {
     pub async fn delete(&self, namespace: &str, doc_id: &str) -> Result<()> {
         let conn = self.conn().await?;
         let table = conn.open_table(namespace).execute().await?;
-        let escaped = doc_id.replace('\'', "''");
-        let pred = format!("doc_id = '{escaped}'");
+        let pred = delete_predicate(doc_id);
         table.delete(pred.as_str()).await?;
         Ok(())
     }
@@ -335,6 +334,15 @@ impl KnowledgeBase {
     }
 }
 
+/// Build the SQL predicate that removes a document and all of its chunk rows.
+///
+/// Chunks are stored as `"{doc_id}--chunk-{i}"` with `parent_doc_id = doc_id`,
+/// so we must match on both `doc_id` (parent) and `parent_doc_id` (chunks).
+fn delete_predicate(doc_id: &str) -> String {
+    let escaped = doc_id.replace('\'', "''");
+    format!("doc_id = '{escaped}' OR parent_doc_id = '{escaped}'")
+}
+
 /// Split text into overlapping chunks.
 ///
 /// Splits on paragraph boundaries (double newline), then merges small paragraphs
@@ -371,6 +379,9 @@ pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
                     chunks.push(format!("{}...{}", bridge, piece));
                 } else {
                     chunks.push(piece);
+                }
+                if end == trimmed.len() {
+                    break;
                 }
                 start = end.saturating_sub(overlap);
             }
@@ -470,5 +481,29 @@ mod tests {
     #[test]
     fn chunk_text_empty() {
         assert!(chunk_text("", 512, 64).is_empty());
+    }
+
+    #[test]
+    fn chunk_text_hard_split_long_with_overlap() {
+        // Reproduces Bug A: a single long paragraph with overlap > 0 must
+        // terminate and produce a finite, expected number of chunks. (Before
+        // the fix this hung forever because `start` pinned at len-overlap.)
+        let text = "A".repeat(1000);
+        let chunks = chunk_text(&text, 100, 64);
+        assert!(
+            chunks.len() >= 2 && chunks.len() <= 50,
+            "expected a finite chunk count, got {}",
+            chunks.len()
+        );
+    }
+
+    #[test]
+    fn delete_predicate_includes_chunk_rows() {
+        // Reproduces Bug B: delete must remove both the parent row and the
+        // chunk rows (doc_id = "{doc_id}--chunk-{i}", parent_doc_id = doc_id).
+        let doc_id = "doc-123";
+        let pred = super::delete_predicate(doc_id);
+        assert!(pred.contains(&format!("doc_id = '{}'", doc_id)));
+        assert!(pred.contains(&format!("parent_doc_id = '{}'", doc_id)));
     }
 }
