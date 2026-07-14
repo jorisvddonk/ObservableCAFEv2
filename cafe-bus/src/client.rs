@@ -152,6 +152,23 @@ pub async fn handle_client<C: BusCodec, R: AsyncRead + Unpin + Send + 'static>(
 /// it sends `Connected` and stays on JSON. This is backward-compatible: old clients
 /// don't send `codecs`, and old buses (using `handle_client`) ignore it.
 ///
+/// Apply a negotiated connection role to the metadata registry.
+///
+/// This must run for BOTH codecs (not just bincode) so that
+/// `count_role` ephemeral accounting works for JSON-negotiated clients too.
+pub(crate) async fn apply_negotiated_role(
+    role: &Option<String>,
+    conn_id: &str,
+    metas: &ConnectionMetaRegistry,
+) {
+    if let Some(r) = role {
+        metas
+            .write()
+            .await
+            .insert(conn_id.to_string(), ConnectionMeta { role: Some(r.clone()) });
+    }
+}
+
 /// After negotiation, all subsequent messages use the selected codec.
 pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
     reader: R,
@@ -207,6 +224,8 @@ pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
         _ => ("json", None),
     };
 
+    apply_negotiated_role(&role, &conn_id, &conn_meta).await;
+
     // Send the initial response as JSON
     let response = if let ClientMessage::SetMeta { codecs: Some(_), .. } = &first_msg {
         ServerMessage::CodecSet {
@@ -238,10 +257,7 @@ pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
         }
         #[cfg(feature = "bincode-listener")]
         "bincode" => {
-            if let Some(r) = role {
-                let meta = ConnectionMeta { role: Some(r) };
-                metas.write().await.insert(conn_id.clone(), meta);
-            }
+            // Role already applied via apply_negotiated_role above.
             // Start bincode loop. buf should be empty (client waits for
             // CodecSet before sending more), but we discard it anyway
             // since it's JSON data that can't be decoded as bincode.
@@ -1568,5 +1584,22 @@ mod tests {
                 prop_assert!(session_matches_filter(&s, &specific));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod negotiation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn apply_negotiated_role_sets_meta() {
+        let metas: ConnectionMetaRegistry = Arc::new(RwLock::new(HashMap::new()));
+        apply_negotiated_role(&Some("tester".to_string()), "c-1", &metas).await;
+        let m = metas.read().await.get("c-1").cloned();
+        assert_eq!(m.and_then(|m| m.role), Some("tester".to_string()));
+
+        apply_negotiated_role(&None, "c-2", &metas).await;
+        let m2 = metas.read().await.get("c-2").cloned();
+        assert!(m2.map(|m| m.role).flatten().is_none());
     }
 }
