@@ -126,12 +126,14 @@ impl Db {
             .unwrap_or(0);
 
         if count > 0 {
-            let row =
+            if let Some(row) =
                 sqlx::query("SELECT token_prefix FROM tokens WHERE is_admin = 1 LIMIT 1")
-                    .fetch_one(&self.pool)
-                    .await?;
-            let prefix: String = row.get("token_prefix");
-            return Ok(format!("admin token prefix: {}", prefix));
+                    .fetch_optional(&self.pool)
+                    .await?
+            {
+                let prefix: String = row.get("token_prefix");
+                return Ok(format!("admin token prefix: {}", prefix));
+            }
         }
 
         let token = seed
@@ -323,4 +325,51 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_db() -> Db {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let db = Db { pool };
+        db.migrate().await.unwrap();
+        db
+    }
+
+    /// Bug A: when tokens exist but none are admin, `ensure_admin_token` must
+    /// fall through to creating an admin token rather than erroring on
+    /// `fetch_one`.
+    #[tokio::test]
+    async fn ensure_admin_token_creates_when_only_non_admin_exists() {
+        let db = test_db().await;
+
+        sqlx::query(
+            "INSERT INTO tokens (id, token_hash, token_prefix, description, is_admin, created_at)
+             VALUES (?, ?, ?, ?, 0, ?)",
+        )
+        .bind("non-admin")
+        .bind("dummyhash")
+        .bind("nprefix")
+        .bind("non-admin token")
+        .bind(now_ms())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+        let result = db.ensure_admin_token(None).await;
+        assert!(result.is_ok(), "ensure_admin_token should not error: {:?}", result.err());
+
+        let admin_count: i64 = sqlx::query("SELECT COUNT(*) FROM tokens WHERE is_admin = 1")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(admin_count, 1, "an admin token should have been created");
+    }
 }

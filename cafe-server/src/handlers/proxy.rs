@@ -148,20 +148,71 @@ fn parse_query(query: &str) -> HashMap<String, String> {
 }
 
 fn url_decode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
     let mut bytes = s.bytes();
     while let Some(b) = bytes.next() {
         if b == b'%' {
             let h1 = bytes.next();
             let h2 = bytes.next();
-            if let (Some(h1), Some(h2)) = (h1, h2) {
-                if let Ok(d) = u8::from_str_radix(&format!("{}{}", h1 as char, h2 as char), 16) {
-                    out.push(d as char);
-                    continue;
+            match (h1, h2) {
+                (Some(h1), Some(h2)) => {
+                    if let Ok(d) =
+                        u8::from_str_radix(&format!("{}{}", h1 as char, h2 as char), 16)
+                    {
+                        out.push(d);
+                        continue;
+                    }
+                    // Invalid hex escape: re-emit the literal %XX rather than
+                    // dropping bytes.
+                    out.push(b'%');
+                    out.push(h1);
+                    out.push(h2);
+                }
+                (Some(h1), None) => {
+                    // Trailing % with a single following byte.
+                    out.push(b'%');
+                    out.push(h1);
+                }
+                (None, _) => {
+                    // Trailing % with nothing after it.
+                    out.push(b'%');
                 }
             }
+            continue;
         }
-        out.push(b as char);
+        out.push(b);
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_decode;
+
+    #[test]
+    fn url_decode_multibyte_utf8() {
+        assert_eq!(url_decode("%E2%82%AC"), "€");
+    }
+
+    #[test]
+    fn url_decode_ascii_space() {
+        assert_eq!(url_decode("hello%20world"), "hello world");
+    }
+
+    #[test]
+    fn url_decode_malformed_invalid_hex_reemits() {
+        assert_eq!(url_decode("a%2g"), "a%2g");
+    }
+
+    #[test]
+    fn url_decode_malformed_trailing_percent_reemits() {
+        assert_eq!(url_decode("100%"), "100%");
+        assert_eq!(url_decode("%"), "%");
+        assert_eq!(url_decode("a%2"), "a%2");
+    }
+
+    #[test]
+    fn url_decode_passthrough_plain() {
+        assert_eq!(url_decode("plain text"), "plain text");
+    }
 }
