@@ -48,3 +48,4 @@ jobs:
           uv run tests/source-connection-e2e.py
           uv run tests/ephemeral-sessions-e2e.py
           uv run tests/tts-e2e.py
+          uv run tests/stt-e2e.py
