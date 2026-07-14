@@ -242,6 +242,25 @@ export function ChatArea() {
             <Message chunk={chunk} />
           </div>
         ))}
+        {store.streaming && store.streamingText ? (
+          <div
+            key="__live_stream"
+            style={{ cursor: store.chunkViewerOpen ? 'pointer' : undefined }}
+          >
+            <Message
+              chunk={{
+                id: '__live_stream',
+                content_type: 'text',
+                content: store.streamingText,
+                data: null,
+                mime_type: null,
+                producer: 'com.nominal.cafe-llm',
+                annotations: { 'chat.role': 'assistant' },
+                timestamp: Date.now(),
+              }}
+            />
+          </div>
+        ) : null}
         <div ref={bottomRef} />
       </div>
 
