@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use cafe_sdk::{keys, Chunk, ServerMessage, ToolCall, ToolResult};
@@ -37,6 +38,54 @@ struct Registry {
     servers: HashMap<String, Arc<Mutex<McpServerInstance>>>,
     /// Tool name → server name mapping
     tool_map: HashMap<String, String>,
+}
+
+/// Owns the JSON-RPC call-id sequence used when invoking MCP tools.
+///
+/// Ids 1, 2 and 3 are reserved for the per-server `initialize` and
+/// `tools/list` handshakes, so tool calls start at id 4 and increment
+/// monotonically across the lifetime of the client.
+pub(crate) struct McpClient {
+    next_call_id: AtomicU64,
+}
+
+impl McpClient {
+    pub(crate) fn new() -> Self {
+        // Reserve 1/2/3 for initialize and tools/list handshakes.
+        Self {
+            next_call_id: AtomicU64::new(4),
+        }
+    }
+
+    /// Allocate the next strictly-increasing call id.
+    pub(crate) fn next_call_id(&self) -> u64 {
+        // FIX A: the counter lives on the client and persists across calls, so
+        // every tool call gets a unique id (previously it was reset to 3 inside
+        // the per-call lock, making every call use id 4 — so a stale id-4
+        // response left after a timeout could be consumed as the next result).
+        self.next_call_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Invoke a tool on an already-locked MCP server instance and return the
+    /// raw JSON-RPC response.
+    pub(crate) async fn call_tool(
+        &self,
+        instance: &mut McpServerInstance,
+        tool_call: &ToolCall,
+    ) -> Result<serde_json::Value> {
+        let call_id = self.next_call_id();
+        send_jsonrpc(
+            &mut instance.writer,
+            call_id,
+            "tools/call",
+            serde_json::json!({
+                "name": tool_call.name,
+                "arguments": tool_call.parameters,
+            }),
+        )
+        .await?;
+        read_response(&mut instance.reader, call_id).await
+    }
 }
 
 #[tokio::main]
@@ -116,6 +165,7 @@ async fn run_session(
     registry: Arc<Registry>,
 ) -> Result<()> {
     let mut rx = client.subscribe(&session_id).await?;
+    let mcp = McpClient::new();
 
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
@@ -149,42 +199,12 @@ async fn run_session(
 
         let result = {
             let mut instance = server.lock().await;
-            let mut call_id_counter = 3u64;
-
-            // Send tools/call with incrementing id
-            call_id_counter += 1;
-            let call_id = call_id_counter;
-            send_jsonrpc(
-                &mut instance.writer,
-                call_id,
-                "tools/call",
-                serde_json::json!({
-                    "name": tool_call.name,
-                    "arguments": tool_call.parameters,
-                }),
-            )
-            .await?;
-
-            read_response(&mut instance.reader, call_id).await
+            mcp.call_tool(&mut instance, &tool_call).await
         };
 
         match result {
             Ok(resp) => {
-                let content = resp["result"]["content"]
-                    .as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|c| c["text"].as_str())
-                    .unwrap_or("{}");
-
-                let output: serde_json::Value =
-                    serde_json::from_str(content).unwrap_or(serde_json::json!({"text": content}));
-
-                let tool_result = ToolResult {
-                    name: tool_call.name.clone(),
-                    output: output.clone(),
-                    error: None,
-                    provider: Some("mcp".into()),
-                };
+                let tool_result = parse_tool_result(&resp, &tool_call.name);
 
                 let result_chunk = Chunk::new_null("com.nominal.cafe-mcp-client")
                     .with_annotation(keys::CAFE_TOOL_RESULT, &tool_result)
@@ -193,12 +213,19 @@ async fn run_session(
                 let _ = client.publish(&session_id, result_chunk).await;
 
                 // Also publish a human-readable text chunk
-                let output_text = serde_json::to_string_pretty(&output)
-                    .unwrap_or_else(|_| "{}".into());
-                let text = format!(
-                    "MCP tool completed: {}\n```\n{}\n```",
-                    tool_call.name, output_text
-                );
+                let text = if let Some(err) = &tool_result.error {
+                    format!(
+                        "MCP tool failed: {}\n```\n{}\n```",
+                        tool_call.name, err
+                    )
+                } else {
+                    let output_text = serde_json::to_string_pretty(&tool_result.output)
+                        .unwrap_or_else(|_| "{}".into());
+                    format!(
+                        "MCP tool completed: {}\n```\n{}\n```",
+                        tool_call.name, output_text
+                    )
+                };
                 let text_chunk = Chunk::new_text(&text, "com.nominal.cafe-mcp-client")
                     .with_annotation(keys::CHAT_ROLE, "assistant");
                 let _ = client.publish(&session_id, text_chunk).await;
@@ -221,6 +248,96 @@ async fn run_session(
     }
 
     Ok(())
+}
+
+/// Parse an MCP JSON-RPC tool response into a `ToolResult`.
+///
+/// FIX B: surface both top-level JSON-RPC `error` and MCP `isError:true`
+/// as failures, and surface non-text content faithfully instead of
+/// collapsing it to `"{}"`.
+pub(crate) fn parse_tool_result(resp: &serde_json::Value, name: &str) -> ToolResult {
+    // JSON-RPC level error.
+    if let Some(error) = resp.get("error") {
+        let msg = match error {
+            serde_json::Value::String(s) => s.clone(),
+            other => serde_json::to_string(other)
+                .unwrap_or_else(|_| "MCP JSON-RPC error".to_string()),
+        };
+        return ToolResult {
+            name: name.to_string(),
+            output: serde_json::Value::Null,
+            error: Some(msg),
+            provider: Some("mcp".into()),
+        };
+    }
+
+    let result = resp.get("result").cloned().unwrap_or(serde_json::Value::Null);
+
+    // MCP-level isError.
+    if result.get("isError").and_then(|v| v.as_bool()) == Some(true) {
+        let detail = extract_text(&result).unwrap_or_default();
+        return ToolResult {
+            name: name.to_string(),
+            output: serde_json::Value::Null,
+            error: Some(detail),
+            provider: Some("mcp".into()),
+        };
+    }
+
+    // Success: surface content faithfully (never silently collapse to "{}").
+    let output = build_output(&result);
+    ToolResult {
+        name: name.to_string(),
+        output,
+        error: None,
+        provider: Some("mcp".into()),
+    }
+}
+
+/// Extract concatenated text from `result.content` text items, if any.
+fn extract_text(result: &serde_json::Value) -> Option<String> {
+    let content = result.get("content").and_then(|c| c.as_array())?;
+    let mut out = String::new();
+    for item in content {
+        if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                out.push_str(text);
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// Build the tool output value from a successful `result`, preserving both
+/// text (parsed as JSON when possible) and non-text content faithfully.
+fn build_output(result: &serde_json::Value) -> serde_json::Value {
+    if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+        // If the first item is text, behave like before: parse as JSON when
+        // possible, otherwise keep the raw text.
+        if content
+            .first()
+            .and_then(|c| c.get("type"))
+            .and_then(|t| t.as_str())
+            == Some("text")
+        {
+            if let Some(text) = content
+                .first()
+                .and_then(|c| c.get("text"))
+                .and_then(|t| t.as_str())
+            {
+                return serde_json::from_str(text)
+                    .unwrap_or_else(|_| serde_json::json!({"text": text}));
+            }
+        }
+        // Non-text (or text content without a `text` field): keep the raw
+        // content array instead of collapsing to "{}".
+        return serde_json::json!({"content": content});
+    }
+    result.clone()
 }
 
 /// Start an MCP server process and return its instance.
@@ -298,4 +415,48 @@ async fn read_response(
     })
     .await
     .map_err(|_| anyhow::anyhow!("timeout waiting for MCP response"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bug_a_call_ids_are_strictly_increasing() {
+        let client = McpClient::new();
+        let a = client.next_call_id();
+        let b = client.next_call_id();
+        let c = client.next_call_id();
+        assert_eq!(a, 4, "first tool call id should be 4 (1/2/3 reserved)");
+        assert_eq!(b, 5, "second tool call id must increment");
+        assert_eq!(c, 6, "third tool call id must increment");
+        assert!(a < b && b < c, "call ids must be strictly increasing across calls");
+    }
+
+    #[test]
+    fn bug_b_iserror_is_reported_as_failure() {
+        let resp = serde_json::json!({
+            "result": {
+                "isError": true,
+                "content": [{"type": "text", "text": "boom"}]
+            }
+        });
+        let tr = parse_tool_result(&resp, "my_tool");
+        assert!(tr.error.is_some(), "isError:true must be reported as a failure");
+        assert_eq!(tr.error.unwrap(), "boom");
+        assert!(tr.output.is_null());
+    }
+
+    #[test]
+    fn bug_b_nontext_content_is_not_collapsed() {
+        let resp = serde_json::json!({
+            "result": {
+                "content": [{"type": "image", "data": "abc", "mimeType": "image/png"}]
+            }
+        });
+        let tr = parse_tool_result(&resp, "my_tool");
+        assert!(tr.error.is_none());
+        let s = serde_json::to_string(&tr.output).unwrap();
+        assert_ne!(s, "{}", "non-text content must not be silently collapsed to {{}}");
+    }
 }
