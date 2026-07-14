@@ -12,7 +12,7 @@ pub const HTTP_ROUTE_REGISTER: &str = "cafe.http.route.register";
 pub const HTTP_REQUEST_HANDLE: &str = "http.request.handle";
 
 /// Route registration published by a bus service to announce an HTTP endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteRegistration {
     pub pattern: String,
     pub methods: Vec<String>,
@@ -63,11 +63,8 @@ pub async fn publish_registration(
 
 /// Parse a `RouteRegistration` from a transient chunk.
 pub fn parse_registration(chunk: &Chunk) -> Option<RouteRegistration> {
-    chunk
-        .annotations
-        .get(HTTP_ROUTE_REGISTER)?
-        .as_str()
-        .and_then(|s| serde_json::from_str(s).ok())
+    let value = chunk.annotations.get(HTTP_ROUTE_REGISTER)?;
+    serde_json::from_value(value.clone()).ok()
 }
 
 /// Publish an RPC request for an incoming HTTP request.
@@ -130,4 +127,22 @@ pub fn encode_body(bytes: &[u8]) -> String {
 pub fn decode_body(encoded: &str) -> Result<Vec<u8>, base64::DecodeError> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.decode(encoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_registration_roundtrip() {
+        let reg = RouteRegistration {
+            pattern: "/foo".into(),
+            methods: vec!["GET".into()],
+        };
+        let chunk = Chunk::new_null("test")
+            .with_annotation(HTTP_ROUTE_REGISTER, &reg)
+            .as_transient();
+        let parsed = parse_registration(&chunk).expect("registration should parse");
+        assert_eq!(parsed, reg);
+    }
 }
