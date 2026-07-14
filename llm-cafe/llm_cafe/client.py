@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import os
 from typing import AsyncIterator, Iterator, Optional
@@ -94,8 +95,9 @@ class CafeClient:
         ) as r:
             r.raise_for_status()
             buf = ""
+            decoder = codecs.getincrementaldecoder("utf-8")()
             for chunk in r.iter_bytes():
-                buf += chunk.decode("utf-8")
+                buf += decoder.decode(chunk)
                 while "\n" in buf:
                     line, buf = buf.split("\n", 1)
                     line = line.strip()
@@ -124,8 +126,9 @@ class CafeClient:
             ) as r:
                 r.raise_for_status()
                 buf = ""
+                decoder = codecs.getincrementaldecoder("utf-8")()
                 async for chunk in r.aiter_bytes():
-                    buf += chunk.decode("utf-8")
+                    buf += decoder.decode(chunk)
                     while "\n" in buf:
                         line, buf = buf.split("\n", 1)
                         line = line.strip()
