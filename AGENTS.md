@@ -55,7 +55,24 @@ GitHub Actions workflow at `.github/workflows/ci.yml` runs on push/PR to `main`:
 
 Every E2E test must print exactly `=== ALL ... TESTS PASSED ===` on stdout or crash. No partial passes.
 
-## Doc rules
+## Editing reliability
+
+Edits can silently fail to persist to the working tree (observed in practice:
+subagents reported "fixed + tests passing" while their file changes were
+absent from `git status`). A tool's success message is not proof the change
+landed. Before reporting a task done — and especially before committing:
+
+- **Verify the write landed.** After editing, re-read the changed lines or run
+  `git diff --stat <file>` / `git status` and confirm the expected change is
+  present in the working tree.
+- **Trust tests, not claims.** For a fix, the confirming test must be observed
+  to FAIL before the edit and PASS after it. If it passes without your change,
+  your edit almost certainly didn't land — re-apply and re-verify.
+- **Confirming tests must be real.** A test that passes trivially (or wasn't
+  actually written) does not prove the fix exists. Check that the test file/lines
+  exist on disk.
+- Never report "done" or commit based solely on an agent's success message.
+
 
 - Use Mermaid for sequence diagrams in markdown.
 - Always add ADRs when appropriate.
