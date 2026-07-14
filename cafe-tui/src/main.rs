@@ -6,6 +6,7 @@ mod ui;
 use anyhow::Result;
 use app::{App, AppMode};
 use cafe_sdk::http::HttpClient;
+use cafe_sdk::Chunk;
 use cafe_sdk::ContentType;
 use config::Config;
 use crossterm::{
@@ -126,14 +127,8 @@ async fn run_app(
                 continue;
             }
             // Handle mutation: overlay annotations onto the target chunk
-            if let Some(target_id) = chunk.is_mutation() {
-                if let Some(target) = app.messages.iter_mut().find(|m| m.id == target_id) {
-                    for (k, v) in chunk.annotations {
-                        if k != "mutates.target_id" {
-                            target.annotations.insert(k, v);
-                        }
-                    }
-                }
+            if chunk.is_mutation().is_some() {
+                apply_mutation(&mut app.messages, &chunk);
                 continue;
             }
             let is_streaming = chunk
@@ -416,6 +411,20 @@ async fn run_app(
     Ok(())
 }
 
+/// Apply a mutation chunk's annotations to its target chunk in `messages`.
+/// The `cafe.mutates.target_id` meta key is skipped so it is not copied onto the
+/// target (meta pollution). Returns the target id if a matching target was found.
+pub(crate) fn apply_mutation(messages: &mut [Chunk], mutation: &Chunk) -> Option<String> {
+    let target_id = mutation.is_mutation()?;
+    let target = messages.iter_mut().find(|m| m.id == target_id)?;
+    for (k, v) in &mutation.annotations {
+        if k != cafe_sdk::keys::CAFE_MUTATES_TARGET_ID {
+            target.annotations.insert(k.clone(), v.clone());
+        }
+    }
+    Some(target_id)
+}
+
 async fn load_history(app: &mut App, client: &HttpClient) {
     if let Some(id) = app.active_session_id().map(String::from) {
         match client.get_history(&id).await {
@@ -436,5 +445,32 @@ async fn load_history(app: &mut App, client: &HttpClient) {
             }
             Err(e) => app.set_status(format!("Failed to load history: {}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cafe_sdk::keys;
+
+    #[test]
+    fn mutation_meta_key_not_leaked_onto_target() {
+        let target_id = "target-1";
+        let mut messages = vec![
+            Chunk::new_text("hello", "com.test").with_annotation("chat.role", "assistant"),
+        ];
+        messages[0].id = target_id.to_string();
+
+        let mutation = Chunk::mutation(target_id, "com.test")
+            .with_annotation("chat.role", "system");
+
+        apply_mutation(&mut messages, &mutation);
+
+        let target = &messages[0];
+        assert!(
+            !target.annotations.contains_key(keys::CAFE_MUTATES_TARGET_ID),
+            "mutation meta key leaked onto target chunk"
+        );
+        assert_eq!(target.role(), Some("system"));
     }
 }
