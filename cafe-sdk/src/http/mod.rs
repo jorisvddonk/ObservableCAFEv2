@@ -1,5 +1,5 @@
 mod sse;
-pub use sse::try_parse_sse_chunk;
+pub use sse::{try_parse_sse_chunk, SseParseOutcome};
 
 use crate::error::SdkError;
 use cafe_types::{Chunk, SessionInfo};
@@ -121,13 +121,24 @@ impl HttpClient {
         while let Some(bytes) = stream.next().await {
             let text = String::from_utf8_lossy(&bytes?).to_string();
             buffer.push_str(&text);
-            while let Some(chunk) = try_parse_sse_chunk(&mut buffer) {
-                let is_complete = chunk
-                    .get_annotation::<bool>("chat.stream_complete")
-                    .unwrap_or(false);
-                tx.send(chunk).await.ok();
-                if is_complete {
-                    return Ok(());
+            loop {
+                match try_parse_sse_chunk(&mut buffer) {
+                    SseParseOutcome::Chunk(chunk) => {
+                        let is_complete = chunk
+                            .get_annotation::<bool>("chat.stream_complete")
+                            .unwrap_or(false);
+                        tx.send(chunk).await.ok();
+                        if is_complete {
+                            return Ok(());
+                        }
+                    }
+                    SseParseOutcome::Invalid { raw, error } => {
+                        tracing::warn!(
+                            target: "cafe_sdk::http",
+                            "dropping invalid SSE frame: {error} (raw: {raw})"
+                        );
+                    }
+                    SseParseOutcome::Incomplete => break,
                 }
             }
         }
@@ -154,8 +165,19 @@ impl HttpClient {
         while let Some(bytes) = stream.next().await {
             let text = String::from_utf8_lossy(&bytes?).to_string();
             buffer.push_str(&text);
-            while let Some(chunk) = try_parse_sse_chunk(&mut buffer) {
-                tx.send(chunk).await.ok();
+            loop {
+                match try_parse_sse_chunk(&mut buffer) {
+                    SseParseOutcome::Chunk(chunk) => {
+                        tx.send(chunk).await.ok();
+                    }
+                    SseParseOutcome::Invalid { raw, error } => {
+                        tracing::warn!(
+                            target: "cafe_sdk::http",
+                            "dropping invalid SSE frame: {error} (raw: {raw})"
+                        );
+                    }
+                    SseParseOutcome::Incomplete => break,
+                }
             }
         }
         Ok(())
