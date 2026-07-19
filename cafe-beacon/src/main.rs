@@ -53,18 +53,8 @@ fn get_loadavg() -> Result<String> {
     Ok(format!("{:.2} {:.2} {:.2}", load[0], load[1], load[2]))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    if std::env::args().any(|a| a == "--print-peer-id") {
-        return print_peer_id();
-    }
-
-    let once = std::env::args().any(|a| a == "--once");
-
-    let hostname = get_hostname()?;
-    let session_id = format!("loadavg.{}", hostname);
-
-    let bus = if let Some(addr_file) = std::env::var("CAFE_BUS_IROH_ADDR_FILE").ok()
+async fn connect_bus() -> Result<BusClient> {
+    if let Some(addr_file) = std::env::var("CAFE_BUS_IROH_ADDR_FILE").ok()
         .filter(|s| !s.is_empty())
     {
         let json = std::fs::read_to_string(&addr_file)?;
@@ -76,17 +66,33 @@ async fn main() -> Result<()> {
             }
         }
         tracing::info!("connecting via iroh (addr file: {})", addr_file);
-        BusClient::from_iroh_config(cfg).await?
+        Ok(BusClient::from_iroh_config(cfg).await?)
     } else if let Some(cfg) = IrohConfig::from_cli(None, None, None) {
         tracing::info!("connecting via iroh");
-        BusClient::from_iroh_config(cfg).await?
+        Ok(BusClient::from_iroh_config(cfg).await?)
     } else {
         let socket_path =
             std::env::var("CAFE_BUS_SOCKET").unwrap_or_else(|_| "/tmp/cafe-bus.sock".into());
         cafe_sdk::bus::wait_for_bus(&socket_path, Duration::from_millis(500), 60).await?;
         tracing::info!("connecting via unix socket: {}", socket_path);
-        BusClient::unix(socket_path)
-    };
+        Ok(BusClient::unix(socket_path))
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
+    if std::env::args().any(|a| a == "--print-peer-id") {
+        return print_peer_id();
+    }
+
+    let once = std::env::args().any(|a| a == "--once");
+
+    let hostname = get_hostname()?;
+    let session_id = format!("loadavg.{}", hostname);
+
+    let mut bus = connect_bus().await?;
 
     match bus
         .create_session(&session_id, PRODUCER, SessionConfig { tags: Some(vec!["monitoring".into()]), ..Default::default() })
@@ -98,8 +104,7 @@ async fn main() -> Result<()> {
 
     let mut sub = bus.subscribe_session(&session_id).await?;
 
-    let mut tick = 0u64;
-    let chunk_id = loop {
+    if once {
         let load = get_loadavg()?;
         let mut chunk = Chunk::new_text(&load, PRODUCER).as_transient().with_retain(60);
         if let Some(info) = bus.connection_info() {
@@ -108,12 +113,7 @@ async fn main() -> Result<()> {
         let chunk_id = chunk.id.clone();
         sub.publish(chunk).await?;
         tracing::info!("published loadavg: {}", load);
-        break chunk_id;
-    };
 
-    if once {
-        // Wait for the bus to echo our chunk back, proving it was received.
-        // Time out after 5s so we don't hang on slow relay links.
         use cafe_sdk::ServerMessage;
         use tokio::time::timeout;
         let _ = timeout(Duration::from_secs(5), async {
@@ -130,6 +130,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let mut tick = 0u64;
     loop {
         match get_loadavg() {
             Ok(load) => {
@@ -137,10 +138,26 @@ async fn main() -> Result<()> {
                 if let Some(info) = bus.connection_info() {
                     chunk = chunk.with_annotation("iroh.connections", info);
                 }
-                if let Err(e) = sub.publish(chunk).await {
-                    tracing::warn!("publish failed: {}", e);
-                } else {
-                    tracing::info!("published loadavg: {}", load);
+                match sub.publish(chunk).await {
+                    Ok(()) => {
+                        tracing::info!("published loadavg: {}", load);
+                    }
+                    Err(e) => {
+                        tracing::warn!("publish failed ({}), reconnecting...", e);
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        match reconnect(&session_id).await {
+                            Ok((new_bus, new_sub)) => {
+                                bus = new_bus;
+                                sub = new_sub;
+                                tracing::info!("reconnected to bus");
+                            }
+                            Err(e) => {
+                                tracing::error!("reconnect failed: {}", e);
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                            }
+                        }
+                        continue;
+                    }
                 }
             }
             Err(e) => tracing::warn!("get_loadavg failed: {}", e),
@@ -153,6 +170,19 @@ async fn main() -> Result<()> {
 
         tokio::time::sleep(Duration::from_secs(interval_secs())).await;
     }
+}
 
-    Ok(())
+async fn reconnect(session_id: &str) -> Result<(BusClient, cafe_sdk::bus::SessionSubscription)> {
+    let bus = connect_bus().await?;
+
+    match bus
+        .create_session(session_id, PRODUCER, SessionConfig { tags: Some(vec!["monitoring".into()]), ..Default::default() })
+        .await
+    {
+        Ok(()) => tracing::info!("recreated session: {}", session_id),
+        Err(e) => tracing::warn!("session may already exist: {}", e),
+    }
+
+    let sub = bus.subscribe_session(session_id).await?;
+    Ok((bus, sub))
 }

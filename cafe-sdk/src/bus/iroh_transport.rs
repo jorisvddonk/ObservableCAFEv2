@@ -145,6 +145,13 @@ impl IrohConfig {
         {
             cfg = cfg.with_secret_key(key);
         }
+        if let Some(addr) = std::env::var("CAFE_BUS_IROH_NAMESERVER")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .and_then(|s| s.parse().ok())
+        {
+            cfg = cfg.with_dns_nameserver(addr);
+        }
         Some(cfg)
     }
 
