@@ -6,6 +6,27 @@ use std::time::Duration;
 const PRODUCER: &str = "com.nominal.cafe-beacon";
 const INTERVAL_SECS: u64 = 30;
 
+fn print_peer_id() -> Result<()> {
+    use std::str::FromStr;
+    let secret = {
+        let env_hex = std::env::var("CAFE_BUS_IROH_CLIENT_SECRET_KEY").ok()
+            .filter(|s| !s.is_empty());
+        if let Some(hex) = env_hex {
+            iroh::SecretKey::from_str(&hex)
+                .map_err(|e| anyhow::anyhow!("invalid CAFE_BUS_IROH_CLIENT_SECRET_KEY: {}", e))?
+        } else {
+            let sk = iroh::SecretKey::generate();
+            let sk_hex: String = sk.to_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+            eprintln!("No CAFE_BUS_IROH_CLIENT_SECRET_KEY set — generated a random key:");
+            eprintln!("  CAFE_BUS_IROH_CLIENT_SECRET_KEY={}", sk_hex);
+            sk
+        }
+    };
+    let peer_id = secret.public();
+    println!("{}", peer_id);
+    Ok(())
+}
+
 fn interval_secs() -> u64 {
     std::env::var("CAFE_BEACON_INTERVAL")
         .ok()
@@ -34,6 +55,10 @@ fn get_loadavg() -> Result<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().any(|a| a == "--print-peer-id") {
+        return print_peer_id();
+    }
+
     let once = std::env::args().any(|a| a == "--once");
 
     let hostname = get_hostname()?;

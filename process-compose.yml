@@ -6,7 +6,6 @@ processes:
     environment:
       - "RUST_BACKTRACE=1"
       - "CAFE_BUS_IROH_NAMESERVER=1.1.1.1:53"
-      - "CAFE_BUS_IROH_ALLOWLIST_DISABLED=1"
     readiness_probe:
       exec:
         command: "test -S /tmp/cafe-bus.sock"
