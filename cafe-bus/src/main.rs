@@ -185,6 +185,12 @@ async fn run_iroh_listener(
         .alpns(vec![b"cafe-bus/0".to_vec()])
         .relay_mode(relay_mode);
 
+    if let Ok(ns) = std::env::var("CAFE_BUS_IROH_NAMESERVER") {
+        if let Ok(addr) = ns.parse::<std::net::SocketAddr>() {
+            builder = builder.dns_resolver(iroh::dns::DnsResolver::with_nameserver(addr));
+        }
+    }
+
     // Gate incoming connections against the peer-ID allowlist.
     if let Some(ref allowlist) = allowlist {
         builder = builder.hooks(cafe_bus::allowlist::AllowlistHook::new(allowlist.clone()));
