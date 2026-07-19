@@ -10,7 +10,7 @@ Tests: user message → cafe-agent-runtime → cafe-llm → LLM backend →
        → cafe-tts → voicebox /generate/stream → audio BinaryRef.
 
 Requires a running LLM backend. Set OPENAI_URL / OPENAI_MODEL to
-override (defaults: localhost:8080 / Ornith-1.0-9B-4bit).
+override (defaults: localhost:6900 / Ornith-1.0-9B-4bit).
 
 Usage:
     cargo build --release
@@ -37,7 +37,7 @@ STORE_BIN = os.path.join(RELEASE_DIR, "cafe-store")
 BINARY_STORE_BIN = os.path.join(RELEASE_DIR, "cafe-binary-store")
 
 VOICEBOX_URL = os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493")
-LLM_URL = os.environ.get("OPENAI_URL", "http://localhost:8080")
+LLM_URL = os.environ.get("OPENAI_URL", "http://localhost:6900")
 LLM_MODEL = os.environ.get("OPENAI_MODEL", "mlx-community/Ornith-1.0-9B-4bit")
 
 TIMEOUT_SECS = 90

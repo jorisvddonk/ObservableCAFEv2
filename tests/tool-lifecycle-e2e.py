@@ -59,7 +59,7 @@ def main():
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["LLM_BACKEND"] = "openai"
-        env["OPENAI_URL"] = "http://localhost:8080"
+        env["OPENAI_URL"] = "http://localhost:6900"
         env["OPENAI_MODEL"] = "gemma3:1b"
         env["CAFE_ADMIN_TOKEN"] = "test-admin-token"
         env["CAFE_DB_PATH"] = db_path

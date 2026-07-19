@@ -21,7 +21,7 @@ impl Config {
             ollama_model: std::env::var("OLLAMA_MODEL")
                 .unwrap_or_else(|_| "gemma3:1b".into()),
             openai_url: std::env::var("OPENAI_URL")
-                .unwrap_or_else(|_| "http://localhost:8000".into()),
+                .unwrap_or_else(|_| "http://localhost:6900".into()),
             openai_api_key: std::env::var("OPENAI_API_KEY")
                 .unwrap_or_default(),
             openai_model: std::env::var("OPENAI_MODEL")

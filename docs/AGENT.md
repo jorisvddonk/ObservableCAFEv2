@@ -104,7 +104,7 @@ in production paths.
 | `LLM_BACKEND`                    | `ollama`                       | cafe-llm                        |
 | `OLLAMA_URL`                     | `http://localhost:11434`       | cafe-llm                        |
 | `OLLAMA_MODEL`                   | `gemma3:1b`                    | cafe-llm                        |
-| `OPENAI_URL`                     | `http://localhost:8000`        | cafe-llm                        |
+| `OPENAI_URL`                     | `http://localhost:6900`        | cafe-llm                        |
 | `OPENAI_API_KEY`                 | *(empty)*                      | cafe-llm                        |
 | `MODEL_LIST_URLS`                | —                              | cafe-llm                        |
 | `VOICEBOX_URL`                   | `http://127.0.0.1:17493`       | cafe-tts, cafe-stt              |
@@ -114,7 +114,7 @@ in production paths.
 | `TELEGRAM_TOKEN`                 | *(empty)*                      | cafe-telegram                   |
 | `CAFE_SERVER_URL`                | `http://localhost:4000`        | cafe-telegram                   |
 | `CAFE_KNOWLEDGEBASE_DB_PATH`     | `./knowledgebase.lance`        | cafe-knowledgebase              |
-| `CAFE_KNOWLEDGEBASE_EMBED_URL`   | `http://localhost:8080/v1/embeddings` | cafe-knowledgebase      |
+| `CAFE_KNOWLEDGEBASE_EMBED_URL`   | `http://localhost:6900/v1/embeddings` | cafe-knowledgebase      |
 | `CAFE_KNOWLEDGEBASE_EMBED_MODEL` | `user.gemma3-embed`            | cafe-knowledgebase              |
 | `CAFE_KNOWLEDGEBASE_EMBED_DIM`   | `1152`                         | cafe-knowledgebase              |
 | `CAFE_MCP_SERVERS`               | `mcp-servers.toml`             | cafe-mcp-client                 |
