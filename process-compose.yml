@@ -2,7 +2,7 @@ version: "0.5"
 
 processes:
   cafe-bus:
-    command: ./target/debug/cafe-bus
+    command: ./target/release/cafe-bus
     environment:
       - "RUST_BACKTRACE=1"
       - "CAFE_BUS_IROH_NAMESERVER=1.1.1.1:53"
@@ -14,7 +14,7 @@ processes:
       failure_threshold: 10
 
   cafe-store:
-    command: ./target/debug/cafe-store
+    command: ./target/release/cafe-store
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -28,7 +28,7 @@ processes:
         condition: process_healthy
 
   cafe-binary-store:
-    command: ./target/debug/cafe-binary-store --port 4002 --bus-socket /tmp/cafe-bus.sock --public-host 100.89.166.119
+    command: ./target/release/cafe-binary-store --port 4002 --bus-socket /tmp/cafe-bus.sock --public-host 100.89.166.119
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -42,7 +42,7 @@ processes:
         condition: process_healthy
 
   cafe-llm:
-    command: ./target/debug/cafe-llm
+    command: ./target/release/cafe-llm
     environment:
       - "RUST_BACKTRACE=1"
       - "LLM_BACKEND=openai"
@@ -62,7 +62,7 @@ processes:
         condition: process_healthy
 
   cafe-agent-runtime:
-    command: ./target/debug/cafe-agent-runtime
+    command: ./target/release/cafe-agent-runtime
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -78,7 +78,7 @@ processes:
         condition: process_healthy
 
   cafe-server:
-    command: ./target/debug/cafe-server
+    command: ./target/release/cafe-server
     environment:
       - "PORT=4000"
       - "RUST_BACKTRACE=1"
@@ -124,7 +124,7 @@ processes:
         condition: process_healthy
 
   cafe-tts:
-    command: ./target/debug/cafe-tts
+    command: ./target/release/cafe-tts
     environment:
       - "RUST_BACKTRACE=1"
       - "TTS_BACKEND=speech-server"
@@ -144,7 +144,7 @@ processes:
     disabled: false
 
   cafe-comfy:
-    command: ./target/debug/cafe-comfy
+    command: ./target/release/cafe-comfy
     environment:
       - "RUST_BACKTRACE=1"
       - "COMFY_URL=http://127.0.0.1:8188"
@@ -164,7 +164,7 @@ processes:
     disabled: false
 
   cafe-sheetbot:
-    command: ./target/debug/cafe-sheetbot
+    command: ./target/release/cafe-sheetbot
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -181,7 +181,7 @@ processes:
     disabled: false
 
   cafe-stt:
-    command: ./target/debug/cafe-stt
+    command: ./target/release/cafe-stt
     environment:
       - "RUST_BACKTRACE=1"
       - "STT_BACKEND=speech-server"
@@ -199,7 +199,7 @@ processes:
     disabled: false
 
   cafe-web-fetch:
-    command: ./target/debug/cafe-web-fetch
+    command: ./target/release/cafe-web-fetch
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -213,7 +213,7 @@ processes:
         condition: process_healthy
 
   cafe-knowledgebase:
-    command: ./target/debug/cafe-knowledgebase
+    command: ./target/release/cafe-knowledgebase
     environment:
       - "RUST_BACKTRACE=1"
       - "CAFE_KNOWLEDGEBASE_EMBED_URL=http://localhost:6900/v1/embeddings"
@@ -231,7 +231,7 @@ processes:
         condition: process_healthy
 
   cafe-mcp-bridge:
-    command: ./target/debug/cafe-mcp-bridge --transport http --port 3100 --meta
+    command: ./target/release/cafe-mcp-bridge --transport http --port 3100 --meta
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -245,7 +245,7 @@ processes:
         condition: process_healthy
 
   cafe-mcp-client:
-    command: ./target/debug/cafe-mcp-client
+    command: ./target/release/cafe-mcp-client
     environment:
       - "RUST_BACKTRACE=1"
       - "CAFE_MCP_SERVERS=mcp-servers.toml"
@@ -260,7 +260,7 @@ processes:
         condition: process_healthy
 
   cafe-rot13:
-    command: ./target/debug/cafe-rot13
+    command: ./target/release/cafe-rot13
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -274,7 +274,7 @@ processes:
         condition: process_healthy
 
   cafe-demo:
-    command: ./target/debug/cafe-demo
+    command: ./target/release/cafe-demo
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
@@ -291,7 +291,7 @@ processes:
     disabled: true
 
   cafe-beacon:
-    command: ./target/debug/cafe-beacon
+    command: ./target/release/cafe-beacon
     environment:
       - "RUST_BACKTRACE=1"
     readiness_probe:
