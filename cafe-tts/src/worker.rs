@@ -1,4 +1,4 @@
-use crate::voicebox::VoiceboxClient;
+use crate::speech_server::TtsClient;
 use cafe_sdk::bus::{BusClient, SessionSubscription};
 use cafe_sdk::{
     keys, roles, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
@@ -13,31 +13,31 @@ struct PendingUpload {
     mime_type: String,
 }
 
-pub async fn run_with_reconnect(socket_path: String, voicebox: VoiceboxClient) {
-    let voicebox = Arc::new(voicebox);
+pub async fn run_with_reconnect(socket_path: String, client: TtsClient) {
+    let client = Arc::new(client);
     cafe_sdk::bus::run_with_reconnect("cafe-tts", move || {
         let socket = socket_path.clone();
-        let vb = voicebox.clone();
-        async move { subscribe_sessions(&socket, vb).await }
+        let c = client.clone();
+        async move { subscribe_sessions(&socket, c).await }
     })
     .await;
 }
 
 async fn subscribe_sessions(
     socket_path: &str,
-    voicebox: Arc<VoiceboxClient>,
+    client: Arc<TtsClient>,
 ) -> anyhow::Result<()> {
     info!("cafe-tts: starting (subscribe-all mode) on {}", socket_path);
 
-    let client = BusClient::unix(socket_path);
-    let mut rx = client.subscribe_all().await?;
+    let bus = BusClient::unix(socket_path);
+    let mut rx = bus.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {
         if let ServerMessage::SessionCreated { session_id, .. } = msg {
-            let client = client.clone();
-            let vb = voicebox.clone();
+            let bus = bus.clone();
+            let c = client.clone();
             tokio::spawn(async move {
-                if let Err(e) = run_session_handler(session_id, client, vb).await {
+                if let Err(e) = run_session_handler(session_id, bus, c).await {
                     warn!("cafe-tts: session handler error: {}", e);
                 }
             });
@@ -50,7 +50,7 @@ async fn subscribe_sessions(
 async fn run_session_handler(
     session_id: String,
     client: BusClient,
-    voicebox: Arc<VoiceboxClient>,
+    tts: Arc<TtsClient>,
 ) -> anyhow::Result<()> {
     let mut sub = client.subscribe_session(&session_id).await?;
     let pending: Arc<Mutex<HashMap<String, PendingUpload>>> =
@@ -139,7 +139,7 @@ async fn run_session_handler(
 
         let call_id = request.id.clone();
         let result =
-            handle_tts_request(&voicebox, &request, &mut sub, &session_id, &pending).await;
+            handle_tts_request(&tts, &request, &mut sub, &session_id, &pending).await;
 
         let response = match result {
             Ok(audio_chunk_id) => JsonRpcResponse::ok(
@@ -163,7 +163,7 @@ async fn run_session_handler(
 }
 
 async fn handle_tts_request(
-    voicebox: &VoiceboxClient,
+    tts: &TtsClient,
     request: &JsonRpcRequest,
     sub: &mut SessionSubscription,
     session_id: &str,
@@ -172,6 +172,7 @@ async fn handle_tts_request(
     let text = request.params["text"].as_str().unwrap_or_default();
     let profile = request.params["profile"].as_str().unwrap_or("default");
     let engine = request.params["engine"].as_str();
+    let language = request.params["language"].as_str();
 
     if text.is_empty() {
         anyhow::bail!("tts.invoke: text param is empty");
@@ -184,7 +185,7 @@ async fn handle_tts_request(
         .with_retain(30);
     sub.publish(gen_chunk).await?;
 
-    let (audio_bytes, mime_type) = voicebox.synthesize(text, profile, engine).await?;
+    let (audio_bytes, mime_type) = tts.synthesize(text, profile, engine, language).await?;
 
     let chunk = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)

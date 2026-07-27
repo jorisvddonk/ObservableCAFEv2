@@ -3,7 +3,7 @@ mod transcriber;
 
 use anyhow::Result;
 use cafe_sdk::{keys, roles, Chunk, ContentType, JsonRpcResponse, ServerMessage};
-use config::Config;
+use config::{Config, SttBackend};
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -11,10 +11,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let config = Config::from_env();
 
-    info!(
-        "cafe-stt: starting (voicebox={})",
-        config.voicebox_url
-    );
+    let backend_name = match config.backend {
+        SttBackend::Voicebox => format!("voicebox ({})", config.voicebox_url),
+        SttBackend::SpeechServer => format!("speech-server ({})", config.speech_server_url),
+    };
+    info!("cafe-stt: starting — bus={} backend={}", config.socket_path, backend_name);
 
     cafe_sdk::bus::run_with_reconnect("cafe-stt", move || {
         let cfg = config.clone();
@@ -120,8 +121,32 @@ async fn run_session(
     Ok(())
 }
 
+/// Dispatch transcription to the configured backend.
+async fn transcribe_audio(
+    config: &Config,
+    audio: &[u8],
+    language: Option<&str>,
+    model: Option<&str>,
+) -> Result<(String, f64)> {
+    match config.backend {
+        SttBackend::Voicebox => {
+            transcriber::transcribe(&config.voicebox_url, audio, "audio/wav", language, model).await
+        }
+        SttBackend::SpeechServer => {
+            transcriber::transcribe_speech_server(
+                &config.speech_server_url,
+                audio,
+                "audio/wav",
+                language,
+                model,
+            )
+            .await
+        }
+    }
+}
+
 /// Transcribe a binary_ref after its upload completed: fetch read credentials from history,
-/// download audio from binary-store, transcribe via voicebox, publish assistant chunk.
+/// download audio from binary-store, transcribe via backend, publish assistant chunk.
 async fn transcribe_binary_ref(
     config: &Config,
     bus: &cafe_sdk::bus::BusClient,
@@ -155,14 +180,7 @@ async fn transcribe_binary_ref(
     let wav = convert_to_wav(&audio).await?;
     info!("cafe-stt: converted {} bytes to {} bytes WAV", audio.len(), wav.len());
 
-    let (text, duration) = transcriber::transcribe(
-        &config.voicebox_url,
-        &wav,
-        "audio/wav",
-        None, // language
-        None, // model
-    )
-    .await?;
+    let (text, duration) = transcribe_audio(config, &wav, None, None).await?;
 
     let chunk_id = uuid::Uuid::new_v4().to_string();
     info!("cafe-stt: auto-transcribed '{}' ({:.1}s)", text.chars().take(60).collect::<String>(), duration);
@@ -248,14 +266,7 @@ async fn handle_stt(
         convert_to_wav(&raw).await?
     };
 
-    let (text, duration) = transcriber::transcribe(
-        &config.voicebox_url,
-        &audio,
-        "audio/wav",
-        language,
-        model,
-    )
-    .await?;
+    let (text, duration) = transcribe_audio(config, &audio, language, model).await?;
 
     let chunk_id = uuid::Uuid::new_v4().to_string();
 

@@ -127,6 +127,8 @@ processes:
     command: ./target/debug/cafe-tts
     environment:
       - "RUST_BACKTRACE=1"
+      - "TTS_BACKEND=speech-server"
+      - "SPEECH_SERVER_URL=http://127.0.0.1:6900"
       - "VOICEBOX_URL=http://127.0.0.1:17493"
     readiness_probe:
       exec:
@@ -137,8 +139,8 @@ processes:
     depends_on:
       cafe-bus:
         condition: process_healthy
-    # Optional — only meaningful when Voicebox is running.
-    # Set disabled: true if you don't have Voicebox available.
+    # Optional — only meaningful when Voicebox or speech-server is running.
+    # Set TTS_BACKEND=voicebox to use legacy Voicebox API.
     disabled: false
 
   cafe-comfy:
@@ -182,6 +184,8 @@ processes:
     command: ./target/debug/cafe-stt
     environment:
       - "RUST_BACKTRACE=1"
+      - "STT_BACKEND=speech-server"
+      - "SPEECH_SERVER_URL=http://127.0.0.1:6900"
       - "VOICEBOX_URL=http://127.0.0.1:17493"
     readiness_probe:
       exec:
