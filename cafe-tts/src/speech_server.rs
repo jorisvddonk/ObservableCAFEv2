@@ -30,6 +30,8 @@ impl SpeechServerClient {
         let mut body = serde_json::json!({ "text": text });
         if let Some(e) = engine {
             body["engine"] = serde_json::Value::String(e.to_string());
+        } else {
+            body["model"] = serde_json::Value::String("qwen3-tts".into());
         }
         if let Some(l) = _language {
             body["language"] = serde_json::Value::String(l.to_string());
