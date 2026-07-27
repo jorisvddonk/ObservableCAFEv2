@@ -4,6 +4,7 @@ mod transcriber;
 use anyhow::Result;
 use cafe_sdk::{keys, roles, Chunk, ContentType, JsonRpcResponse, ServerMessage};
 use config::{Config, SttBackend};
+use std::time::Duration;
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -208,9 +209,7 @@ async fn handle_stt(
         convert_to_wav(&raw).await?
     } else if let Some(binary_ref_id) = params["binary_ref_id"].as_str() {
         // Scan session history for read credentials matching this binary_ref
-        let history = bus.get_history(session_id).await?;
-        let read_creds = find_read_credentials(&history, binary_ref_id)
-            .ok_or_else(|| anyhow::anyhow!("no read credentials found for binary_ref {}", binary_ref_id))?;
+        let read_creds = find_read_credentials_retry(bus, session_id, binary_ref_id).await?;
 
         let read_url = read_creds["cafe.binary.read_url"]
             .as_str()
@@ -248,8 +247,7 @@ async fn handle_stt(
         let ref_chunk = binary_refs.last().unwrap();
         let binary_ref_id = &ref_chunk.id;
 
-        let read_creds = find_read_credentials(&history, binary_ref_id)
-            .ok_or_else(|| anyhow::anyhow!("no read credentials found for binary_ref {}. Has the audio been uploaded yet?", binary_ref_id))?;
+        let read_creds = find_read_credentials_retry(bus, session_id, binary_ref_id).await?;
         let read_url = read_creds["cafe.binary.read_url"].as_str().ok_or_else(|| anyhow::anyhow!("missing read_url"))?;
         let read_token = read_creds["cafe.binary.read_token"].as_str().ok_or_else(|| anyhow::anyhow!("missing read_token"))?;
 
@@ -277,6 +275,28 @@ async fn handle_stt(
     let _ = bus.publish(session_id, text_chunk).await;
 
     Ok((chunk_id, text, duration))
+}
+
+/// Fetch session history and retry until read credentials appear (with backoff).
+async fn find_read_credentials_retry(
+    bus: &cafe_sdk::bus::BusClient,
+    session_id: &str,
+    binary_ref_id: &str,
+) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    let start = std::time::Instant::now();
+    let max_wait = Duration::from_secs(10);
+    let mut delay = Duration::from_millis(50);
+    loop {
+        let history = bus.get_history(session_id).await?;
+        if let Some(ann) = find_read_credentials(&history, binary_ref_id) {
+            return Ok(ann.clone());
+        }
+        if start.elapsed() > max_wait {
+            anyhow::bail!("no read credentials found for binary_ref {}", binary_ref_id);
+        }
+        tokio::time::sleep(delay).await;
+        delay = std::cmp::min(delay * 2, Duration::from_secs(1));
+    }
 }
 
 /// Scan session history for a mutation chunk containing binary read credentials

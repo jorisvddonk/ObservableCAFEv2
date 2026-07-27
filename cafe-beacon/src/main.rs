@@ -54,6 +54,13 @@ fn get_loadavg() -> Result<String> {
 }
 
 async fn connect_bus() -> Result<BusClient> {
+    let socket_path =
+        std::env::var("CAFE_BUS_SOCKET").unwrap_or_else(|_| "/tmp/cafe-bus.sock".into());
+    if std::path::Path::new(&socket_path).exists() {
+        cafe_sdk::bus::wait_for_bus(&socket_path, Duration::from_millis(500), 60).await?;
+        tracing::info!("connecting via unix socket: {}", socket_path);
+        return Ok(BusClient::unix(socket_path));
+    }
     if let Some(addr_file) = std::env::var("CAFE_BUS_IROH_ADDR_FILE").ok()
         .filter(|s| !s.is_empty())
     {
@@ -71,8 +78,6 @@ async fn connect_bus() -> Result<BusClient> {
         tracing::info!("connecting via iroh");
         Ok(BusClient::from_iroh_config(cfg).await?)
     } else {
-        let socket_path =
-            std::env::var("CAFE_BUS_SOCKET").unwrap_or_else(|_| "/tmp/cafe-bus.sock".into());
         cafe_sdk::bus::wait_for_bus(&socket_path, Duration::from_millis(500), 60).await?;
         tracing::info!("connecting via unix socket: {}", socket_path);
         Ok(BusClient::unix(socket_path))

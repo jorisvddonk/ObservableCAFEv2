@@ -152,6 +152,11 @@ impl IrohConfig {
         {
             cfg = cfg.with_dns_nameserver(addr);
         }
+        if std::env::var("CAFE_BUS_IROH_DIRECT").ok()
+            .map_or(false, |v| v == "1" || v == "true")
+        {
+            cfg = cfg.with_direct();
+        }
         Some(cfg)
     }
 

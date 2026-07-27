@@ -108,6 +108,9 @@ enum StoreAction {
         /// Session to use (default: auto-create)
         #[arg(long)]
         session: Option<String>,
+        /// Annotations for the binary-ref chunk (key=value)
+        #[arg(long = "annotation", value_parser = parse_keyval)]
+        annotations: Vec<(String, String)>,
     },
     /// Download a file from the binary-store
     Download {
@@ -323,7 +326,11 @@ async fn main() -> Result<()> {
                 c
             } else if binary_ref {
                 let mime = mime.unwrap_or_else(|| "application/octet-stream".into());
-                Chunk::new_binary_ref(mime, "cafe-cli")
+                let mut c = Chunk::new_binary_ref(mime, "cafe-cli");
+                for (k, v) in &annotations {
+                    c = c.with_annotation(k.as_str(), v.as_str());
+                }
+                c
             } else if let Some(content) = text {
                 Chunk::new_text(content, "cafe-cli")
                     .with_annotation(cafe_sdk::keys::CHAT_ROLE, "user")
@@ -519,19 +526,26 @@ async fn main() -> Result<()> {
 
         Command::Store { action } => {
             match action {
-                StoreAction::Upload { path, mime, store_url, session } => {
+                StoreAction::Upload { path, mime, store_url, session, annotations } => {
                     let session_id = session.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                     let chunk_id = uuid::Uuid::new_v4().to_string();
                     let store_url = store_url.trim_end_matches('/').to_string();
 
-                    // Create session, then subscribe with a shared connection for credential exchange
-                    client.create_session(&session_id, "default", Default::default()).await?;
+                    // Ensure session exists, then subscribe with a shared connection for credential exchange
+                    if let Err(e) = client.create_session(&session_id, "default", Default::default()).await {
+                        if !e.to_string().contains("SESSION_EXISTS") {
+                            return Err(e.into());
+                        }
+                    }
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     let mut sub = client.subscribe_session(&session_id).await?;
 
-                    // Publish BinaryRef
+                    // Publish BinaryRef with annotations
                     let mut binref = Chunk::new_binary_ref(mime.as_deref().unwrap_or("application/octet-stream"), "cafe-cli");
                     binref.id = chunk_id.clone();
+                    for (k, v) in annotations {
+                        binref = binref.with_annotation(k.as_str(), v.as_str());
+                    }
                     sub.publish(binref).await?;
 
                     // Wait for write credentials mutation
