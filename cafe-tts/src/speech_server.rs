@@ -31,7 +31,7 @@ impl SpeechServerClient {
         if let Some(e) = engine {
             body["engine"] = serde_json::Value::String(e.to_string());
         } else {
-            body["model"] = serde_json::Value::String("qwen3-tts".into());
+            body["model"] = serde_json::Value::String("cosyvoice-3".into());
         }
         if let Some(l) = _language {
             body["language"] = serde_json::Value::String(l.to_string());
