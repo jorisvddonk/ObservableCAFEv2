@@ -4,6 +4,7 @@ mod lifecycle;
 mod loader;
 mod registry;
 mod scheduler;
+mod schema_registry;
 mod session_loop;
 mod tool_detector;
 mod tool_executor;
@@ -14,6 +15,7 @@ use cafe_sdk::{ServerMessage, StepDef};
 use config::Config;
 use executor::PipelineExecutor;
 use registry::{AgentEntry, AgentRegistry};
+use schema_registry::SchemaRegistry;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -49,6 +51,15 @@ async fn main() -> Result<()> {
     if let Err(e) = cafe_sdk::bus::wait_for_bus(&config.socket_path, Duration::from_millis(500), 60).await {
         warn!("cafe-agent-runtime: bus not ready after 30s, continuing anyway: {e}");
     }
+
+    // 2b. Start schema discovery (subscribe to __schema__ session)
+    let schema_registry = SchemaRegistry::new();
+    let _schema_task = schema_registry
+        .clone()
+        .start_discovery(config.socket_path.clone())
+        .await;
+    // Brief wait for existing evaluators to announce their schemas
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // 3. Register agents and start background sessions
     let sched = scheduler::AgentScheduler::new().await?;
@@ -115,8 +126,9 @@ async fn main() -> Result<()> {
     if !agent_pipelines.is_empty() {
         let sp = config.socket_path.clone();
         let pipelines = Arc::new(agent_pipelines);
+        let sreg = schema_registry.clone();
         tokio::spawn(async move {
-            run_pipeline_subscriber(sp, pipelines).await;
+            run_pipeline_subscriber(sp, pipelines, sreg).await;
         });
     }
     // 5. Start file watcher for hot-reload
@@ -141,6 +153,7 @@ async fn main() -> Result<()> {
 async fn run_pipeline_subscriber(
     socket_path: String,
     agent_pipelines: Arc<HashMap<String, AgentPipelineInfo>>,
+    schema_registry: SchemaRegistry,
 ) {
     let client = cafe_sdk::bus::BusClient::unix(&socket_path);
     let mut rx = match client.subscribe_all().await {
@@ -193,6 +206,38 @@ async fn run_pipeline_subscriber(
                         "cafe-agent-runtime: failed to publish initial chunk for session {}: {}",
                         sid2, e
                     );
+                }
+            });
+        }
+
+        // Publish schema chunks for each evaluator used by this agent
+        {
+            let sreg = schema_registry.clone();
+            let client = client.clone();
+            let sid2 = sid.clone();
+            let steps = pipeline_info.steps.clone();
+            tokio::spawn(async move {
+                for step in &steps {
+                    // Only publish schemas for RPC evaluators (not built-in)
+                    let is_builtin = matches!(
+                        step.step_type.as_str(),
+                        "role-annotator" | "trust-filter" | "tool-detector" | "tool-executor" | "mcp"
+                    );
+                    if is_builtin {
+                        continue;
+                    }
+                    if let Some(schema) = sreg.get(&step.step_type).await {
+                        let chunk = cafe_sdk::Chunk::new_null(
+                            "com.nominal.cafe-agent-runtime",
+                        )
+                        .with_annotation(cafe_sdk::keys::CAFE_SCHEMA_EVALUATOR, &schema);
+                        if let Err(e) = client.publish(&sid2, chunk).await {
+                            warn!(
+                                "cafe-agent-runtime: failed to publish schema for '{}': {}",
+                                schema.name, e
+                            );
+                        }
+                    }
                 }
             });
         }

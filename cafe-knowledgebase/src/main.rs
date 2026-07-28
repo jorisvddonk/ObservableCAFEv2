@@ -4,7 +4,7 @@ mod index;
 use std::sync::Arc;
 
 use anyhow::Result;
-use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage};
+use cafe_sdk::{keys, Chunk, EvaluatorSchema, JsonRpcResponse, ServerMessage};
 use embed::EmbedConfig;
 use index::{chunk_text, KnowledgeBase};
 use tracing::{info, warn};
@@ -62,6 +62,21 @@ async fn main() -> Result<()> {
 }
 
 async fn subscribe_all(app: Arc<App>) -> Result<()> {
+    let schema = EvaluatorSchema {
+        name: "knowledgebase".into(),
+        description: "Knowledge base evaluator — indexes and searches documents with vector embeddings".into(),
+        config_schema: serde_json::json!({"type": "object", "properties": {}}),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Session ID" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&app.bus, schema).await {
+        warn!("cafe-knowledgebase: failed to announce schema: {}", e);
+    }
+
     let mut rx = app.bus.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

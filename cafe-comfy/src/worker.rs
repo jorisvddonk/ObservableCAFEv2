@@ -1,7 +1,7 @@
 use crate::comfyui::ComfyUIClient;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{
-    keys, roles, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
+    keys, roles, rpc_errors, Chunk, EvaluatorSchema, JsonRpcRequest, JsonRpcResponse, ServerMessage,
 };
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -31,6 +31,32 @@ async fn subscribe_sessions(
     info!("cafe-comfy: starting (subscribe-all mode) on {}", socket_path);
 
     let client = BusClient::unix(socket_path);
+
+    let schema = EvaluatorSchema {
+        name: "comfy".into(),
+        description: "Image generation evaluator — runs a ComfyUI workflow and produces an image".into(),
+        config_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "config.comfy.workflow_path": { "type": "string", "description": "Path to the ComfyUI workflow JSON" },
+                "config.comfy.workflow_input_node": { "type": "string", "description": "Input node ID in the workflow" },
+                "config.comfy.endpoint": { "type": "string", "description": "ComfyUI API endpoint" }
+            }
+        }),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+                "text": { "type": "string", "description": "Image generation prompt" },
+                "workflow_path": { "type": "string", "description": "Override workflow path" },
+                "input_node": { "type": "string", "description": "Override input node ID" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&client, schema).await {
+        warn!("cafe-comfy: failed to announce schema: {}", e);
+    }
+
     let mut rx = client.subscribe_all().await?;
 
     let wf = workflow.to_owned();

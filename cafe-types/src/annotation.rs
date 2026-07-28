@@ -81,6 +81,9 @@ pub mod keys {
     pub const EPHEMERAL_KEEPALIVE_SECS: &str = "ephemeral.keepalive_secs";
     pub const EPHEMERAL_COUNT_ROLE: &str = "ephemeral.count_role";
 
+    // Schema advertisement
+    pub const CAFE_SCHEMA_EVALUATOR: &str = "cafe.schema.evaluator";
+
     // ── Cafe-namespaced (preferred) ──
     pub const CAFE_TRANSIENT: &str = "cafe.transient";
     pub const CAFE_TRANSIENT_RETAIN_SECS: &str = "cafe.transient.retain_secs";

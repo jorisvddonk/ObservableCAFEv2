@@ -2,7 +2,7 @@ mod config;
 mod transcriber;
 
 use anyhow::Result;
-use cafe_sdk::{keys, roles, Chunk, ContentType, JsonRpcResponse, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, ContentType, EvaluatorSchema, JsonRpcResponse, ServerMessage};
 use config::{Config, SttBackend};
 use std::time::Duration;
 use tracing::{info, warn};
@@ -29,6 +29,29 @@ async fn main() -> Result<()> {
 
 async fn subscribe_all(config: &Config) -> Result<()> {
     let client = cafe_sdk::bus::BusClient::unix(&config.socket_path);
+    let schema = EvaluatorSchema {
+        name: "stt".into(),
+        description: "Speech-to-text evaluator — transcribes audio using Voicebox or speech-server".into(),
+        config_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "config.stt.base_url": { "type": "string", "description": "STT service URL" },
+                "config.stt.response_format": { "type": "string", "description": "Response format" }
+            }
+        }),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Session to transcribe" },
+                "audio": { "type": "string", "description": "Base64-encoded audio data" },
+                "language": { "type": "string", "description": "Language code (default en)" },
+                "model": { "type": "string", "description": "Model name (default whisper-small)" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&client, schema).await {
+        tracing::warn!("cafe-stt: failed to announce schema: {}", e);
+    }
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

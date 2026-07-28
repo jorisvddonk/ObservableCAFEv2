@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{Chunk, ServerMessage, SessionConfig};
+use cafe_sdk::{Chunk, EvaluatorSchema, ServerMessage, SessionConfig};
 use tracing::{info, warn};
 
 use crate::backends::LlmBackend;
@@ -33,6 +33,31 @@ async fn connect_and_run(
     info!("cafe-llm: starting (subscribe-all mode) on {}", socket_path);
 
     let client = BusClient::unix(socket_path);
+
+    let schema = EvaluatorSchema {
+        name: "llm".into(),
+        description: "Large Language Model evaluator — generates text responses using Ollama or OpenAI".into(),
+        config_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "config.llm.system_prompt": { "type": "string", "description": "System prompt prepended to every conversation" },
+                "config.llm.temperature": { "type": "number", "default": 0.7, "description": "Sampling temperature (0.0–2.0)" },
+                "config.llm.model": { "type": "string", "description": "Model name" },
+                "config.llm.backend": { "type": "string", "enum": ["ollama", "openai"], "description": "LLM backend" },
+                "config.llm.max_tokens": { "type": "integer", "minimum": 1, "description": "Maximum tokens in response" }
+            }
+        }),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "required": ["session_id"],
+            "properties": {
+                "session_id": { "type": "string", "description": "Session ID to generate for" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&client, schema).await {
+        warn!("cafe-llm: failed to announce schema: {}", e);
+    }
 
     // Accumulated set of all models ever discovered.
     // llama-swap kills backends when swapping, so /v1/models only shows the active one.

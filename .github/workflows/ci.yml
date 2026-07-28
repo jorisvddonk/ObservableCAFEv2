@@ -47,6 +47,7 @@ jobs:
           uv run tests/bus-filters-e2e.py
           uv run tests/source-connection-e2e.py
           uv run tests/ephemeral-sessions-e2e.py
+          uv run tests/schema-announcement-e2e.py
           uv run tests/tts-e2e.py
           uv run tests/stt-e2e.py
           uv run tests/tts-speech-server-e2e.py

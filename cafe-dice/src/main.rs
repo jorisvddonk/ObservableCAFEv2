@@ -1,5 +1,5 @@
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcResponse, rpc_errors, ServerMessage, ToolCall};
+use cafe_sdk::{keys, Chunk, EvaluatorSchema, JsonRpcResponse, rpc_errors, ServerMessage, ToolCall};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tracing::{info, warn};
@@ -22,6 +22,22 @@ async fn main() -> anyhow::Result<()> {
 async fn subscribe_all(socket_path: &str) -> anyhow::Result<()> {
     info!("cafe-dice: starting on {}", socket_path);
     let client = BusClient::unix(socket_path);
+    let schema = EvaluatorSchema {
+        name: "dice".into(),
+        description: "Dice-rolling evaluator — detects !roll commands and rolls dice".into(),
+        config_schema: serde_json::json!({"type": "object", "properties": {}}),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string", "description": "Dice notation (e.g. 2d6)" },
+                "count": { "type": "integer", "description": "Number of dice" },
+                "sides": { "type": "integer", "description": "Sides per die" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&client, schema).await {
+        tracing::warn!("cafe-dice: failed to announce schema: {}", e);
+    }
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

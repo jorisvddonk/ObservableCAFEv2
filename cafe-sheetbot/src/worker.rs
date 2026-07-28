@@ -1,7 +1,7 @@
 use crate::sheetbot::SheetbotClient;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{
-    keys, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
+    keys, rpc_errors, Chunk, EvaluatorSchema, JsonRpcRequest, JsonRpcResponse, ServerMessage,
 };
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -22,6 +22,28 @@ async fn subscribe_sessions(
     info!("cafe-sheetbot: starting (subscribe-all mode) on {}", socket_path);
 
     let client = BusClient::unix(socket_path);
+
+    let schema = EvaluatorSchema {
+        name: "sheetbot".into(),
+        description: "SheetBot task management evaluator".into(),
+        config_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "config.sheetbot.url": { "type": "string", "description": "SheetBot API URL" },
+                "config.sheetbot.api_key": { "type": "string", "description": "SheetBot API key" }
+            }
+        }),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Session ID" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&client, schema).await {
+        warn!("cafe-sheetbot: failed to announce schema: {}", e);
+    }
+
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

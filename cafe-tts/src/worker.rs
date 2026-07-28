@@ -1,7 +1,7 @@
 use crate::speech_server::TtsClient;
 use cafe_sdk::bus::{BusClient, SessionSubscription};
 use cafe_sdk::{
-    keys, roles, rpc_errors, Chunk, JsonRpcRequest, JsonRpcResponse, ServerMessage,
+    keys, roles, rpc_errors, Chunk, EvaluatorSchema, JsonRpcRequest, JsonRpcResponse, ServerMessage,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,6 +30,32 @@ async fn subscribe_sessions(
     info!("cafe-tts: starting (subscribe-all mode) on {}", socket_path);
 
     let bus = BusClient::unix(socket_path);
+
+    let schema = EvaluatorSchema {
+        name: "tts".into(),
+        description: "Text-to-speech evaluator — synthesizes speech using Voicebox or speech-server".into(),
+        config_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "config.tts.profile": { "type": "string", "description": "Voice profile name" },
+                "config.tts.engine": { "type": "string", "description": "TTS engine (voicebox, speech-server)" },
+                "config.tts.endpoint": { "type": "string", "description": "TTS service URL" }
+            }
+        }),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+                "text": { "type": "string", "description": "Text to synthesize" },
+                "profile": { "type": "string", "description": "Voice profile name" },
+                "engine": { "type": "string", "description": "TTS engine" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&bus, schema).await {
+        warn!("cafe-tts: failed to announce schema: {}", e);
+    }
+
     let mut rx = bus.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

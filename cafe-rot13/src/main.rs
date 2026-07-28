@@ -1,5 +1,5 @@
 use anyhow::Result;
-use cafe_sdk::{keys, roles, Chunk, JsonRpcResponse, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, EvaluatorSchema, JsonRpcResponse, ServerMessage};
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -19,6 +19,20 @@ async fn main() -> Result<()> {
 
 async fn subscribe_all(socket_path: &str) -> Result<()> {
     let client = cafe_sdk::bus::BusClient::unix(socket_path);
+    let schema = EvaluatorSchema {
+        name: "rot13".into(),
+        description: "ROT13 text transformation — rotates letters by 13 positions".into(),
+        config_schema: serde_json::json!({"type": "object", "properties": {}}),
+        rpc_params_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string", "description": "Text to transform" }
+            }
+        }),
+    };
+    if let Err(e) = cafe_sdk::schema::announce_schema(&client, schema).await {
+        tracing::warn!("cafe-rot13: failed to announce schema: {}", e);
+    }
     let mut rx = client.subscribe_all().await?;
 
     while let Some(msg) = rx.recv().await {

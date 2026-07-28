@@ -3,6 +3,9 @@ pub mod error;
 #[cfg(feature = "bus-client")]
 pub mod bus;
 
+#[cfg(feature = "bus-client")]
+pub mod schema;
+
 #[cfg(feature = "http-client")]
 pub mod http;
 
