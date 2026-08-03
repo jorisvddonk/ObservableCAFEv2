@@ -26,10 +26,20 @@ pub fn build_messages(history: &[Chunk], system_prompt: Option<&str>) -> Vec<Llm
 
         match chunk.role() {
             Some("user") | Some("assistant") => {
-                messages.push(LlmMessage {
-                    role: chunk.role().unwrap().into(),
-                    content: chunk.content.clone().unwrap_or_default(),
-                });
+                let role = chunk.role().unwrap().to_string();
+                let content = chunk.content.clone().unwrap_or_default();
+                // Coalesce consecutive messages with the same role: many backends
+                // require strict user/assistant alternation and reject runs of
+                // identical roles (e.g. duplicate assistant outputs or a burst of
+                // unanswered user messages).
+                if let Some(last) = messages.last_mut() {
+                    if last.role == role {
+                        last.content.push('\n');
+                        last.content.push_str(&content);
+                        continue;
+                    }
+                }
+                messages.push(LlmMessage { role, content });
             }
             _ => {}
         }
@@ -283,6 +293,23 @@ mod tests {
                 assert_ne!(msg.role, "system", "no system prompt was provided");
             }
         });
+    }
+
+    #[test]
+    fn build_messages_coalesces_consecutive_same_role() {
+        let history = vec![
+            Chunk::new_text("first", "producer").with_annotation(keys::CHAT_ROLE, "user"),
+            Chunk::new_text("second", "producer").with_annotation(keys::CHAT_ROLE, "user"),
+            Chunk::new_text("assistant text", "producer").with_annotation(keys::CHAT_ROLE, "assistant"),
+            Chunk::new_text("third", "producer").with_annotation(keys::CHAT_ROLE, "user"),
+            Chunk::new_text("dup", "producer").with_annotation(keys::CHAT_ROLE, "assistant"),
+            Chunk::new_text("dup2", "producer").with_annotation(keys::CHAT_ROLE, "assistant"),
+        ];
+        let messages = build_messages(&history, None);
+        let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, vec!["user", "assistant", "user", "assistant"]);
+        assert_eq!(messages[0].content, "first\nsecond");
+        assert_eq!(messages[3].content, "dup\ndup2");
     }
 
     #[test]

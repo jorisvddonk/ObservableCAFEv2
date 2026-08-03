@@ -11,12 +11,13 @@ mod tool_executor;
 mod watcher;
 
 use anyhow::Result;
+use cafe_sdk::bus::BusClient;
 use cafe_sdk::{ServerMessage, StepDef};
 use config::Config;
 use executor::PipelineExecutor;
 use registry::{AgentEntry, AgentRegistry};
 use schema_registry::SchemaRegistry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -164,93 +165,167 @@ async fn run_pipeline_subscriber(
         }
     };
 
-    while let Some(msg) = rx.recv().await {
-        let (session_id, agent_id) = match msg {
-            ServerMessage::SessionCreated { session_id, agent_id } => (session_id, agent_id),
-            _ => continue,
-        };
+    // Sessions that already have a session_loop attached. Prevents duplicate
+    // pipelines: subscribe_all replays existing sessions as SessionCreated events,
+    // which would otherwise double-attach the same session (startup re-attach +
+    // SessionCreated replay).
+    let attached: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-        if !agent_pipelines.contains_key(&agent_id) {
-            info!(
-                "cafe-agent-runtime: ignoring session {} (agent {} not in pipeline map)",
-                session_id, agent_id
-            );
-            continue;
-        }
-
-        let pipeline_info = agent_pipelines.get(&agent_id).unwrap();
-        info!(
-            "cafe-agent-runtime: attaching pipeline to session {} (agent {})",
-            session_id, agent_id
-        );
-
-        let sid = session_id.clone();
-        let sp = socket_path.clone();
-        let agent_id2 = agent_id.clone();
-
-        // Publish the initial config chunk so resolve_session_config
-        // picks up TTS/LLM settings for user-created sessions.
-        if pipeline_info.initial_chunk_type == "null" && !pipeline_info.initial_chunk_annotations.is_empty() {
-            let annotations = pipeline_info.initial_chunk_annotations.clone();
-            let client = client.clone();
-            let sid2 = sid.clone();
-            tokio::spawn(async move {
-                let mut chunk = cafe_sdk::Chunk::new_null(
-                    &format!("com.nominal.cafe-agent-runtime/{}", agent_id2),
+    // Re-attach to existing sessions on startup so they aren't orphaned after restart
+    if let Ok(sessions) = client.list_sessions().await {
+        for session in &sessions {
+            if let Some(pipeline_info) = agent_pipelines.get(&session.agent_id) {
+                info!(
+                    "cafe-agent-runtime: re-attaching pipeline to existing session {} (agent {})",
+                    session.session_id, session.agent_id
                 );
-                for (k, v) in annotations {
-                    chunk = chunk.with_annotation(k, v);
-                }
-                if let Err(e) = client.publish(&sid2, chunk).await {
-                    warn!(
-                        "cafe-agent-runtime: failed to publish initial chunk for session {}: {}",
-                        sid2, e
-                    );
-                }
-            });
+                attach_to_session(
+                    &socket_path,
+                    &session.session_id,
+                    &session.agent_id,
+                    pipeline_info,
+                    &schema_registry,
+                    client.clone(),
+                    attached.clone(),
+                )
+                .await;
+            }
         }
+    }
 
-        // Publish schema chunks for each evaluator used by this agent
-        {
-            let sreg = schema_registry.clone();
-            let client = client.clone();
-            let sid2 = sid.clone();
-            let steps = pipeline_info.steps.clone();
-            tokio::spawn(async move {
-                for step in &steps {
-                    // Only publish schemas for RPC evaluators (not built-in)
-                    let is_builtin = matches!(
-                        step.step_type.as_str(),
-                        "role-annotator" | "trust-filter" | "tool-detector" | "tool-executor" | "mcp"
-                    );
-                    if is_builtin {
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            ServerMessage::SessionCreated { session_id, agent_id } => {
+                let pipeline_info = match agent_pipelines.get(&agent_id) {
+                    Some(info) => info,
+                    None => {
+                        info!(
+                            "cafe-agent-runtime: ignoring session {} (agent {} not in pipeline map)",
+                            session_id, agent_id
+                        );
                         continue;
                     }
-                    if let Some(schema) = sreg.get(&step.step_type).await {
-                        let chunk = cafe_sdk::Chunk::new_null(
-                            "com.nominal.cafe-agent-runtime",
-                        )
-                        .with_annotation(cafe_sdk::keys::CAFE_SCHEMA_EVALUATOR, &schema);
-                        if let Err(e) = client.publish(&sid2, chunk).await {
-                            warn!(
-                                "cafe-agent-runtime: failed to publish schema for '{}': {}",
-                                schema.name, e
-                            );
-                        }
-                    }
-                }
-            });
-        }
+                };
 
-        let executor = Arc::new(PipelineExecutor::new(
-            pipeline_info.steps.clone(),
-            Duration::from_secs(pipeline_info.rpc_timeout_secs),
-            pipeline_info.max_pipeline_depth,
-        ));
+                info!(
+                    "cafe-agent-runtime: attaching pipeline to session {} (agent {})",
+                    session_id, agent_id
+                );
+
+                attach_to_session(
+                    &socket_path,
+                    &session_id,
+                    &agent_id,
+                    pipeline_info,
+                    &schema_registry,
+                    client.clone(),
+                    attached.clone(),
+                )
+                .await;
+            }
+            ServerMessage::SessionDeleted { session_id } => {
+                // Forget the session so a future SessionCreated (session recreated
+                // with the same id) can attach a fresh pipeline.
+                attached.lock().unwrap_or_else(PoisonError::into_inner).remove(&session_id);
+                info!(
+                    "cafe-agent-runtime: cleared pipeline attachment for deleted session {}",
+                    session_id
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Publish initial config chunk + evaluator schemas into a session, then spawn
+/// a session_loop task to watch for trigger chunks and execute the pipeline.
+async fn attach_to_session(
+    socket_path: &str,
+    session_id: &str,
+    agent_id: &str,
+    pipeline_info: &AgentPipelineInfo,
+    schema_registry: &SchemaRegistry,
+    client: BusClient,
+    attached: Arc<Mutex<HashSet<String>>>,
+) {
+    let sid = session_id.to_string();
+    let sp = socket_path.to_string();
+    let agent_id2 = agent_id.to_string();
+
+    // Register the session as attached. If a pipeline is already running for it
+    // (e.g. startup re-attach racing the SessionCreated replay from subscribe_all),
+    // skip to avoid duplicate session_loop tasks and duplicated RPC dispatches.
+    {
+        let mut set = attached.lock().unwrap_or_else(PoisonError::into_inner);
+        if !set.insert(sid.clone()) {
+            info!(
+                "cafe-agent-runtime: skipping duplicate pipeline for session {} (agent {})",
+                sid, agent_id
+            );
+            return;
+        }
+    }
+
+    // Publish the initial config chunk so resolve_session_config
+    // picks up TTS/LLM settings for user-created sessions.
+    if pipeline_info.initial_chunk_type == "null" && !pipeline_info.initial_chunk_annotations.is_empty() {
+        let annotations = pipeline_info.initial_chunk_annotations.clone();
+        let client = client.clone();
+        let sid2 = sid.clone();
         tokio::spawn(async move {
-            session_loop::run_session_loop(sid.clone(), sp, executor).await;
+            let mut chunk = cafe_sdk::Chunk::new_null(
+                &format!("com.nominal.cafe-agent-runtime/{}", agent_id2),
+            );
+            for (k, v) in annotations {
+                chunk = chunk.with_annotation(k, v);
+            }
+            if let Err(e) = client.publish(&sid2, chunk).await {
+                warn!(
+                    "cafe-agent-runtime: failed to publish initial chunk for session {}: {}",
+                    sid2, e
+                );
+            }
         });
     }
+
+    // Publish schema chunks for each evaluator used by this agent
+    {
+        let sreg = schema_registry.clone();
+        let client = client.clone();
+        let sid2 = sid.clone();
+        let steps = pipeline_info.steps.clone();
+        tokio::spawn(async move {
+            for step in &steps {
+                // Only publish schemas for RPC evaluators (not built-in)
+                let is_builtin = matches!(
+                    step.step_type.as_str(),
+                    "role-annotator" | "trust-filter" | "tool-detector" | "tool-executor" | "mcp"
+                );
+                if is_builtin {
+                    continue;
+                }
+                if let Some(schema) = sreg.get(&step.step_type).await {
+                    let chunk = cafe_sdk::Chunk::new_null("com.nominal.cafe-agent-runtime")
+                        .with_annotation(cafe_sdk::keys::CAFE_SCHEMA_EVALUATOR, &schema);
+                    if let Err(e) = client.publish(&sid2, chunk).await {
+                        warn!(
+                            "cafe-agent-runtime: failed to publish schema for '{}': {}",
+                            schema.name, e
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    let executor = Arc::new(PipelineExecutor::new(
+        pipeline_info.steps.clone(),
+        Duration::from_secs(pipeline_info.rpc_timeout_secs),
+        pipeline_info.max_pipeline_depth,
+    ));
+    tokio::spawn(async move {
+        session_loop::run_session_loop(sid.clone(), sp, executor).await;
+    });
 }
 
 async fn run_until_shutdown(
