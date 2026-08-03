@@ -25,6 +25,21 @@ pub trait LlmBackend: Send + Sync {
         params: &LlmParams,
     ) -> Result<BoxStream<'static, Result<String>>>;
 
+    /// Non-streaming convenience: collect full response text from `complete`.
+    async fn complete_to_string(
+        &self,
+        messages: Vec<LlmMessage>,
+        params: &LlmParams,
+    ) -> Result<String> {
+        use futures_util::StreamExt;
+        let mut stream = self.complete(messages, params).await?;
+        let mut text = String::new();
+        while let Some(chunk) = stream.next().await {
+            text.push_str(&chunk?);
+        }
+        Ok(text)
+    }
+
     /// List available models from the backend.
     async fn list_models(&self) -> Result<Vec<String>>;
 }

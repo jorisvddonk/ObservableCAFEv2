@@ -150,6 +150,67 @@ pub async fn run_session(
                             abort_tx.subscribe(),
                         )
                         .await;
+                    } else if rpc.method == "llm.prompt" {
+                        let system = rpc.params["system_prompt"]
+                            .as_str()
+                            .unwrap_or("");
+                        let prompt = rpc
+                            .params["prompt"]
+                            .as_str()
+                            .unwrap_or("");
+                        let model_name = rpc
+                            .params["model"]
+                            .as_str()
+                            .unwrap_or(&default_model);
+                        let temperature = rpc
+                            .params["temperature"]
+                            .as_f64()
+                            .map(|f| f as f32);
+
+                        let messages = vec![
+                            LlmMessage {
+                                role: "system".into(),
+                                content: system.to_string(),
+                            },
+                            LlmMessage {
+                                role: "user".into(),
+                                content: prompt.to_string(),
+                            },
+                        ];
+
+                        let params = LlmParams {
+                            model: model_name.to_string(),
+                            temperature,
+                            max_tokens: None,
+                        };
+
+                        info!(
+                            "cafe-llm: handling llm.prompt call_id={} session={}",
+                            rpc.id, session_id
+                        );
+
+                        let response =
+                            match backend.complete_to_string(messages, &params).await {
+                                Ok(text) => JsonRpcResponse::ok(
+                                    &rpc.id,
+                                    serde_json::json!({"text": text}),
+                                ),
+                                Err(e) => {
+                                    error!("cafe-llm: llm.prompt error: {}", e);
+                                    JsonRpcResponse::err(
+                                        &rpc.id,
+                                        -1,
+                                        &e.to_string(),
+                                    )
+                                }
+                            };
+
+                        let resp_chunk =
+                            Chunk::new_null("com.nominal.cafe-llm")
+                                .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
+                                .as_transient()
+                                .with_retain(60);
+                        let _ = sub.publish(resp_chunk).await;
                     }
                 }
             }
