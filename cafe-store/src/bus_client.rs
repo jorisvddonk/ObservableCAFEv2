@@ -50,7 +50,7 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
                 }
             }
             ServerMessage::Chunk { session_id, chunk } => {
-                let _ = db.upsert_session(&session_id, "unknown", false).await;
+                let _ = db.ensure_session(&session_id).await;
                 if let Err(e) = db.insert_chunk(&session_id, &chunk).await {
                     error!(
                         "cafe-store: failed to insert chunk {} for session {}: {}",
@@ -61,10 +61,8 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
             ServerMessage::SessionTagsUpdated { session_id, tags } => {
                 // Update tags in DB. agent_id/is_background are unknown here;
                 // upsert_session_with_tags handles the ON CONFLICT update.
-                if let Err(e) = db
-                    .upsert_session_with_tags(&session_id, "unknown", false, &tags)
-                    .await
-                {
+                let _ = db.ensure_session(&session_id).await;
+                if let Err(e) = db.set_session_tags(&session_id, &tags).await {
                     error!("cafe-store: failed to update tags for session {}: {}", session_id, e);
                 }
             }

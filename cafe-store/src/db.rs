@@ -68,6 +68,36 @@ impl Db {
         Ok(())
     }
 
+    /// Ensure a session row exists without overwriting existing agent_id.
+    pub async fn ensure_session(&self, session_id: &str) -> Result<()> {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT OR IGNORE INTO sessions (id, agent_id, is_background, tags, ui_mode, created_at, updated_at)
+             VALUES (?, 'unknown', 0, '[]', 'chat', ?, ?)",
+        )
+        .bind(session_id)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update tags for a session without touching agent_id or is_background.
+    pub async fn set_session_tags(&self, session_id: &str, tags: &[String]) -> Result<()> {
+        let now = now_ms();
+        let tags_json = serde_json::to_string(tags)?;
+        sqlx::query(
+            "UPDATE sessions SET tags = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&tags_json)
+        .bind(now)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn upsert_session(
         &self,
         session_id: &str,
