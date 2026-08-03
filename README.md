@@ -139,10 +139,13 @@ graph TD
 
 ## Documentation
 
-- [`docs/architecture.md`](docs/architecture.md) — Full architecture design
-- [`docs/cafe-annotations.md`](docs/cafe-annotations.md) — `cafe.*` annotation keys interpreted by bus and platform services
-- [`docs/adr-*.md`](docs/) — Architecture Decision Records (109+ ADRs covering bus, chunks, sessions, binary streaming, MCP, etc.)
-- [`docs/feature-matrix.md`](docs/feature-matrix.md) — Feature completeness tracking
+Documentation is organized using the [Diataxis](https://diataxis.fr/) framework —
+**[`docs/index.md`](docs/index.md)** is the hub.
+
+- **Tutorials** — `docs/tutorials/` — guided lessons: getting started, your first agent, a tool-calling agent
+- **How-to guides** — `docs/how-to/` — recipes: run the stack, use the CLI, connect via MCP, work with binary assets, set up the knowledge base, write E2E tests, connect over iroh, add a service
+- **Reference** — `docs/reference/` + `docs/spec-*.md` — data model, bus protocol, HTTP API, annotation keys, agent config
+- **Explanation** — `docs/explanation/` + `docs/architecture.md`, `docs/adr-*.md` — architecture design and Architecture Decision Records (100+ ADRs covering bus, chunks, sessions, binary streaming, MCP, etc.)
 
 ## CLI
 
