@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
-import { listSessions, createSession, deleteSession, getHistory } from 'cafe-web-sdk';
+import { listSessions, createSession, deleteSession, getHistory, isAuthError } from 'cafe-web-sdk';
 import type { Chunk } from 'cafe-web-sdk';
 
 function applyMutations(chunks: Chunk[]): Chunk[] {
@@ -38,6 +38,7 @@ export function useSessions() {
       const sessions = await listSessions();
       store.setSessions(sessions);
     } catch (err) {
+      if (isAuthError(err)) throw err;
       console.error('Failed to load sessions:', err);
     }
   }, []);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getToken } from 'cafe-web-sdk';
+import { getToken, clearToken, isAuthError } from 'cafe-web-sdk';
 import { useSessionStore } from './store/sessions';
 import { useSessions } from './hooks/useSessions';
 import { Sidebar } from './components/Sidebar';
@@ -20,6 +20,7 @@ function useIsMobile() {
 
 export function App() {
   const [hasToken, setHasToken] = useState(() => !!getToken());
+  const [authError, setAuthError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { refresh } = useSessions();
   const { chunkViewerOpen, toggleChunkViewer, activeSessionId, showAllChunks } = useSessionStore();
@@ -30,8 +31,20 @@ export function App() {
     if (!hasToken) return;
     refresh().then(() => {
       console.log('[App] refresh complete, sessions=', useSessionStore.getState().sessions.length);
+    }).catch((err) => {
+      if (isAuthError(err)) {
+        console.error('[App] auth failed:', err);
+        setAuthError(true);
+      }
     });
   }, [hasToken]);
+
+  const handleLogout = () => {
+    clearToken();
+    useSessionStore.getState().reset();
+    setAuthError(false);
+    setHasToken(false);
+  };
 
   // Sync chunk viewer and raw state to URL hash
   useEffect(() => {
@@ -49,6 +62,57 @@ export function App() {
 
   if (!hasToken) {
     return <TokenSetup onDone={() => setHasToken(true)} />;
+  }
+
+  if (authError) {
+    return (
+      <div
+        style={{
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#1a1a2e',
+        }}
+      >
+        <div
+          style={{
+            background: '#16213e',
+            border: '1px solid #2a2a4a',
+            borderRadius: 12,
+            padding: 32,
+            width: 380,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            textAlign: 'center',
+          }}
+        >
+          <h1 style={{ color: '#ff6b6b', fontSize: 18, fontWeight: 700 }}>
+            Authentication failed
+          </h1>
+          <p style={{ color: '#888', fontSize: 13 }}>
+            Your token was rejected by the cafe server. It may be wrong or
+            expired.
+          </p>
+          <button
+            onClick={handleLogout}
+            style={{
+              background: '#4fc3f7',
+              color: '#1a1a2e',
+              border: 'none',
+              borderRadius: 6,
+              padding: '10px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            Log out
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

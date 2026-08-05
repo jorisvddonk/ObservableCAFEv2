@@ -1,5 +1,7 @@
 export * from './types.js';
-export { configure, apiFetch, getBaseUrl, getToken, setToken } from './client.js';
+export {
+  configure, apiFetch, getBaseUrl, getToken, setToken, clearToken, ApiError, isAuthError,
+} from './client.js';
 export {
   listSessions, listAgents, createSession, deleteSession, getHistory, getBinaryUrl, publishChunk,
 } from './sessions.js';

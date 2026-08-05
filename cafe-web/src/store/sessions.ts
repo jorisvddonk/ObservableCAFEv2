@@ -48,6 +48,7 @@ interface SessionStore {
   toggleShowAllChunks: () => void;
   setShowAllChunks: (v: boolean) => void;
   setSelectedChunkId: (id: string | null) => void;
+  reset: () => void;
 }
 
 export const useSessionStore = create<SessionStore>((set) => ({
@@ -188,5 +189,18 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   setSelectedChunkId: (id) => {
     set({ selectedChunkId: id });
+  },
+  reset: () => {
+    set({
+      sessions: [],
+      activeSessionId: null,
+      messages: [],
+      allChunks: [],
+      streaming: false,
+      streamingText: '',
+      chunkViewerOpen: false,
+      showAllChunks: false,
+      selectedChunkId: null,
+    });
   },
 }));

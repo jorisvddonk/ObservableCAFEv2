@@ -42,7 +42,7 @@ export function Sidebar({ onSelectSession }: { onSelectSession?: () => void }) {
     if (agents.length <= 1) {
       const agentId = agents[0]?.id ?? 'default';
       setCreating(true);
-      newSession(agentId).finally(() => setCreating(false));
+      newSession(agentId).catch(() => {/* auth failure surfaced elsewhere */}).finally(() => setCreating(false));
     } else {
       setPickerOpen((v) => !v);
     }
@@ -51,7 +51,7 @@ export function Sidebar({ onSelectSession }: { onSelectSession?: () => void }) {
   const handlePick = (agentId: string) => {
     setPickerOpen(false);
     setCreating(true);
-    newSession(agentId).finally(() => setCreating(false));
+    newSession(agentId).catch(() => {/* auth failure surfaced elsewhere */}).finally(() => setCreating(false));
   };
 
   return (
