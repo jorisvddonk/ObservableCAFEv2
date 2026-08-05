@@ -112,7 +112,8 @@ export function Sidebar({ onSelectSession }: { onSelectSession?: () => void }) {
             margin: '0 12px 6px',
             border: '1px solid #2a2a4a',
             borderRadius: 6,
-            overflow: 'hidden',
+            overflowY: 'auto',
+            maxHeight: 260,
             background: '#0d1b33',
           }}
         >
