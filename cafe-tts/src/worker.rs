@@ -177,6 +177,11 @@ async fn run_session_handler(
             ),
             Err(e) => {
                 error!("cafe-tts: TTS error for call {}: {}", call_id, e);
+                let err_chunk = Chunk::new_null("com.nominal.cafe-tts")
+                    .with_annotation(keys::ERROR_MESSAGE, e.to_string())
+                    .with_annotation("error.source", "tts")
+                    .with_annotation(keys::TTS_CALL_ID, &call_id);
+                let _ = sub.publish(err_chunk).await;
                 JsonRpcResponse::err(&call_id, rpc_errors::UPSTREAM_ERROR, e.to_string())
             }
         };
@@ -212,6 +217,7 @@ async fn handle_tts_request(
     let gen_chunk = Chunk::new_null("com.nominal.cafe-tts")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         .with_annotation("chat.audio_streaming", true)
+        .with_annotation(keys::TTS_CALL_ID, request.id.as_str())
         .as_transient()
         .with_retain(30);
     sub.publish(gen_chunk).await?;
@@ -231,7 +237,8 @@ async fn handle_tts_request(
 
     let done_chunk = Chunk::new_null("com.nominal.cafe-tts")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
-        .with_annotation("chat.audio_complete", true);
+        .with_annotation("chat.audio_complete", true)
+        .with_annotation(keys::TTS_CALL_ID, request.id.as_str());
     sub.publish(done_chunk).await?;
 
     info!(

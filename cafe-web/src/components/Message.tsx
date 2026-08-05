@@ -1,5 +1,11 @@
 import { useSessionStore } from '../store/sessions';
-import { getBinaryUrl, asBinaryRef, chunkMimeType, isMediaChunk } from 'cafe-web-sdk';
+import {
+  getBinaryUrl,
+  asBinaryRef,
+  chunkMimeType,
+  isMediaChunk,
+  ERROR_MESSAGE,
+} from 'cafe-web-sdk';
 import type { Chunk } from 'cafe-web-sdk';
 
 interface Props {
@@ -211,8 +217,20 @@ function TrustPrompt({ chunk }: { chunk: Chunk }) {
 function SystemEvent({ chunk }: { chunk: Chunk }) {
   let label = 'system';
   let detail = chunk.id;
+  let tone: 'muted' | 'speaking' | 'error' = 'muted';
 
-  if (chunk.annotations['jsonrpc.request']) {
+  if (chunk.annotations[ERROR_MESSAGE]) {
+    label = 'error';
+    detail = String(chunk.annotations[ERROR_MESSAGE]);
+    tone = 'error';
+  } else if (chunk.annotations['chat.audio_streaming']) {
+    label = 'speaking';
+    detail = '';
+    tone = 'speaking';
+  } else if (chunk.annotations['chat.audio_complete']) {
+    label = 'done';
+    detail = '';
+  } else if (chunk.annotations['jsonrpc.request']) {
     const r = chunk.annotations['jsonrpc.request'] as { method?: string };
     label = 'RPC request';
     detail = r.method ?? chunk.id;
@@ -230,6 +248,8 @@ function SystemEvent({ chunk }: { chunk: Chunk }) {
   }
 
   const producer = chunk.producer.replace('com.nominal.', '');
+  const isError = tone === 'error';
+  const isSpeaking = tone === 'speaking';
 
   return (
     <div
@@ -239,15 +259,21 @@ function SystemEvent({ chunk }: { chunk: Chunk }) {
         gap: 6,
         padding: '4px 12px',
         marginBottom: 4,
-        fontSize: 11,
-        fontFamily: 'monospace',
-        color: '#555',
-        borderLeft: '2px solid #333',
+        fontSize: isSpeaking ? 13 : 11,
+        fontFamily: isSpeaking ? undefined : 'monospace',
+        color: isError ? '#ff8080' : isSpeaking ? '#4fc3f7' : '#555',
+        borderLeft: `2px solid ${isError ? '#c62828' : isSpeaking ? '#4fc3f7' : '#333'}`,
       }}
     >
-      <span style={{ color: '#888', fontWeight: 600 }}>{label}</span>
-      <span style={{ color: '#666' }}>{producer}</span>
+      {isSpeaking && <span className="tts-pulse" />}
+      <span style={{ color: isError ? '#ff6b6b' : '#888', fontWeight: 600 }}>{label}</span>
+      <span style={{ color: isSpeaking ? '#4fc3f7' : '#666' }}>{producer}</span>
       <span>{detail}</span>
+      {isSpeaking && (
+        <style>{`@keyframes ttsPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+.tts-pulse { display:inline-block; width:8px; height:8px; border-radius:50%;
+  background:#4fc3f7; animation: ttsPulse 1s ease-in-out infinite; }`}</style>
+      )}
     </div>
   );
 }
