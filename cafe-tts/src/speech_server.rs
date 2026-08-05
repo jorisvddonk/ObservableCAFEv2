@@ -1,7 +1,10 @@
+use crate::config::TtsBackend;
 use crate::voicebox::VoiceboxClient;
 use anyhow::Context;
+use tracing::warn;
 
 /// HTTP client for speech-server's POST /speak endpoint (routed through proxy).
+#[derive(Clone)]
 pub struct SpeechServerClient {
     pub base_url: String,
     http: reqwest::Client,
@@ -68,23 +71,76 @@ impl SpeechServerClient {
     }
 }
 
-/// Unified client enum — worker code dispatches without caring which backend.
-pub enum TtsClient {
-    Voicebox(VoiceboxClient),
-    SpeechServer(SpeechServerClient),
+/// Owns both TTS backends and dispatches per request.
+///
+/// The backend is selected per session from `config.tts.backend`
+/// (with an optional `config.tts.endpoint` URL override), falling back to
+/// the process-level default when a session does not specify one.
+pub struct TtsService {
+    voicebox: VoiceboxClient,
+    speech_server: SpeechServerClient,
+    default_backend: TtsBackend,
 }
 
-impl TtsClient {
+impl TtsService {
+    pub fn new(
+        voicebox: VoiceboxClient,
+        speech_server: SpeechServerClient,
+        default_backend: TtsBackend,
+    ) -> Self {
+        Self {
+            voicebox,
+            speech_server,
+            default_backend,
+        }
+    }
+
+    pub fn default_backend(&self) -> TtsBackend {
+        self.default_backend
+    }
+
     pub async fn synthesize(
         &self,
+        backend: Option<&str>,
+        endpoint: Option<&str>,
         text: &str,
         profile: &str,
         engine: Option<&str>,
         language: Option<&str>,
     ) -> anyhow::Result<(Vec<u8>, String)> {
-        match self {
-            TtsClient::Voicebox(c) => c.synthesize(text, profile, engine).await,
-            TtsClient::SpeechServer(c) => c.synthesize(text, engine, language).await,
+        let backend = match backend {
+            Some(raw) if !raw.trim().is_empty() => match TtsBackend::parse(raw) {
+                Some(b) => b,
+                None => {
+                    warn!(
+                        "cafe-tts: unknown backend {:?}, using default {:?}",
+                        raw, self.default_backend
+                    );
+                    self.default_backend
+                }
+            },
+            _ => self.default_backend,
+        };
+
+        match backend {
+            TtsBackend::Voicebox => {
+                let mut client = self.voicebox.clone();
+                if let Some(e) = endpoint {
+                    if !e.trim().is_empty() {
+                        client.base_url = e.trim().to_string();
+                    }
+                }
+                client.synthesize(text, profile, engine).await
+            }
+            TtsBackend::SpeechServer => {
+                let mut client = self.speech_server.clone();
+                if let Some(e) = endpoint {
+                    if !e.trim().is_empty() {
+                        client.base_url = e.trim().to_string();
+                    }
+                }
+                client.synthesize(text, engine, language).await
+            }
         }
     }
 }

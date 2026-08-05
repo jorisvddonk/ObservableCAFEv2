@@ -13,6 +13,7 @@ struct Profile {
 // ── Client ────────────────────────────────────────────────────────────────────
 
 /// HTTP client for the ObservableCAFE Voicebox API.
+#[derive(Clone)]
 pub struct VoiceboxClient {
     /// Base URL, e.g. "http://127.0.0.1:17493"
     pub base_url: String,

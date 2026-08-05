@@ -277,9 +277,11 @@ fn build_rpc_params(namespace: &str, ctx: &PipelineContext) -> serde_json::Value
             "session_id": ctx.session_id,
         }),
         "tts" => serde_json::json!({
-            "text":    ctx.assembled_llm_text.as_deref().unwrap_or(""),
-            "profile": ctx.config.tts_profile,
-            "engine":  ctx.config.tts_engine,
+            "text":     ctx.assembled_llm_text.as_deref().unwrap_or(""),
+            "profile":  ctx.config.tts_profile,
+            "engine":   ctx.config.tts_engine,
+            "backend":  ctx.config.tts_backend,
+            "endpoint": ctx.config.tts_endpoint,
         }),
         "stt" => {
             // Scan session history for the most recent binary_ref chunk with chat.role=user

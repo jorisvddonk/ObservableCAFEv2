@@ -29,6 +29,7 @@ pub mod keys {
 
     pub const CONFIG_TTS_PROFILE: &str = "config.tts.profile";
     pub const CONFIG_TTS_ENGINE: &str = "config.tts.engine";
+    pub const CONFIG_TTS_BACKEND: &str = "config.tts.backend";
     pub const CONFIG_TTS_ENDPOINT: &str = "config.tts.endpoint";
 
     pub const CONFIG_COMFY_WORKFLOW_PATH: &str = "config.comfy.workflow_path";

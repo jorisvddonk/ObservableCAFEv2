@@ -1,4 +1,4 @@
-use crate::speech_server::TtsClient;
+use crate::speech_server::TtsService;
 use cafe_sdk::bus::{BusClient, SessionSubscription};
 use cafe_sdk::{
     keys, roles, rpc_errors, Chunk, EvaluatorSchema, JsonRpcRequest, JsonRpcResponse, ServerMessage,
@@ -13,7 +13,7 @@ struct PendingUpload {
     mime_type: String,
 }
 
-pub async fn run_with_reconnect(socket_path: String, client: TtsClient) {
+pub async fn run_with_reconnect(socket_path: String, client: TtsService) {
     let client = Arc::new(client);
     cafe_sdk::bus::run_with_reconnect("cafe-tts", move || {
         let socket = socket_path.clone();
@@ -25,7 +25,7 @@ pub async fn run_with_reconnect(socket_path: String, client: TtsClient) {
 
 async fn subscribe_sessions(
     socket_path: &str,
-    client: Arc<TtsClient>,
+    client: Arc<TtsService>,
 ) -> anyhow::Result<()> {
     info!("cafe-tts: starting (subscribe-all mode) on {}", socket_path);
 
@@ -38,8 +38,9 @@ async fn subscribe_sessions(
             "type": "object",
             "properties": {
                 "config.tts.profile": { "type": "string", "description": "Voice profile name" },
-                "config.tts.engine": { "type": "string", "description": "TTS engine (voicebox, speech-server)" },
-                "config.tts.endpoint": { "type": "string", "description": "TTS service URL" }
+                "config.tts.engine": { "type": "string", "description": "TTS engine name used by the backend (e.g. qwen for voicebox)" },
+                "config.tts.backend": { "type": "string", "enum": ["voicebox", "speech-server"], "description": "TTS backend" },
+                "config.tts.endpoint": { "type": "string", "description": "TTS service URL override" }
             }
         }),
         rpc_params_schema: serde_json::json!({
@@ -48,7 +49,9 @@ async fn subscribe_sessions(
             "properties": {
                 "text": { "type": "string", "description": "Text to synthesize" },
                 "profile": { "type": "string", "description": "Voice profile name" },
-                "engine": { "type": "string", "description": "TTS engine" }
+                "engine": { "type": "string", "description": "TTS engine" },
+                "backend": { "type": "string", "enum": ["voicebox", "speech-server"], "description": "TTS backend" },
+                "endpoint": { "type": "string", "description": "TTS service URL override" }
             }
         }),
     };
@@ -76,7 +79,7 @@ async fn subscribe_sessions(
 async fn run_session_handler(
     session_id: String,
     client: BusClient,
-    tts: Arc<TtsClient>,
+    tts: Arc<TtsService>,
 ) -> anyhow::Result<()> {
     let mut sub = client.subscribe_session(&session_id).await?;
     let pending: Arc<Mutex<HashMap<String, PendingUpload>>> =
@@ -189,7 +192,7 @@ async fn run_session_handler(
 }
 
 async fn handle_tts_request(
-    tts: &TtsClient,
+    tts: &TtsService,
     request: &JsonRpcRequest,
     sub: &mut SessionSubscription,
     session_id: &str,
@@ -199,6 +202,8 @@ async fn handle_tts_request(
     let profile = request.params["profile"].as_str().unwrap_or("default");
     let engine = request.params["engine"].as_str();
     let language = request.params["language"].as_str();
+    let backend = request.params["backend"].as_str();
+    let endpoint = request.params["endpoint"].as_str();
 
     if text.is_empty() {
         anyhow::bail!("tts.invoke: text param is empty");
@@ -211,7 +216,9 @@ async fn handle_tts_request(
         .with_retain(30);
     sub.publish(gen_chunk).await?;
 
-    let (audio_bytes, mime_type) = tts.synthesize(text, profile, engine, language).await?;
+    let (audio_bytes, mime_type) = tts
+        .synthesize(backend, endpoint, text, profile, engine, language)
+        .await?;
 
     let chunk = Chunk::new_binary_ref(&mime_type, "com.nominal.cafe-tts")
         .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)

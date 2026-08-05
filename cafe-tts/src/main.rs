@@ -3,8 +3,8 @@ mod speech_server;
 mod voicebox;
 mod worker;
 
-use config::{Config, TtsBackend};
-use speech_server::{SpeechServerClient, TtsClient};
+use config::Config;
+use speech_server::{SpeechServerClient, TtsService};
 use std::time::Duration;
 use tracing::info;
 use voicebox::VoiceboxClient;
@@ -15,22 +15,19 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env();
 
-    let client = match config.backend {
-        TtsBackend::Voicebox => {
-            info!(
-                "cafe-tts: starting — bus={} backend=voicebox url={}",
-                config.socket_path, config.voicebox_url
-            );
-            TtsClient::Voicebox(VoiceboxClient::new(&config.voicebox_url))
-        }
-        TtsBackend::SpeechServer => {
-            info!(
-                "cafe-tts: starting — bus={} backend=speech-server url={}",
-                config.socket_path, config.speech_server_url
-            );
-            TtsClient::SpeechServer(SpeechServerClient::new(&config.speech_server_url))
-        }
-    };
+    info!(
+        "cafe-tts: starting — bus={} default_backend={} voicebox={} speech-server={}",
+        config.socket_path,
+        config.backend.as_str(),
+        config.voicebox_url,
+        config.speech_server_url
+    );
+
+    let client = TtsService::new(
+        VoiceboxClient::new(&config.voicebox_url),
+        SpeechServerClient::new(&config.speech_server_url),
+        config.backend,
+    );
 
     // Wait for the bus socket to appear before trying to connect
     wait_for_bus(&config.socket_path).await;

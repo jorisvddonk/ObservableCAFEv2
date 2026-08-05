@@ -44,6 +44,7 @@ pub struct SessionConfig {
     // TTS evaluator
     pub tts_profile: Option<String>,
     pub tts_engine: Option<String>,
+    pub tts_backend: Option<String>,
     pub tts_endpoint: Option<String>,
 
     // ComfyUI evaluator
@@ -136,6 +137,9 @@ fn apply_config_key(cfg: &mut SessionConfig, key: &str, value: &serde_json::Valu
         keys::CONFIG_TTS_ENGINE => {
             cfg.tts_engine = value.as_str().map(String::from);
         }
+        keys::CONFIG_TTS_BACKEND => {
+            cfg.tts_backend = value.as_str().map(String::from);
+        }
         keys::CONFIG_TTS_ENDPOINT => {
             cfg.tts_endpoint = value.as_str().map(String::from);
         }
@@ -204,6 +208,7 @@ mod tests {
         assert!(cfg.llm_backend.is_none());
         assert!(cfg.tts_profile.is_none());
         assert!(cfg.tts_engine.is_none());
+        assert!(cfg.tts_backend.is_none());
         assert!(cfg.tts_endpoint.is_none());
         assert!(cfg.comfy_workflow_path.is_none());
         assert!(cfg.comfy_workflow_input_node.is_none());
@@ -342,6 +347,7 @@ mod tests {
         assert!(cfg.llm_backend.is_none());
         assert!(cfg.tts_profile.is_none());
         assert!(cfg.tts_engine.is_none());
+        assert!(cfg.tts_backend.is_none());
         assert!(cfg.tts_endpoint.is_none());
         assert!(cfg.comfy_workflow_path.is_none());
         assert!(cfg.comfy_workflow_input_node.is_none());
@@ -441,6 +447,7 @@ mod tests {
             Just(keys::CONFIG_LLM_BACKEND.to_string()),
             Just(keys::CONFIG_TTS_PROFILE.to_string()),
             Just(keys::CONFIG_TTS_ENGINE.to_string()),
+            Just(keys::CONFIG_TTS_BACKEND.to_string()),
             Just(keys::CONFIG_TTS_ENDPOINT.to_string()),
             Just(keys::CONFIG_COMFY_WORKFLOW_PATH.to_string()),
             Just(keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE.to_string()),
@@ -467,6 +474,7 @@ mod tests {
                     keys::CONFIG_LLM_BACKEND => cfg.llm_backend,
                     keys::CONFIG_TTS_PROFILE => cfg.tts_profile,
                     keys::CONFIG_TTS_ENGINE => cfg.tts_engine,
+                    keys::CONFIG_TTS_BACKEND => cfg.tts_backend,
                     keys::CONFIG_TTS_ENDPOINT => cfg.tts_endpoint,
                     keys::CONFIG_COMFY_WORKFLOW_PATH => cfg.comfy_workflow_path,
                     keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE => cfg.comfy_workflow_input_node,
@@ -492,7 +500,8 @@ mod tests {
                 let known = [
                     keys::CONFIG_LLM_SYSTEM_PROMPT, keys::CONFIG_LLM_TEMPERATURE,
                     keys::CONFIG_LLM_MAX_TOKENS, keys::CONFIG_LLM_MODEL, keys::CONFIG_LLM_BACKEND,
-                    keys::CONFIG_TTS_PROFILE, keys::CONFIG_TTS_ENGINE, keys::CONFIG_TTS_ENDPOINT,
+                    keys::CONFIG_TTS_PROFILE, keys::CONFIG_TTS_ENGINE, keys::CONFIG_TTS_BACKEND,
+                    keys::CONFIG_TTS_ENDPOINT,
                     keys::CONFIG_COMFY_WORKFLOW_PATH, keys::CONFIG_COMFY_WORKFLOW_INPUT_NODE,
                     keys::CONFIG_COMFY_ENDPOINT, keys::CONFIG_SHEETBOT_URL, keys::CONFIG_SHEETBOT_API_KEY,
                     keys::CONFIG_STT_BASE_URL, keys::CONFIG_STT_RESPONSE_FORMAT, keys::CONFIG_RSS_URL,
