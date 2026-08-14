@@ -21,6 +21,7 @@ pub struct App {
     pub messages: Vec<Chunk>,
     pub input: String,
     pub streaming: bool,
+    pub current_model: Option<String>,
     pub scroll_offset: i32,
     pub mode: AppMode,
     pub status_msg: Option<String>,
@@ -45,6 +46,7 @@ impl App {
             messages: Vec::new(),
             input: String::new(),
             streaming: false,
+            current_model: None,
             scroll_offset: 0,
             mode: AppMode::Normal,
             status_msg: None,
@@ -90,6 +92,12 @@ impl App {
         self.messages.push(chunk);
         if self.scroll_offset == 0 {
             // Stay at bottom
+        }
+    }
+
+    pub fn sync_model(&mut self, chunk: &Chunk) {
+        if let Some(m) = chunk.get_annotation::<String>(cafe_sdk::keys::CHAT_MODEL) {
+            self.current_model = Some(m);
         }
     }
 

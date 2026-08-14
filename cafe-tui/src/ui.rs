@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     // Compute dynamic input height based on wrapped line count
@@ -57,9 +58,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or("—");
 
     let raw_indicator = if app.raw_mode { " [RAW]" } else { "" };
+    let model_indicator = app
+        .current_model
+        .as_deref()
+        .map(|m| format!(" [{}]", m))
+        .unwrap_or_default();
     let title = format!(
-        " ObservableCAFE  │  {}  [{}]{} ",
-        session_name, agent, raw_indicator
+        " ObservableCAFE  │  {}  [{}]{}{} ",
+        session_name, agent, model_indicator, raw_indicator
     );
     let status = app.status_msg.as_deref().unwrap_or("");
 
@@ -71,6 +77,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
+    let inner_w = (area.width.saturating_sub(2)).max(1) as usize;
 
     if app.raw_mode {
         for chunk in &app.messages {
@@ -89,7 +96,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
             ))));
             if let Some(ref content) = chunk.content {
                 for line in content.lines() {
-                    lines.push(Line::from(Span::raw(format!("  content: {}", line))));
+                    push_wrapped(&mut lines, format!("  content: {}", line), inner_w);
                 }
             }
             if !chunk.annotations.is_empty() {
@@ -98,7 +105,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                 sorted_keys.sort();
                 for k in sorted_keys {
                     if let Some(v) = chunk.annotations.get(k) {
-                        lines.push(Line::from(Span::raw(format!("    {}: {}", k, v))));
+                        push_wrapped(&mut lines, format!("    {}: {}", k, v), inner_w);
                     }
                 }
             }
@@ -133,14 +140,11 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                     )));
 
                     if let Some(ref err) = error_text {
-                        lines.push(Line::from(Span::styled(
-                            format!("  {}", err),
-                            Style::default().fg(Color::Red),
-                        )));
+                        push_wrapped(&mut lines, format!("  {}", err), inner_w);
                     }
 
                     for text_line in content.lines() {
-                        lines.push(Line::from(Span::raw(format!("  {}", text_line))));
+                        push_wrapped(&mut lines, format!("  {}", text_line), inner_w);
                     }
                     lines.push(Line::from(""));
                 }
@@ -154,10 +158,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                             Style::default().fg(Color::Red),
                         )));
                         if let Some(ref err) = error_text {
-                            lines.push(Line::from(Span::styled(
-                                format!("  {}", err),
-                                Style::default().fg(Color::Red),
-                            )));
+                            push_wrapped(&mut lines, format!("  {}", err), inner_w);
                         }
                     } else {
                         lines.push(Line::from(Span::styled(
@@ -178,10 +179,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                                 .add_modifier(Modifier::BOLD),
                         )));
                         if let Some(ref err) = error_text {
-                            lines.push(Line::from(Span::styled(
-                                format!("  {}", err),
-                                Style::default().fg(Color::Red),
-                            )));
+                            push_wrapped(&mut lines, format!("  {}", err), inner_w);
                         }
                         lines.push(Line::from(""));
                     } else if chunk
@@ -241,9 +239,100 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let messages = Paragraph::new(visible_lines)
-        .block(Block::default().borders(Borders::ALL).title(" Messages "))
-        .wrap(Wrap { trim: false });
+        .block(Block::default().borders(Borders::ALL).title(" Messages "));
     f.render_widget(messages, area);
+}
+
+fn push_wrapped(lines: &mut Vec<Line<'static>>, text: String, width: usize) {
+    if width == 0 {
+        return;
+    }
+    if text.is_empty() {
+        lines.push(Line::from(""));
+        return;
+    }
+    if UnicodeWidthStr::width(text.as_str()) <= width {
+        lines.push(Line::from(text));
+        return;
+    }
+
+    let words: Vec<&str> = text.split(' ').collect();
+    let mut current = String::new();
+    for word in words {
+        if word.is_empty() {
+            current.push(' ');
+            continue;
+        }
+        let sep = if current.is_empty() { 0 } else { 1 };
+        if !current.is_empty() && UnicodeWidthStr::width(current.as_str()) + sep + UnicodeWidthStr::width(word) <= width {
+            current.push(' ');
+            current.push_str(word);
+            continue;
+        }
+        if !current.is_empty() {
+            lines.push(Line::from(std::mem::take(&mut current)));
+        }
+        if UnicodeWidthStr::width(word) <= width {
+            current.push_str(word);
+        } else {
+            // Over-long word: hard-split by display width.
+            let mut chunk = String::new();
+            let mut chunk_w = 0;
+            for ch in word.chars() {
+                let w = UnicodeWidthStr::width(ch.to_string().as_str());
+                if chunk_w + w > width && !chunk.is_empty() {
+                    lines.push(Line::from(std::mem::take(&mut chunk)));
+                    chunk_w = 0;
+                }
+                chunk.push(ch);
+                chunk_w += w;
+            }
+            if !chunk.is_empty() {
+                current = chunk;
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(Line::from(current));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_short_line_unchanged() {
+        let mut lines = Vec::new();
+        push_wrapped(&mut lines, "  hello".into(), 20);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].to_string(), "  hello");
+    }
+
+    #[test]
+    fn wrap_long_line_splits_words() {
+        let mut lines = Vec::new();
+        push_wrapped(&mut lines, "one two three four".into(), 7);
+        let out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(out, vec!["one two", "three", "four"]);
+    }
+
+    #[test]
+    fn wrap_wide_char_widths() {
+        let mut lines = Vec::new();
+        // '你' is width 2; three of them exceed a width of 5.
+        push_wrapped(&mut lines, "你你你".into(), 5);
+        let out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(out, vec!["你你", "你"]);
+    }
+
+    #[test]
+    fn wrap_overlong_word_splits_chars() {
+        let mut lines = Vec::new();
+        push_wrapped(&mut lines, "abcdefgh".into(), 3);
+        let out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(out, vec!["abc", "def", "gh"]);
+    }
 }
 
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {

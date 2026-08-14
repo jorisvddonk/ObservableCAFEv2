@@ -121,6 +121,7 @@ async fn run_app(
 
         // Drain incoming chunks from background streaming task
         while let Ok(chunk) = chunk_rx.try_recv() {
+            app.sync_model(&chunk);
             // Handle tombstone: remove tombstoned transient chunks from messages
             if let Some(ids) = chunk.get_annotation::<Vec<String>>(cafe_sdk::keys::CAFE_FLOW_TOMBSTONE) {
                 app.messages.retain(|m| !ids.contains(&m.id));
@@ -357,6 +358,7 @@ async fn run_app(
                             "Raw mode: {}",
                             if app.raw_mode { "ON" } else { "OFF" }
                         ));
+                        load_history(&mut app, &client).await;
                     }
 
                     InputAction::RenameSession(name) => {
@@ -429,6 +431,9 @@ async fn load_history(app: &mut App, client: &HttpClient) {
     if let Some(id) = app.active_session_id().map(String::from) {
         match client.get_history(&id).await {
             Ok(chunks) => {
+                for c in &chunks {
+                    app.sync_model(c);
+                }
                 if app.raw_mode {
                     app.messages = chunks;
                 } else {
