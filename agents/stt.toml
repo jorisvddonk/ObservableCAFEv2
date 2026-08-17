@@ -1,5 +1,5 @@
 name = "stt"
-description = "Speech-to-text: transcribes audio using voicebox"
+description = "Speech-to-text: transcribes audio using speech-server"
 background = false
 allows_reload = true
 persists_state = false
