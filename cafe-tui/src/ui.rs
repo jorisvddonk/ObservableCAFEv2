@@ -40,6 +40,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == AppMode::AgentPicker {
         draw_agent_picker(f, app);
     }
+    if let AppMode::Confirm(action) = &app.mode {
+        draw_confirm(f, action);
+    }
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
@@ -473,6 +476,20 @@ fn draw_agent_picker(f: &mut Frame, app: &App) {
     let mut state = ListState::default();
     state.select(Some(app.agent_picker_idx));
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_confirm(f: &mut Frame, action: &crate::app::ConfirmAction) {
+    let area = centered_rect(60, 30, f.size());
+    let (text, title) = match action {
+        crate::app::ConfirmAction::DeleteSession => {
+            ("Delete this session?  (y/n)", " Confirm ")
+        }
+    };
+    let dialog = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(dialog, area);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

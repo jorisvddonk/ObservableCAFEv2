@@ -341,7 +341,7 @@ fn handle_confirm(
 ) -> InputAction {
     use crossterm::event::KeyCode;
     match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             app.mode = AppMode::Normal;
             app.clear_status();
             match action {
