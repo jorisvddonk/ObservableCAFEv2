@@ -143,6 +143,22 @@ processes:
     # Set TTS_BACKEND=voicebox to use legacy Voicebox API.
     disabled: false
 
+  cafe-epub:
+    command: ./target/release/cafe-epub
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+      cafe-store:
+        condition: process_healthy
+
   cafe-comfy:
     command: ./target/release/cafe-comfy
     environment:
@@ -161,6 +177,25 @@ processes:
         condition: process_healthy
     # Optional — only meaningful when a ComfyUI server is running.
     # Set disabled: true if you don't have ComfyUI available.
+    disabled: false
+
+  cafe-hue:
+    command: ./target/release/cafe-hue
+    environment:
+      - "RUST_BACKTRACE=1"
+      - "HUE_BRIDGE_URL="
+      - "HUE_API_KEY="
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+    # Optional — only meaningful when a Hue bridge is reachable.
+    # Set HUE_BRIDGE_URL and HUE_API_KEY to enable, or leave empty.
     disabled: false
 
   cafe-sheetbot:

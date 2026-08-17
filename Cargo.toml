@@ -25,6 +25,8 @@ members = [
     "cafe-rot13",
     "cafe-stt",
     "cafe-beacon",
+    "cafe-epub",
+    "cafe-hue",
 ]
 
 # Keep target/ small: skip debug symbols (the main source of bloat).
@@ -46,3 +48,5 @@ anyhow      = "1"
 reqwest     = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
 futures-util = "0.3"
 thiserror   = "1"
+epub        = "2.1"
+html2text   = "0.17"

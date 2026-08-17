@@ -1,0 +1,19 @@
+name = "epub-narrator"
+description = "Vocalizes EPUB books chapter by chapter via TTS — !load, !next, !chapter, !list"
+background = false
+allows_reload = true
+persists_state = true
+rpc_timeout_secs = 300
+
+[[steps]]
+id = "epub"
+type = "epub"
+trigger = "user_message"
+
+[initial_chunk]
+type = "null"
+
+[initial_chunk.annotations]
+"config.type"        = "runtime"
+"config.tts.backend" = "speech-server"
+"config.tts.enabled" = true

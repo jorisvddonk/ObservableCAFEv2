@@ -336,6 +336,119 @@ pub(crate) static TOOLS: LazyLock<Vec<ToolDef>> = LazyLock::new(|| vec![
         }),
         rpc_method: Some("comfy.invoke"),
     },
+    // ── Hue ──
+    ToolDef {
+        name: "hue_register",
+        description: "Register a new application key with the Hue bridge. Press the link button on the bridge, then call again.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "bridge_ip": {"type": "string", "description": "Optional bridge IP (auto-discovered if omitted)"}
+            },
+            "required": []
+        }),
+        rpc_method: Some("hue.register"),
+    },
+    ToolDef {
+        name: "hue_list_lights",
+        description: "List all Hue lights with their current state",
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+        rpc_method: Some("hue.list_lights"),
+    },
+    ToolDef {
+        name: "hue_get_light",
+        description: "Get the current state of a single Hue light",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "light_id": {"type": "string", "description": "Light ID"}
+            },
+            "required": ["light_id"]
+        }),
+        rpc_method: Some("hue.get_light"),
+    },
+    ToolDef {
+        name: "hue_set_light",
+        description: "Set the state of a Hue light (on/off, brightness, color, color temperature)",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "light_id": {"type": "string", "description": "Light ID"},
+                "on": {"type": "boolean", "description": "Turn on/off"},
+                "brightness": {"type": "number", "description": "Brightness 0-100"},
+                "color_xy": {"type": "array", "items": {"type": "number"}, "description": "CIE xy color as [x, y]"},
+                "color_temp": {"type": "integer", "description": "Color temperature in mirek (153-500)"},
+                "transition_time": {"type": "integer", "description": "Transition time in ms"}
+            },
+            "required": ["light_id"]
+        }),
+        rpc_method: Some("hue.set_light"),
+    },
+    ToolDef {
+        name: "hue_list_groups",
+        description: "List all Hue grouped lights (rooms/zones)",
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+        rpc_method: Some("hue.list_groups"),
+    },
+    ToolDef {
+        name: "hue_get_group",
+        description: "Get the current state of a Hue grouped light (room/zone)",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID"}
+            },
+            "required": ["group_id"]
+        }),
+        rpc_method: Some("hue.get_group"),
+    },
+    ToolDef {
+        name: "hue_set_group",
+        description: "Set the state of a Hue grouped light (room/zone): on/off, brightness, color, color temperature",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID"},
+                "on": {"type": "boolean", "description": "Turn on/off"},
+                "brightness": {"type": "number", "description": "Brightness 0-100"},
+                "color_xy": {"type": "array", "items": {"type": "number"}, "description": "CIE xy color as [x, y]"},
+                "color_temp": {"type": "integer", "description": "Color temperature in mirek (153-500)"},
+                "transition_time": {"type": "integer", "description": "Transition time in ms"}
+            },
+            "required": ["group_id"]
+        }),
+        rpc_method: Some("hue.set_group"),
+    },
+    ToolDef {
+        name: "hue_list_scenes",
+        description: "List all Hue scenes",
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+        rpc_method: Some("hue.list_scenes"),
+    },
+    ToolDef {
+        name: "hue_activate_scene",
+        description: "Activate a Hue scene by scene ID",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "scene_id": {"type": "string", "description": "Scene ID"}
+            },
+            "required": ["scene_id"]
+        }),
+        rpc_method: Some("hue.activate_scene"),
+    },
 ]);
 
 /// Simple glob match for tool name filtering.

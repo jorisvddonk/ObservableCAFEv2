@@ -1,0 +1,21 @@
+[package]
+name = "cafe-epub"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-epub"
+path = "src/main.rs"
+
+[dependencies]
+cafe-sdk        = { path = "../cafe-sdk", features = ["bus-client"] }
+tokio           = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+tracing         = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow          = { workspace = true }
+reqwest         = { workspace = true }
+futures-util    = { workspace = true }
+epub            = { workspace = true }
+html2text       = { workspace = true }
