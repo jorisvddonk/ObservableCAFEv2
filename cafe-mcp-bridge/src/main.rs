@@ -185,6 +185,7 @@ async fn dispatch_meta(
         "cafe_meta_get_history" => meta_get_history(&client, args).await,
         "cafe_meta_publish_chunk" => meta_publish_chunk(&client, args).await,
         "cafe_meta_delete_session" => meta_delete_session(&client, args).await,
+        "cafe_meta_fork_session" => meta_fork_session(&client, args).await,
         "cafe_meta_list_agents" => meta_list_agents().await,
         "cafe_meta_list_models" => meta_list_models().await,
         _ => anyhow::bail!("unknown meta tool: {name}"),
@@ -248,6 +249,28 @@ async fn meta_delete_session(
         .ok_or_else(|| anyhow::anyhow!("missing session_id"))?;
     client.delete_session(session_id).await?;
     Ok(json!({"deleted": true}).to_string())
+}
+
+async fn meta_fork_session(
+    client: &BusClient,
+    args: &serde_json::Map<String, Value>,
+) -> Result<String> {
+    let parent_session_id = args["parent_session_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing parent_session_id"))?;
+    let new_session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let id = client
+        .fork_session(parent_session_id, &new_session_id, Default::default())
+        .await?;
+    Ok(json!({
+        "id": id,
+        "parent_id": parent_session_id,
+    })
+    .to_string())
 }
 
 async fn meta_list_agents() -> Result<String> {

@@ -420,6 +420,19 @@ pub(crate) static META_TOOLS: LazyLock<Vec<ToolDef>> = LazyLock::new(|| vec![
         rpc_method: None,
     },
     ToolDef {
+        name: "cafe_meta_fork_session",
+        description: "Create a new session copied verbatim from an existing session",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "parent_session_id": {"type": "string", "description": "Session ID to fork from"},
+                "session_id": {"type": "string", "description": "New session ID (omit for auto-generated)"}
+            },
+            "required": ["parent_session_id"]
+        }),
+        rpc_method: None,
+    },
+    ToolDef {
         name: "cafe_meta_list_agents",
         description: "List available agent configurations from agents/*.toml",
         input_schema: json!({ "type": "object", "properties": {}, "required": [] }),

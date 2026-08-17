@@ -129,6 +129,42 @@ def main():
         print("  cafe_meta_ping ✅", file=sys.stderr)
         bridge.close()
 
+        # ── Test 2b: fork_session meta tool ──
+        print("=== Test: cafe_meta_fork_session ===", file=sys.stderr)
+        r = subprocess.run(
+            [CLI, "--bus", bus_socket, "create-session", "--agent", "default"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0, r.stderr
+        parent_id = r.stdout.strip()
+        assert parent_id, "no parent session id"
+        print(f"  parent session={parent_id}", file=sys.stderr)
+
+        bridge = McpBridge(
+            [BRIDGE_BIN, "--bus", bus_socket, "--meta", "--tool", "cafe_meta_fork_session"],
+            env,
+        )
+        bridge.send("initialize")
+        bridge.notify("notifications/initialized")
+
+        resp = bridge.send("tools/list")
+        names = [t["name"] for t in resp["result"]["tools"]]
+        assert "cafe_meta_fork_session" in names, f"fork tool not listed: {names}"
+        print("  fork tool listed ✅", file=sys.stderr)
+
+        resp = bridge.send("tools/call", {
+            "name": "cafe_meta_fork_session",
+            "arguments": {"parent_session_id": parent_id},
+        })
+        assert not resp["result"].get("isError"), f"fork returned error: {resp}"
+        text = resp["result"]["content"][0]["text"]
+        print(f"  fork response: {text[:200]}", file=sys.stderr)
+        fork_id = json.loads(text)["id"]
+        assert fork_id and fork_id != parent_id, f"invalid fork id in: {text}"
+        assert json.loads(text)["parent_id"] == parent_id
+        print("  cafe_meta_fork_session ✅", file=sys.stderr)
+        bridge.close()
+
         # ── Test 3: kb_search via bus RPC ──
         print("=== Test: kb_search RPC ===", file=sys.stderr)
         store_db = os.path.join(tmpdir, "cafe.db")
