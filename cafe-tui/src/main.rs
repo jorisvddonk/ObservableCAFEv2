@@ -206,6 +206,30 @@ async fn run_app(
                         }
                     }
 
+                    InputAction::ForkSession => {
+                        if let Some(parent_id) = app.active_session_id().map(String::from) {
+                            match client.fork_session(&parent_id).await {
+                                Ok((id, _parent)) => {
+                                    if let Ok(sessions) = client.list_sessions().await {
+                                        app.sessions = sessions;
+                                        if let Some(idx) =
+                                            app.sessions.iter().position(|s| s.session_id == id)
+                                        {
+                                            app.active_session_idx = idx;
+                                            app.messages.clear();
+                                            load_history(&mut app, &client).await;
+                                            app.scroll_to_bottom();
+                                        }
+                                    }
+                                    app.set_status(format!("Forked session {} (from {})", id, parent_id));
+                                }
+                                Err(e) => {
+                                    app.set_status(format!("Failed to fork session: {}", e))
+                                }
+                            }
+                        }
+                    }
+
                     InputAction::DeleteSession => {
                         if let Some(id) = app.active_session_id().map(String::from) {
                             match client.delete_session(&id).await {

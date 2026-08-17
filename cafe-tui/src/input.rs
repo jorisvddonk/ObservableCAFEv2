@@ -3,6 +3,7 @@ use crate::app::{App, AppMode, ConfirmAction};
 pub enum InputAction {
     SendMessage(String),
     CreateSession,
+    ForkSession,
     DeleteSession,
     RenameSession(String),
     SetTags(String),
@@ -72,7 +73,7 @@ fn handle_normal(app: &mut App, key: crossterm::event::KeyEvent) -> InputAction 
                 // Tab-complete slash command name (before any space)
                 if !partial.contains(' ') {
                     let commands = [
-                        "sessions", "new", "delete", "rename",
+                        "sessions", "new", "fork", "delete", "rename",
                         "system", "model", "agent", "tag", "clear", "help", "quit",
                     ];
                     let matches: Vec<&&str> = commands.iter().filter(|c| c.starts_with(partial)).collect();
@@ -138,6 +139,14 @@ fn parse_slash_command(app: &mut App, cmd: &str) -> InputAction {
             app.apply_agent_filter();
             app.mode = AppMode::AgentPicker;
             InputAction::None
+        }
+        "fork" | "f" => {
+            if app.active_session_id().is_none() {
+                app.set_status("No active session to fork.");
+                InputAction::None
+            } else {
+                InputAction::ForkSession
+            }
         }
         "delete" | "d" => {
             app.mode = AppMode::Confirm(ConfirmAction::DeleteSession);

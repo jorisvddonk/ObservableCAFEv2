@@ -23,6 +23,12 @@ export async function deleteSession(id: string): Promise<void> {
   await apiFetch(`/api/sessions/${id}`, { method: 'DELETE' });
 }
 
+export async function forkSession(
+  id: string,
+): Promise<{ id: string; parent_id: string }> {
+  return apiFetch(`/api/sessions/${id}/fork`, { method: 'POST' });
+}
+
 export async function getHistory(
   id: string,
 ): Promise<{ session_id: string; chunks: Chunk[] }> {

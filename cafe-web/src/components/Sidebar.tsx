@@ -207,7 +207,14 @@ function SessionItem({
         fontSize: 13,
       }}
     >
-      <div style={{ fontWeight: active ? 600 : 400 }}>{name}</div>
+      <div style={{ fontWeight: active ? 600 : 400 }}>
+        {name}
+        {session.parent_id ? (
+          <span style={{ color: '#4fc3f7', marginLeft: 6, fontSize: 11 }} title="Forked session">
+            ⑂
+          </span>
+        ) : null}
+      </div>
       <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
         {session.agent_id} · {session.message_count} msgs
       </div>

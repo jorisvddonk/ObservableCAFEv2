@@ -27,8 +27,9 @@ function isChatMessage(chunk: Chunk): boolean {
 
 export function ChatArea() {
   const store = useSessionStore();
-  const { removeSession } = useSessions();
+  const { removeSession, duplicateSession } = useSessions();
   const [input, setInput] = useState('');
+  const [forking, setForking] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   // Track which chunk IDs are already in messages to avoid duplicates from the
   // persistent stream replaying history we already loaded.
@@ -189,6 +190,9 @@ export function ChatArea() {
         <span style={{ fontWeight: 600, color: '#4fc3f7', fontSize: 14 }}>
           {store.sessions.find((s) => s.session_id === store.activeSessionId)
             ?.display_name ?? store.activeSessionId}
+          {store.sessions.find((s) => s.session_id === store.activeSessionId)?.parent_id ? (
+            <span style={{ marginLeft: 6, fontSize: 12, color: '#8ab4f8' }}>⑂ fork</span>
+          ) : null}
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button
@@ -220,6 +224,33 @@ export function ChatArea() {
         >
           Delete
         </button>
+          <button
+            onClick={async () => {
+              if (!store.activeSessionId) return;
+              setForking(true);
+              try {
+                await duplicateSession(store.activeSessionId);
+              } catch (err) {
+                console.error('[ChatArea] fork error', err);
+              } finally {
+                setForking(false);
+              }
+            }}
+            disabled={forking}
+            title="Create a new session copied from this one"
+            style={{
+              background: 'transparent',
+              border: '1px solid #4fc3f7',
+              color: forking ? '#666' : '#4fc3f7',
+              borderRadius: 4,
+              padding: '2px 8px',
+              cursor: forking ? 'not-allowed' : 'pointer',
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {forking ? 'Forking…' : '⑂ Fork'}
+          </button>
         </div>
       </div>
 

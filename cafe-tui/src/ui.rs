@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -58,14 +58,19 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or("—");
 
     let raw_indicator = if app.raw_mode { " [RAW]" } else { "" };
+    let fork_indicator = app
+        .active_session()
+        .and_then(|s| s.parent_id.as_ref())
+        .map(|_| " [fork]")
+        .unwrap_or("");
     let model_indicator = app
         .current_model
         .as_deref()
         .map(|m| format!(" [{}]", m))
         .unwrap_or_default();
     let title = format!(
-        " ObservableCAFE  │  {}  [{}]{}{} ",
-        session_name, agent, model_indicator, raw_indicator
+        " ObservableCAFE  │  {}  [{}]{}{}{} ",
+        session_name, agent, model_indicator, fork_indicator, raw_indicator
     );
     let status = app.status_msg.as_deref().unwrap_or("");
 
@@ -127,7 +132,10 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
                     } else {
                         match role {
                             "user" => ("You", Color::Green),
-                            "assistant" => ("Assistant", Color::Blue),
+                            "assistant" => (
+                                app.agent_name.as_deref().unwrap_or("Assistant"),
+                                Color::Blue,
+                            ),
                             _ => ("System", Color::Yellow),
                         }
                     };
@@ -369,7 +377,8 @@ fn draw_session_picker(f: &mut Frame, app: &App) {
             } else {
                 format!(" [{}]", s.tags.join(", "))
             };
-            ListItem::new(format!("  {}  [{}{}]", name, s.agent_id, tags)).style(style)
+            let fork = if s.parent_id.is_some() { " ⑂" } else { "" };
+            ListItem::new(format!("  {}  [{}{}]{}", name, s.agent_id, tags, fork)).style(style)
         })
         .collect();
 
@@ -383,7 +392,9 @@ fn draw_session_picker(f: &mut Frame, app: &App) {
 
     // Clear background
     f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(list, area);
+    let mut state = ListState::default();
+    state.select(Some(app.active_session_idx));
+    f.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_model_picker(f: &mut Frame, app: &App) {
@@ -414,7 +425,9 @@ fn draw_model_picker(f: &mut Frame, app: &App) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(list, area);
+    let mut state = ListState::default();
+    state.select(Some(app.model_picker_idx));
+    f.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_agent_picker(f: &mut Frame, app: &App) {
@@ -457,7 +470,9 @@ fn draw_agent_picker(f: &mut Frame, app: &App) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(list, area);
+    let mut state = ListState::default();
+    state.select(Some(app.agent_picker_idx));
+    f.render_stateful_widget(list, area, &mut state);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

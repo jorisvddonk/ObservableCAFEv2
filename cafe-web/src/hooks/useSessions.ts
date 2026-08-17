@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
-import { listSessions, createSession, deleteSession, getHistory, isAuthError } from 'cafe-web-sdk';
+import { listSessions, createSession, deleteSession, forkSession, getHistory, isAuthError } from 'cafe-web-sdk';
 import type { Chunk } from 'cafe-web-sdk';
 
 function applyMutations(chunks: Chunk[]): Chunk[] {
@@ -77,6 +77,13 @@ export function useSessions() {
     return id;
   }, [refresh, switchSession]);
 
+  const duplicateSession = useCallback(async (id: string) => {
+    const { id: forkId } = await forkSession(id);
+    await refresh();
+    await switchSession(forkId);
+    return forkId;
+  }, [refresh, switchSession]);
+
   const removeSession = useCallback(
     async (id: string) => {
       await deleteSession(id);
@@ -110,5 +117,5 @@ export function useSessions() {
     }
   }, []);
 
-  return { refresh, switchSession, newSession, removeSession };
+  return { refresh, switchSession, newSession, duplicateSession, removeSession };
 }

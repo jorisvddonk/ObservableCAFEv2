@@ -26,6 +26,7 @@ export interface SessionInfo {
   ui_mode: string;
   message_count: number;
   created_at: number;
+  parent_id?: string | null;
 }
 
 export interface Quickie {

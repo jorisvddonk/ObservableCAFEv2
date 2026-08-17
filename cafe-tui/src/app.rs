@@ -22,6 +22,7 @@ pub struct App {
     pub input: String,
     pub streaming: bool,
     pub current_model: Option<String>,
+    pub agent_name: Option<String>,
     pub scroll_offset: i32,
     pub mode: AppMode,
     pub status_msg: Option<String>,
@@ -47,6 +48,7 @@ impl App {
             input: String::new(),
             streaming: false,
             current_model: None,
+            agent_name: None,
             scroll_offset: 0,
             mode: AppMode::Normal,
             status_msg: None,
@@ -98,6 +100,9 @@ impl App {
     pub fn sync_model(&mut self, chunk: &Chunk) {
         if let Some(m) = chunk.get_annotation::<String>(cafe_sdk::keys::CHAT_MODEL) {
             self.current_model = Some(m);
+        }
+        if let Some(l) = chunk.get_annotation::<String>(cafe_sdk::keys::CONFIG_AGENT_NAME) {
+            self.agent_name = Some(l);
         }
     }
 
