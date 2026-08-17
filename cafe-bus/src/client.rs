@@ -1,10 +1,11 @@
 use crate::registry::SessionRegistry;
-use crate::session::SessionState;
+use crate::session::{SessionState, SubscriberInfo};
 use anyhow::Result;
 use cafe_types::{
     keys, BusCodec, BusCodecError, Chunk, ClientMessage, JsonLineCodec,
     ServerMessage, SessionConfig, SubscribeFilter,
 };
+use cafe_types::envelope::EphemeralConfig;
 #[cfg(feature = "bincode-listener")]
 use cafe_types::BincodeLengthPrefixCodec;
 use std::collections::HashMap;
@@ -31,6 +32,24 @@ pub struct ConnectionMeta {
 
 /// Shared registry of connection metadata, keyed by connection ID.
 pub type ConnectionMetaRegistry = Arc<RwLock<HashMap<String, ConnectionMeta>>>;
+
+/// Whether a departing subscriber connection counted toward an ephemeral
+/// session's lifecycle. Only connections whose role matches the session's
+/// `count_role` (or any role when `count_role` is unset) drive deletion.
+/// Temp `get_history` connections (role=None) must not.
+fn departing_connection_was_counted(
+    removed: &Option<SubscriberInfo>,
+    ephemeral: &Option<EphemeralConfig>,
+) -> bool {
+    match (removed, ephemeral) {
+        (Some(info), Some(cfg)) => match &cfg.count_role {
+            Some(r) => info.role.as_deref() == Some(r.as_str()),
+            None => true,
+        },
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
 
 /// A framing reader that uses a `BusCodec` to extract messages from a byte stream.
 struct Frames<C: BusCodec, R: AsyncRead + Unpin> {
@@ -135,9 +154,12 @@ pub async fn handle_client<C: BusCodec, R: AsyncRead + Unpin + Send + 'static>(
 
     for (sid, _handle) in &subscriber_tasks {
         if let Some(session) = reg.get_mut(sid) {
-            session.remove_subscriber(&conn_id);
-            // If ephemeral and no counted subscribers remain, schedule deletion
-            if session.is_ephemeral() && session.counted_subscriber_count() == 0 {
+            let removed = session.remove_subscriber(&conn_id);
+            // Only schedule ephemeral deletion when the departing connection
+            // was a COUNTED subscriber; temp get_history connections must not
+            // drive ephemeral lifecycle.
+            let was_counted = departing_connection_was_counted(&removed, &session.ephemeral);
+            if session.is_ephemeral() && was_counted && session.counted_subscriber_count() == 0 {
                 let keepalive = session.ephemeral.as_ref().map(|c| Duration::from_secs(c.keepalive_secs));
                 reg.schedule_deletion(sid, keepalive, registry.clone());
             }
@@ -284,8 +306,13 @@ pub async fn handle_connection<R: AsyncRead + Unpin + Send + 'static>(
     let mut reg = registry.write().await;
     for (sid, _handle) in &subscriber_tasks {
         if let Some(session) = reg.get_mut(sid) {
-            session.remove_subscriber(&conn_id);
-            if session.is_ephemeral() && session.counted_subscriber_count() == 0 {
+            let removed = session.remove_subscriber(&conn_id);
+            // Only schedule ephemeral deletion when the departing connection
+            // was a COUNTED subscriber (role matched count_role). Temp
+            // get_history connections (role=None) subscribe and immediately
+            // close; they must not drive ephemeral lifecycle.
+            let was_counted = departing_connection_was_counted(&removed, &session.ephemeral);
+            if session.is_ephemeral() && was_counted && session.counted_subscriber_count() == 0 {
                 let keepalive = session.ephemeral.as_ref().map(|c| Duration::from_secs(c.keepalive_secs));
                 reg.schedule_deletion(sid, keepalive, registry.clone());
             }
@@ -1012,6 +1039,47 @@ mod tests {
         // Wrong annotation
         let wrong_ann = Chunk::new_text("hello", "test").with_annotation("key1", "wrong");
         assert!(!chunk_matches_filter(&wrong_ann, &f));
+    }
+
+    fn ephemeral(count_role: Option<&str>) -> Option<EphemeralConfig> {
+        Some(EphemeralConfig {
+            keepalive_secs: 0,
+            count_role: count_role.map(str::to_string),
+        })
+    }
+
+    fn removed_sub(role: Option<&str>) -> Option<SubscriberInfo> {
+        Some(SubscriberInfo {
+            conn_id: "c-x".into(),
+            role: role.map(str::to_string),
+        })
+    }
+
+    #[test]
+    fn departing_counted_no_count_role_counts_any_role() {
+        // No count_role filter: every subscriber counts for lifecycle.
+        assert!(departing_connection_was_counted(&removed_sub(None), &ephemeral(None)));
+        assert!(departing_connection_was_counted(&removed_sub(Some("mcp-rpc")), &ephemeral(None)));
+    }
+
+    #[test]
+    fn departing_counted_matching_role_counts() {
+        // count_role set: only matching-role departure counts.
+        let cfg = ephemeral(Some("mcp-rpc"));
+        assert!(departing_connection_was_counted(&removed_sub(Some("mcp-rpc")), &cfg));
+        assert!(!departing_connection_was_counted(&removed_sub(None), &cfg));
+        assert!(!departing_connection_was_counted(&removed_sub(Some("other")), &cfg));
+    }
+
+    #[test]
+    fn departing_not_registered_subscriber_never_counts() {
+        let none: Option<SubscriberInfo> = None;
+        assert!(!departing_connection_was_counted(&none, &ephemeral(Some("mcp-rpc"))));
+        assert!(!departing_connection_was_counted(&none, &ephemeral(None)));
+        // Non-ephemeral sessions: a departing subscriber still counts, but the
+        // caller guards with `is_ephemeral()`, so deletion never fires.
+        assert!(departing_connection_was_counted(&removed_sub(Some("mcp-rpc")), &None));
+        assert!(departing_connection_was_counted(&removed_sub(None), &None));
     }
 
     #[test]
