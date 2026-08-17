@@ -65,6 +65,19 @@ Response `201`:
 
 Response `204`.
 
+### Fork session
+`POST /api/sessions/:id/fork`
+
+Creates a new session whose history (and retained transient chunks) are copied verbatim
+from the session at `:id`, recording provenance. The original session is not modified.
+
+Response `201`:
+```json
+{ "id": "fork-abc", "parent_id": "abc123" }
+```
+
+Response `404` if the parent session does not exist.
+
 ### Get session history
 `GET /api/sessions/:id/history`
 

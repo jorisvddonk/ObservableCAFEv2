@@ -167,11 +167,22 @@ async fn run_session(
     let mut rx = client.subscribe(&session_id).await?;
     let mcp = McpClient::new();
 
+    // Gate dispatch on history replay completion (ADR-123).
+    let mut history_complete = false;
+
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
             _ => continue,
         };
+
+        if !history_complete {
+            continue;
+        }
 
         // Only handle tool.call chunks with provider:mcp
         let Some(tool_call) = chunk.as_tool_call() else { continue; };

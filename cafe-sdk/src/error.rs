@@ -33,3 +33,14 @@ pub enum SdkError {
     #[error("bus not ready after {retries} retries")]
     BusNotReady { retries: u32 },
 }
+
+impl SdkError {
+    /// The machine-readable bus error code, if any.
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            SdkError::BusError { code, .. } => code.as_deref(),
+            SdkError::SessionNotFound(_) => Some("SESSION_NOT_FOUND"),
+            _ => None,
+        }
+    }
+}

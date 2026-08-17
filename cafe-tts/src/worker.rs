@@ -86,11 +86,22 @@ async fn run_session_handler(
         Arc::new(Mutex::new(HashMap::new()));
     let http = reqwest::Client::new();
 
+    // Gate dispatch on history replay completion (ADR-123).
+    let mut history_complete = false;
+
     while let Some(msg) = sub.rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
             _ => continue,
         };
+
+        if !history_complete {
+            continue;
+        }
 
         if let Some(target_id) = chunk
             .annotations

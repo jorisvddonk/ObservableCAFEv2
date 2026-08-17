@@ -15,6 +15,9 @@ pub struct SessionInfo {
     pub ui_mode: String,
     pub message_count: usize,
     pub created_at: i64,
+    /// If this session is a fork, the ID of the parent session it was copied from.
+    #[serde(default)]
+    pub parent_id: Option<String>,
 }
 
 /// Agent definition loaded from a TOML file.

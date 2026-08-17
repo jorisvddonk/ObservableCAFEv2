@@ -81,6 +81,52 @@ pub async fn delete_session(
     }
 }
 
+#[derive(Serialize)]
+pub struct ForkSessionResponse {
+    pub id: String,
+    pub parent_id: String,
+}
+
+pub async fn fork_session(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    let new_id = Uuid::new_v4().to_string();
+    let parent_id = session_id.clone();
+
+    match state
+        .bus
+        .fork_session(&parent_id, &new_id, cafe_sdk::SessionConfig::default())
+        .await
+    {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(ForkSessionResponse {
+                id: new_id,
+                parent_id,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            let code = e.code().unwrap_or_default();
+            if code == "SESSION_NOT_FOUND" {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct SetSessionTagsRequest {
     pub tags: Vec<String>,

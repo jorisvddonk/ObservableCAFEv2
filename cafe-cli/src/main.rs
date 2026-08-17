@@ -30,6 +30,18 @@ fn parse_keyval(s: &str) -> Result<(String, String)> {
     Ok((key, val))
 }
 
+/// Like parse_keyval but the value is parsed as JSON, falling back to a plain
+/// string when it isn't valid JSON. Enables setting null/numbers/bools and
+/// nested values on annotations (e.g. `config.tts.engine=null`).
+fn parse_keyval_json(s: &str) -> Result<(String, serde_json::Value)> {
+    let mut parts = s.splitn(2, '=');
+    let key = parts.next().ok_or_else(|| anyhow::anyhow!("missing key"))?.to_string();
+    let val = parts.next().unwrap_or("").to_string();
+    let value = serde_json::from_str::<serde_json::Value>(&val)
+        .unwrap_or_else(|_| serde_json::Value::String(val));
+    Ok((key, value))
+}
+
 /// Manage the bus iroh peer-ID allowlist database.
 async fn run_allowlist(db_arg: &str, action: &AllowlistAction) -> Result<()> {
     use std::str::FromStr;
@@ -184,6 +196,11 @@ enum Command {
         /// Annotation in key=value format (repeat for multiple)
         #[arg(long = "annotation", value_parser = parse_keyval)]
         annotations: Vec<(String, String)>,
+        /// Annotation with a JSON value in key=value format (repeat for
+        /// multiple). Values are parsed as JSON (e.g. `engine=null`,
+        /// `count=3`, `"name"=..."`); non-JSON values become strings.
+        #[arg(long = "annotation-json", value_parser = parse_keyval_json)]
+        annotation_json: Vec<(String, serde_json::Value)>,
         #[arg(long)]
         transient: bool,
         /// Seconds to wait for mutations on the published chunk (uses long-lived connection)
@@ -215,6 +232,13 @@ enum Command {
         session_id: Option<String>,
         #[arg(long, default_value = "default")]
         agent: String,
+    },
+    /// Fork a session, copying its history verbatim; prints the new session ID
+    ForkSession {
+        /// Parent session to fork from
+        parent_session_id: String,
+        /// New session ID (omit for auto-generated)
+        session_id: Option<String>,
     },
     /// Delete a session
     DeleteSession {
@@ -314,6 +338,7 @@ async fn main() -> Result<()> {
             binary_ref,
             null,
             annotations,
+            annotation_json,
             transient,
             wait,
         } => {
@@ -323,12 +348,18 @@ async fn main() -> Result<()> {
                 for (k, v) in &annotations {
                     c = c.with_annotation(k.as_str(), v.as_str());
                 }
+                for (k, v) in &annotation_json {
+                    c = c.with_annotation(k.as_str(), v);
+                }
                 c
             } else if binary_ref {
                 let mime = mime.unwrap_or_else(|| "application/octet-stream".into());
                 let mut c = Chunk::new_binary_ref(mime, "cafe-cli");
                 for (k, v) in &annotations {
                     c = c.with_annotation(k.as_str(), v.as_str());
+                }
+                for (k, v) in &annotation_json {
+                    c = c.with_annotation(k.as_str(), v);
                 }
                 c
             } else if let Some(content) = text {
@@ -506,6 +537,25 @@ async fn main() -> Result<()> {
                 None => {
                     let sid = uuid::Uuid::new_v4().to_string();
                     client.create_session(&sid, &agent, Default::default()).await?;
+                    sid
+                }
+            };
+            println!("{}", id);
+        }
+
+        Command::ForkSession { parent_session_id, session_id } => {
+            let id = match session_id {
+                Some(sid) => {
+                    client
+                        .fork_session(&parent_session_id, &sid, Default::default())
+                        .await?;
+                    sid
+                }
+                None => {
+                    let sid = uuid::Uuid::new_v4().to_string();
+                    client
+                        .fork_session(&parent_session_id, &sid, Default::default())
+                        .await?;
                     sid
                 }
             };

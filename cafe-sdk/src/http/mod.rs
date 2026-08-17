@@ -79,6 +79,23 @@ impl HttpClient {
         Ok(())
     }
 
+    /// Fork a session: create a new session whose history is copied verbatim
+    /// from `session_id`. Returns the new session's ID and its parent ID.
+    pub async fn fork_session(&self, session_id: &str) -> Result<(String, String), SdkError> {
+        let resp = self
+            .client
+            .post(self.url(&format!("/api/sessions/{}/fork", session_id)))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<serde_json::Value>()
+            .await?;
+        let id = resp["id"].as_str().unwrap_or("").to_string();
+        let parent_id = resp["parent_id"].as_str().unwrap_or("").to_string();
+        Ok((id, parent_id))
+    }
+
     /// Get the full history of a session.
     pub async fn get_history(&self, session_id: &str) -> Result<Vec<Chunk>, SdkError> {
         let resp = self

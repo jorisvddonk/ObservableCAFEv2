@@ -56,11 +56,25 @@ async fn subscribe_all(socket_path: &str) -> anyhow::Result<()> {
 async fn run_session(session_id: String, client: BusClient) -> anyhow::Result<()> {
     let mut rx = client.subscribe(&session_id).await?;
 
+    // Gate RPC dispatch on history replay completion. Replayed history and
+    // retained transient chunks (e.g. a fork's copied RPCs) arrive before
+    // HistoryComplete; services MUST NOT act on those prior to session
+    // creation (ADR-123).
+    let mut history_complete = false;
+
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
             _ => continue,
         };
+
+        if !history_complete {
+            continue;
+        }
 
         let Some(request) = chunk.as_rpc_request() else { continue; };
         let call_id = request.id.clone();

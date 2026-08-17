@@ -171,6 +171,7 @@ impl Db {
                     ui_mode: r.get::<String, _>("ui_mode"),
                     message_count: r.get::<i64, _>("message_count") as usize,
                     created_at: r.get::<i64, _>("created_at"),
+                    parent_id: None,
                 }
             })
             .collect())

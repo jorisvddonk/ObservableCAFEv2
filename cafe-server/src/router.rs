@@ -17,6 +17,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/sessions", get(sessions::list_sessions))
         .route("/api/sessions", post(sessions::create_session))
         .route("/api/sessions/:id", delete(sessions::delete_session))
+        .route("/api/sessions/:id/fork", post(sessions::fork_session))
         .route("/api/sessions/:id/history", get(sessions::get_history))
         .route("/api/sessions/:id/tags", patch(sessions::update_tags))
         // Agents

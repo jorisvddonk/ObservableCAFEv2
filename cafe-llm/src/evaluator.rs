@@ -70,6 +70,13 @@ pub async fn run_session(
 
     let (abort_tx, _abort_rx) = watch::channel(false);
 
+    // Gate RPC dispatch on history replay completion. Replayed history and
+    // retained transient chunks (e.g. a forked session's copied llm.invoke
+    // RPCs) arrive before HistoryComplete; bus tools MUST NOT act on those
+    // prior to session creation, so we only dispatch RPCs that arrive live
+    // after replay finishes. See ADR-123.
+    let mut history_complete = false;
+
     // Concurrently watch for abort flow signals so an in-flight generation can
     // actually be interrupted (run_session would otherwise be blocked inside
     // handle_llm_response and unable to receive bus messages).
@@ -110,8 +117,18 @@ pub async fn run_session(
                     }
                 }
 
-                // Handle llm.invoke RPC requests
+                // Handle llm.invoke / llm.prompt RPC requests. Only act on RPCs
+                // that arrive live after history replay completes; replayed
+                // chunks (including a fork's copied retained RPCs) must not
+                // trigger execution prior to session creation (ADR-123).
                 if let Some(rpc) = chunk.as_rpc_request() {
+                    if !history_complete {
+                        warn!(
+                            "cafe-llm: ignoring {} RPC before history replay complete (session {})",
+                            rpc.method, session_id
+                        );
+                        continue;
+                    }
                     if rpc.method == "llm.invoke" {
                         let history = match client.get_history(&session_id).await {
                             Ok(h) => h,
@@ -216,6 +233,7 @@ pub async fn run_session(
             }
 
             ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
                 info!("cafe-llm: history replay complete for session {}", session_id);
             }
 

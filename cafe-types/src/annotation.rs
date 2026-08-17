@@ -45,6 +45,7 @@ pub mod keys {
     pub const CONFIG_RSS_URL: &str = "config.rss.url";
 
     pub const CONFIG_SESSION_NAME: &str = "config.session.name";
+    pub const CONFIG_AGENT_NAME: &str = "config.agent.name";
     pub const SESSION_TAGS: &str = "session.tags";
 
     pub const WEB_SOURCE_URL: &str = "web.source_url";
@@ -107,6 +108,10 @@ pub mod keys {
     pub const CAFE_TOOL_RESULT: &str = "cafe.tool.result";
     pub const CAFE_ERROR_MESSAGE: &str = "cafe.error.message";
     pub const CAFE_ERROR_CODE: &str = "cafe.error.code";
+
+    // Session forking
+    pub const FORK_PARENT_ID: &str = "fork.parent_id";
+    pub const CAFE_FORK_PARENT_ID: &str = "cafe.fork.parent_id";
 }
 
 /// Standard chat role values.

@@ -96,6 +96,16 @@ pub enum ClientMessage {
         session_id: String,
         tags: Vec<String>,
     },
+    /// Create a new session whose history (and retained transient chunks) are
+    /// copied verbatim from an existing parent session, recording provenance.
+    /// The fork is seeded without broadcasting and only becomes visible to
+    /// subscribers (and bus tools like llm) once `SessionCreated` is emitted.
+    ForkSession {
+        parent_session_id: String,
+        session_id: String,
+        #[serde(default)]
+        config: SessionConfig,
+    },
     ListSessions,
     Ping,
 }
@@ -133,6 +143,10 @@ pub enum ServerMessage {
     SessionTagsUpdated {
         session_id: String,
         tags: Vec<String>,
+    },
+    SessionForked {
+        parent_session_id: String,
+        session_id: String,
     },
     Error {
         session_id: Option<String>,
@@ -306,9 +320,10 @@ mod tests {
             ".{0,20}",
             any::<usize>(),
             any::<i64>(),
+            proptest::option::of(".{0,20}"),
         )
             .prop_map(
-                |(session_id, agent_id, display_name, tags, is_background, ui_mode, message_count, created_at)| {
+                |(session_id, agent_id, display_name, tags, is_background, ui_mode, message_count, created_at, parent_id)| {
                     SessionInfo {
                         session_id,
                         agent_id,
@@ -318,6 +333,7 @@ mod tests {
                         ui_mode,
                         message_count,
                         created_at,
+                        parent_id,
                     }
                 },
             )
@@ -354,6 +370,13 @@ mod tests {
             (".{0,20}", prop::collection::vec(".{1,10}", 0..5)).prop_map(
                 |(session_id, tags)| ClientMessage::SetSessionTags { session_id, tags },
             ),
+            (".{0,20}", ".{0,20}", any_session_config()).prop_map(
+                |(parent_session_id, session_id, config)| ClientMessage::ForkSession {
+                    parent_session_id,
+                    session_id,
+                    config,
+                },
+            ),
             Just(ClientMessage::Ping),
         ]
     }
@@ -388,6 +411,12 @@ mod tests {
             ),
             (".{0,20}", prop::collection::vec(".{1,10}", 0..5)).prop_map(
                 |(session_id, tags)| ServerMessage::SessionTagsUpdated { session_id, tags },
+            ),
+            (".{0,20}", ".{0,20}").prop_map(
+                |(parent_session_id, session_id)| ServerMessage::SessionForked {
+                    parent_session_id,
+                    session_id,
+                },
             ),
             (proptest::option::of(".{0,20}"), ".{0,20}", ".{0,20}").prop_map(
                 |(session_id, message, code)| ServerMessage::Error {

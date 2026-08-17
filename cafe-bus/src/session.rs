@@ -24,6 +24,8 @@ pub struct SessionState {
     pub ephemeral: Option<EphemeralConfig>,
     /// User-defined tags for filtering/grouping sessions.
     pub tags: Vec<String>,
+    /// If this session is a fork, the ID of the parent session it was copied from.
+    pub parent_id: Option<String>,
 }
 
 impl SessionState {
@@ -38,6 +40,7 @@ impl SessionState {
             subscribers: HashMap::new(),
             ephemeral: None,
             tags: Vec::new(),
+            parent_id: None,
         }
     }
 
@@ -69,6 +72,45 @@ impl SessionState {
             self.retained.retain(|(_, deadline)| *deadline > now);
         }
         valid
+    }
+
+    /// Return all non-expired retained transient chunks with their original
+    /// retention deadlines (oldest first), pruning expired entries.
+    /// Used by forking so a fork's transient chunks carry their original
+    /// deadline (i.e. remaining TTL) unchanged — no TTL adjustment on fork.
+    pub(crate) fn retained_with_deadlines(&mut self) -> Vec<(Chunk, Instant)> {
+        let now = Instant::now();
+        let mut valid = Vec::new();
+        for (chunk, deadline) in &self.retained {
+            if *deadline > now {
+                valid.push((chunk.clone(), *deadline));
+            }
+        }
+        self.retained.retain(|(_, deadline)| *deadline > now);
+        valid
+    }
+
+    /// Seed a session's history and retained transient chunks without
+    /// broadcasting anything. Deadlines are taken verbatim from the caller.
+    /// Used by forking: the fork is fully seeded before it becomes visible,
+    /// so no subscriber (or bus tool like llm) observes it prior to creation.
+    pub(crate) fn seed(&mut self, history: Vec<Chunk>, retained: Vec<(Chunk, Instant)>) {
+        self.history = history;
+        self.retained = retained;
+    }
+
+    /// Inject a retained transient chunk with an explicit deadline. Used by
+    /// forking tests to verify that a fork preserves the original deadline
+    /// (i.e. remaining TTL) without adjustment.
+    #[cfg(test)]
+    pub(crate) fn inject_retained(&mut self, chunk: Chunk, deadline: Instant) {
+        self.retained.push((chunk, deadline));
+    }
+
+    /// Read a single retained chunk + deadline. Used by forking tests.
+    #[cfg(test)]
+    pub(crate) fn single_retained(&self) -> (Chunk, Instant) {
+        self.retained[0].clone()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Chunk> {

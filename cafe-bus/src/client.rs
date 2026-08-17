@@ -405,6 +405,47 @@ async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
                 }
             }
 
+            ClientMessage::ForkSession {
+                parent_session_id,
+                session_id,
+                config: _config,
+            } => {
+                let mut reg = registry.write().await;
+                match reg.fork(&parent_session_id, &session_id) {
+                    Ok(_new_id) => {
+                        drop(reg);
+                        let _ = send_msg::<C>(
+                            &writer,
+                            &ServerMessage::SessionForked {
+                                parent_session_id: parent_session_id.clone(),
+                                session_id: session_id.clone(),
+                            },
+                        )
+                        .await;
+                    }
+                    Err(crate::registry::ForkError::ParentNotFound) => {
+                        drop(reg);
+                        send_error::<C>(
+                            &writer,
+                            Some(&session_id),
+                            &format!("Parent session not found: {}", parent_session_id),
+                            "SESSION_NOT_FOUND",
+                        )
+                        .await;
+                    }
+                    Err(crate::registry::ForkError::SessionExists) => {
+                        drop(reg);
+                        send_error::<C>(
+                            &writer,
+                            Some(&session_id),
+                            &format!("Session already exists: {}", session_id),
+                            "SESSION_EXISTS",
+                        )
+                        .await;
+                    }
+                }
+            }
+
             ClientMessage::DeleteSession { session_id } => {
                 let mut reg = registry.write().await;
                 if reg.remove(&session_id) {

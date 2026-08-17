@@ -54,11 +54,22 @@ async fn run_session(
 ) -> Result<()> {
     let mut rx = client.subscribe(&session_id).await?;
 
+    // Gate RPC dispatch on history replay completion (ADR-123).
+    let mut history_complete = false;
+
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
             _ => continue,
         };
+
+        if !history_complete {
+            continue;
+        }
 
         let Some(request) = chunk.as_rpc_request() else { continue; };
         if request.method != "rot13.invoke" {

@@ -9,6 +9,15 @@ pub struct SessionRegistry {
     event_tx: broadcast::Sender<ServerMessage>,
 }
 
+/// Errors from forking a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkError {
+    /// The parent session does not exist.
+    ParentNotFound,
+    /// The requested new session ID is already in use.
+    SessionExists,
+}
+
 impl SessionRegistry {
     pub fn new() -> Self {
         let (event_tx, _) = broadcast::channel(256);
@@ -43,6 +52,60 @@ impl SessionRegistry {
             session_id,
             agent_id,
         });
+    }
+
+    /// Create a new session by copying a parent session's state verbatim.
+    ///
+    /// The fork copies the parent's full history (all non-transient chunks)
+    /// and its non-expired retained transient chunks, **without modifying any
+    /// chunk field** — timestamps, annotations, and `transient.retain_secs`
+    /// are preserved exactly. Retained transient chunks carry their original
+    /// retention deadline into the fork (i.e. remaining TTL), so forking does
+    /// not adjust TTL. A `fork.parent_id` provenance null chunk is appended.
+    ///
+    /// The fork is seeded via a non-broadcasting path and only becomes visible
+    /// to subscribers and bus tools (like llm) when this method emits
+    /// `SessionCreated` via [`Self::insert`]. Bus tools MUST NOT execute RPCs
+    /// in a fork prior to that emit, which this ordering guarantees.
+    ///
+    /// Returns the new session's ID on success.
+    pub fn fork(
+        &mut self,
+        parent_session_id: &str,
+        new_session_id: &str,
+    ) -> Result<String, ForkError> {
+        if self.contains(new_session_id) {
+            return Err(ForkError::SessionExists);
+        }
+        if !self.sessions.contains_key(parent_session_id) {
+            return Err(ForkError::ParentNotFound);
+        }
+
+        // Mutable borrow of the parent lets us read history and prune/read
+        // retained transient chunks with their original deadlines.
+        let parent = self.sessions.get_mut(parent_session_id).unwrap();
+        let history = parent.history.clone();
+        let retained = parent.retained_with_deadlines();
+        let agent_id = parent.agent_id.clone();
+        let tags = parent.tags.clone();
+
+        let mut fork = SessionState::new(new_session_id.to_string(), agent_id);
+        fork.tags = tags;
+        fork.parent_id = Some(parent_session_id.to_string());
+
+        // Verbatim copy: history (non-transient) + non-expired retained
+        // transient chunks with their original deadlines, so forking does not
+        // adjust TTL and does not modify any chunk field.
+        fork.seed(history, retained);
+
+        // Append provenance null chunk.
+        let provenance = cafe_types::Chunk::new_null("com.nominal.cafe-bus")
+            .with_annotation(cafe_types::keys::FORK_PARENT_ID, parent_session_id);
+        fork.history.push(provenance);
+
+        let new_id = fork.session_id.clone();
+        self.insert(fork);
+        Ok(new_id)
     }
 
     pub fn remove(&mut self, session_id: &str) -> bool {
@@ -105,6 +168,7 @@ impl SessionRegistry {
                 ui_mode: "chat".into(),
                 message_count: s.history.len(),
                 created_at: 0,
+                parent_id: s.parent_id.clone(),
             })
             .collect()
     }
@@ -474,5 +538,112 @@ mod tests {
                 assert_eq!(state_b.history[0].content, Some("hello from B".into()));
             },
         );
+    }
+
+    // ── Session forking ──
+
+    fn insert_session(reg: &mut SessionRegistry, sid: &str, agent: &str) {
+        let mut state = SessionState::new(sid.into(), agent.into());
+        state.publish(cafe_types::Chunk::new_text("first", "test")
+            .with_annotation("chat.role", "user"));
+        state.publish(cafe_types::Chunk::new_text("second", "test")
+            .with_annotation("chat.role", "assistant"));
+        reg.insert(state);
+    }
+
+    #[test]
+    fn fork_copies_full_history_verbatim() {
+        let mut reg = SessionRegistry::new();
+        insert_session(&mut reg, "parent", "agent1");
+        let new_id = reg.fork("parent", "fork1").unwrap();
+        assert_eq!(new_id, "fork1");
+
+        let fork = reg.get("fork1").unwrap();
+        assert_eq!(fork.agent_id, "agent1");
+        // history: 2 copied chunks + provenance chunk
+        assert_eq!(fork.history.len(), 3);
+        // Copied chunks are verbatim (same id, content, annotations, timestamp)
+        let parent = reg.get("parent").unwrap();
+        for (i, parent_chunk) in parent.history.iter().enumerate() {
+            let fork_chunk = &fork.history[i];
+            assert_eq!(fork_chunk.id, parent_chunk.id);
+            assert_eq!(fork_chunk.content, parent_chunk.content);
+            assert_eq!(fork_chunk.timestamp, parent_chunk.timestamp);
+            assert_eq!(fork_chunk.annotations, parent_chunk.annotations);
+        }
+        // Provenance chunk appended last
+        let prov = &fork.history[2];
+        assert_eq!(prov.content_type, cafe_types::ContentType::Null);
+        assert_eq!(
+            prov.get_annotation::<String>(cafe_types::keys::FORK_PARENT_ID),
+            Some("parent".into())
+        );
+        // parent_id surfaced
+        assert_eq!(fork.parent_id.as_deref(), Some("parent"));
+        // Parent is not mutated
+        assert_eq!(parent.history.len(), 2);
+    }
+
+    #[test]
+    fn fork_preserves_retained_remaining_ttl() {
+        let mut reg = SessionRegistry::new();
+        insert_session(&mut reg, "parent", "agent1");
+        // Add a retained transient chunk with a 5-day TTL and a known deadline
+        let retained = cafe_types::Chunk::new_text("rpc", "test")
+            .as_transient()
+            .with_retain(5 * 86400);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2 * 86400);
+        reg.get_mut("parent").unwrap().inject_retained(retained.clone(), deadline);
+
+        let new_id = reg.fork("parent", "fork1").unwrap();
+        let fork = reg.get("fork1").unwrap();
+        let (chunk, fork_deadline) = fork.single_retained();
+        assert_eq!(chunk.content, Some("rpc".into()));
+        // The deadline is preserved verbatim (same remaining TTL, no adjustment)
+        assert_eq!(fork_deadline, deadline);
+        // The chunk annotation is unchanged (still original TTL)
+        assert_eq!(chunk.retain_secs(), Some(5 * 86400));
+        assert_eq!(new_id, "fork1");
+    }
+
+    #[test]
+    fn fork_parent_not_found() {
+        let mut reg = SessionRegistry::new();
+        insert_session(&mut reg, "parent", "agent1");
+        assert_eq!(reg.fork("missing", "fork1"), Err(ForkError::ParentNotFound));
+    }
+
+    #[test]
+    fn fork_session_exists() {
+        let mut reg = SessionRegistry::new();
+        insert_session(&mut reg, "parent", "agent1");
+        insert_session(&mut reg, "existing", "agent2");
+        assert_eq!(reg.fork("parent", "existing"), Err(ForkError::SessionExists));
+    }
+
+    #[test]
+    fn fork_emits_session_created_after_seed() {
+        let mut reg = SessionRegistry::new();
+        let mut rx = reg.event_tx().subscribe();
+        insert_session(&mut reg, "parent", "agent1");
+        // Drain the SessionCreated for parent
+        let _ = rx.try_recv();
+
+        // fork() both seeds and inserts in one call; the SessionCreated is the
+        // only event emitted, and it is emitted after the fork is fully seeded
+        // (the fork is not visible to subscribers before insert).
+        reg.fork("parent", "fork1").unwrap();
+        if let Ok(event) = rx.try_recv() {
+            match event {
+                ServerMessage::SessionCreated { session_id, .. } => {
+                    assert_eq!(session_id, "fork1");
+                }
+                other => panic!("expected SessionCreated, got {:?}", other),
+            }
+        } else {
+            panic!("expected SessionCreated event for fork");
+        }
+        // Exactly one event: fork is fully seeded and only then announced.
+        assert!(matches!(rx.try_recv(), Err(_)));
     }
 }

@@ -44,11 +44,21 @@ async fn run(socket_path: &str) -> anyhow::Result<()> {
     });
 
     // Handle incoming messages
+    // Gate dispatch on history replay completion (ADR-123).
+    let mut history_complete = false;
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
             _ => continue,
         };
+
+        if !history_complete {
+            continue;
+        }
 
         // Only process RPC requests for our method
         let rpc_req = match chunk.as_rpc_request() {

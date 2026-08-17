@@ -516,6 +516,59 @@ impl<T: BusTransport> BusClient<T> {
         Ok(())
     }
 
+    /// Fork a session: create a new session whose history (and retained
+    /// transient chunks) are copied verbatim from `parent_session_id`,
+    /// recording provenance. Returns the new session's ID.
+    pub async fn fork_session(
+        &self,
+        parent_session_id: &str,
+        session_id: &str,
+        config: SessionConfig,
+    ) -> Result<String, SdkError> {
+        let codec = self.negotiate().await?;
+        match codec {
+            ClientCodec::Json => {
+                self.fork_session_with_codec::<JsonLineCodec>(parent_session_id, session_id, config)
+                    .await
+            }
+            #[cfg(feature = "bincode-client")]
+            ClientCodec::Bincode => {
+                self.fork_session_with_codec::<BincodeLengthPrefixCodec>(
+                    parent_session_id,
+                    session_id,
+                    config,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Fork a session with a specific codec.
+    pub async fn fork_session_with_codec<C: BusCodec>(
+        &self,
+        parent_session_id: &str,
+        session_id: &str,
+        config: SessionConfig,
+    ) -> Result<String, SdkError> {
+        let (_writer, mut reader) = self
+            .send::<C>(&ClientMessage::ForkSession {
+                parent_session_id: parent_session_id.to_string(),
+                session_id: session_id.to_string(),
+                config,
+            })
+            .await?;
+        while let Some(msg) = reader.read_msg::<ServerMessage>().await? {
+            match msg {
+                ServerMessage::SessionForked { session_id, .. } => return Ok(session_id),
+                ServerMessage::Error { message, code, .. } => {
+                    return Err(SdkError::BusError { message, code: Some(code) });
+                }
+                _ => {}
+            }
+        }
+        Ok(session_id.to_string())
+    }
+
     /// Set the tags for a session.
     pub async fn set_tags(&self, session_id: &str, tags: Vec<String>) -> Result<(), SdkError> {
         let codec = self.negotiate().await?;
