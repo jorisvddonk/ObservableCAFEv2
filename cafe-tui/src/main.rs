@@ -239,11 +239,16 @@ async fn run_app(
                                         app.active_session_idx = 0;
                                         app.messages.clear();
                                         if !app.sessions.is_empty() {
-                                            load_history(&mut app, &client).await;
+                                            app.mode = AppMode::SessionPicker;
+                                        } else {
+                                            app.agent_picker_create_on_select = true;
+                                            app.agent_picker_filter.clear();
+                                            app.apply_agent_filter();
+                                            app.mode = AppMode::AgentPicker;
                                         }
                                         app.scroll_to_bottom();
                                     }
-                                    app.set_status("Session deleted.");
+                                    app.set_status("Session deleted. Pick a session to continue, or use /new.");
                                 }
                                 Err(e) => {
                                     app.set_status(format!("Failed to delete: {}", e))
@@ -369,7 +374,7 @@ async fn run_app(
                     }
 
                     InputAction::Help => {
-                        let help_text = "Commands:\n  /sessions  - Browse sessions\n  /new       - Create new session\n  /delete    - Delete current session\n  /rename    - Rename current session\n  /system    - Set system prompt\n  /model     - Set LLM model\n  /agent     - Set agent\n  /clear     - Clear messages\n  /help      - Show this help\n  /quit      - Exit";
+                        let help_text = "Commands:\n  /sessions  - Browse sessions\n  /new       - Create new session\n  /fork      - Fork current session (/f)\n  /delete    - Delete current session\n  /rename    - Rename current session\n  /system    - Set system prompt\n  /model     - Set LLM model\n  /agent     - Set agent\n  /clear     - Clear messages\n  /help      - Show this help\n  /quit      - Exit";
                         let help_chunk = cafe_sdk::Chunk::new_text(help_text, "com.nominal.cafe-tui")
                             .with_annotation("chat.role", "system");
                         app.push_message(help_chunk);
