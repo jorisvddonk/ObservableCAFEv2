@@ -28,6 +28,15 @@ pub struct SessionConfig {
     pub system_prompt: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// Compaction mode: "none" (default), "truncate", "summarize" (reserved).
+    #[serde(default)]
+    pub compaction_mode: Option<String>,
+    /// Max user+assistant messages sent to the LLM (system excluded).
+    #[serde(default)]
+    pub max_history_messages: Option<u32>,
+    /// Max summed chars over user+assistant messages sent to the LLM.
+    #[serde(default)]
+    pub max_history_chars: Option<u32>,
     /// If set, the session is ephemeral and will be auto-deleted.
     pub ephemeral: Option<EphemeralConfig>,
     /// Optional initial tags for the session.
@@ -275,9 +284,12 @@ mod tests {
             proptest::option::of(any::<u32>()),
             proptest::option::of(any_ephemeral_config()),
             proptest::option::of(prop::collection::vec(".{1,10}", 0..5)),
+            proptest::option::of(".{0,30}"),
+            proptest::option::of(any::<u32>()),
+            proptest::option::of(any::<u32>()),
         )
             .prop_map(
-                |(backend, model, system_prompt, temperature, max_tokens, ephemeral, tags)| SessionConfig {
+                |(backend, model, system_prompt, temperature, max_tokens, ephemeral, tags, compaction_mode, max_history_messages, max_history_chars)| SessionConfig {
                     backend,
                     model,
                     system_prompt,
@@ -285,6 +297,9 @@ mod tests {
                     max_tokens,
                     ephemeral,
                     tags,
+                    compaction_mode,
+                    max_history_messages,
+                    max_history_chars,
                 },
             )
     }

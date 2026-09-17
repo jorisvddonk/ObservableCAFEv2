@@ -961,6 +961,15 @@ pub fn make_config_chunk(config: &SessionConfig) -> Chunk {
     if let Some(mt) = config.max_tokens {
         chunk = chunk.with_annotation(keys::CONFIG_MAX_TOKENS, mt);
     }
+    if let Some(cm) = &config.compaction_mode {
+        chunk = chunk.with_annotation(keys::CONFIG_LLM_COMPACTION_MODE, cm);
+    }
+    if let Some(mhm) = config.max_history_messages {
+        chunk = chunk.with_annotation(keys::CONFIG_LLM_MAX_HISTORY_MESSAGES, mhm);
+    }
+    if let Some(mhc) = config.max_history_chars {
+        chunk = chunk.with_annotation(keys::CONFIG_LLM_MAX_HISTORY_CHARS, mhc);
+    }
     chunk
 }
 

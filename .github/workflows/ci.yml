@@ -53,3 +53,4 @@ jobs:
           uv run tests/tts-speech-server-e2e.py
           uv run tests/stt-speech-server-e2e.py
           uv run tests/session-fork-e2e.py
+          uv run tests/llm-compaction-e2e.py

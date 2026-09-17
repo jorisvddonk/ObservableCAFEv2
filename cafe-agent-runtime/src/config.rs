@@ -40,6 +40,12 @@ pub struct SessionConfig {
     pub llm_max_tokens: Option<u32>,
     pub llm_model: Option<String>,
     pub llm_backend: Option<String>,
+    /// Compaction mode: "none" (default), "truncate", "summarize" (reserved).
+    pub llm_compaction_mode: Option<String>,
+    /// Max user+assistant messages sent to the LLM (system excluded).
+    pub llm_max_history_messages: Option<u32>,
+    /// Max summed chars over user+assistant messages sent to the LLM.
+    pub llm_max_history_chars: Option<u32>,
 
     // TTS evaluator
     pub tts_profile: Option<String>,
@@ -130,6 +136,21 @@ fn apply_config_key(cfg: &mut SessionConfig, key: &str, value: &serde_json::Valu
         }
         keys::CONFIG_LLM_BACKEND => {
             cfg.llm_backend = value.as_str().map(String::from);
+        }
+        keys::CONFIG_LLM_COMPACTION_MODE => {
+            cfg.llm_compaction_mode = value.as_str().map(String::from);
+        }
+        keys::CONFIG_LLM_MAX_HISTORY_MESSAGES => {
+            cfg.llm_max_history_messages = value
+                .as_u64()
+                .map(|n| n as u32)
+                .or_else(|| value.as_str().and_then(|s| s.parse().ok()));
+        }
+        keys::CONFIG_LLM_MAX_HISTORY_CHARS => {
+            cfg.llm_max_history_chars = value
+                .as_u64()
+                .map(|n| n as u32)
+                .or_else(|| value.as_str().and_then(|s| s.parse().ok()));
         }
         keys::CONFIG_TTS_PROFILE => {
             cfg.tts_profile = value.as_str().map(String::from);

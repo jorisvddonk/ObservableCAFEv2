@@ -55,6 +55,119 @@ pub struct LlmConfig {
     pub system_prompt: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// Compaction mode: "none" (default), "truncate", "summarize".
+    /// See ADR-125.
+    pub compaction_mode: Option<String>,
+    /// Max user+assistant messages sent to the backend (system excluded).
+    pub max_history_messages: Option<u32>,
+    /// Max summed chars over user+assistant messages sent to the backend.
+    pub max_history_chars: Option<u32>,
+}
+
+/// Result of applying compaction to a built message list.
+pub struct CompactionInfo {
+    pub dropped_messages: usize,
+    pub dropped_chars: usize,
+    /// The dropped prefix messages (oldest first), retained so `summarize`
+    /// mode can condense them. Empty when nothing was dropped.
+    pub dropped: Vec<LlmMessage>,
+}
+
+/// Compact a built message list oldest-first to fit the configured budgets.
+///
+/// - `messages[0]` with role `system` is never counted or dropped.
+/// - Applies only when `compaction_mode` is `"truncate"` or `"summarize"`.
+/// - `"none"` (or unset/invalid mode, or no budgets set) returns the input
+///   unchanged.
+/// - Message-count and char budgets both apply; whichever hits first wins.
+/// - The newest message is never dropped, even if it alone exceeds the char
+///   budget.
+pub fn apply_compaction(messages: Vec<LlmMessage>, cfg: &LlmConfig) -> (Vec<LlmMessage>, CompactionInfo) {
+    let empty = |messages| (messages, CompactionInfo { dropped_messages: 0, dropped_chars: 0, dropped: Vec::new() });
+    let mode = cfg.compaction_mode.as_deref().unwrap_or("none");
+    if mode != "truncate" && mode != "summarize" {
+        return empty(messages);
+    }
+    let max_messages = cfg.max_history_messages.filter(|&n| n >= 1).map(|n| n as usize);
+    let max_chars = cfg.max_history_chars.filter(|&n| n >= 1).map(|n| n as usize);
+    if max_messages.is_none() && max_chars.is_none() {
+        return empty(messages);
+    }
+
+    // Split off a leading system message; it is preserved verbatim.
+    let (system, rest) = match messages.split_first() {
+        Some((first, _)) if first.role == "system" => {
+            let mut it = messages.into_iter();
+            let sys = it.next();
+            (sys.into_iter().collect::<Vec<_>>(), it.collect::<Vec<_>>())
+        }
+        _ => (Vec::new(), messages),
+    };
+    if rest.is_empty() {
+        let mut out = system;
+        out.extend(rest);
+        return (out, CompactionInfo { dropped_messages: 0, dropped_chars: 0, dropped: Vec::new() });
+    }
+
+    // Oldest-first: find the smallest suffix of `rest` satisfying both budgets,
+    // always keeping at least the newest message.
+    let mut start = 0;
+    while start < rest.len() {
+        let window = &rest[start..];
+        let count_ok = max_messages.map(|m| window.len() <= m).unwrap_or(true);
+        let chars: usize = window.iter().map(|m| m.content.len()).sum();
+        let chars_ok = max_chars.map(|c| chars <= c).unwrap_or(true);
+        if (count_ok && chars_ok) || window.len() <= 1 {
+            break;
+        }
+        start += 1;
+    }
+
+    let dropped_messages: usize = start;
+    let dropped_chars: usize = rest[..start].iter().map(|m| m.content.len()).sum();
+    let dropped: Vec<LlmMessage> = rest[..start].to_vec();
+    let mut out = system;
+    out.extend(rest.into_iter().skip(start));
+    (out, CompactionInfo { dropped_messages, dropped_chars, dropped })
+}
+
+/// Build a summarization request for a dropped compaction prefix.
+///
+/// Returns `[system, user]` messages for a non-streaming completion call.
+/// The caller sends this to the backend and inserts the resulting text via
+/// `insert_summary`. Prompt-only: nothing is persisted to session history.
+pub fn build_summary_request(dropped: &[LlmMessage]) -> Vec<LlmMessage> {
+    let mut transcript = String::new();
+    for m in dropped {
+        transcript.push_str(&m.role);
+        transcript.push_str(": ");
+        transcript.push_str(&m.content);
+        transcript.push('\n');
+    }
+    vec![
+        LlmMessage {
+            role: "system".into(),
+            content: "Summarize the following conversation prefix concisely. Preserve key facts, decisions, user preferences, and open questions. Reply with the summary only, no preamble.".into(),
+        },
+        LlmMessage { role: "user".into(), content: transcript },
+    ]
+}
+
+/// Insert a compaction summary into a compacted message list.
+///
+/// Placed right after a leading `system` message when present, otherwise
+/// first. The summary is prompt-only (never written back to history).
+pub fn insert_summary(mut messages: Vec<LlmMessage>, summary: &str) -> Vec<LlmMessage> {
+    let summary_msg = LlmMessage {
+        role: "system".into(),
+        content: format!("Prior conversation summary (compacted):\n{summary}"),
+    };
+    let pos = match messages.first() {
+        Some(first) if first.role == "system" => 1,
+        _ => 0,
+    };
+    messages.insert(pos, summary_msg);
+    messages
 }
 
 /// Extract LLM config by scanning history in **forward chronological order**,
@@ -72,6 +185,9 @@ pub fn extract_config(history: &[Chunk]) -> LlmConfig {
         system_prompt: None,
         temperature: None,
         max_tokens: None,
+        compaction_mode: None,
+        max_history_messages: None,
+        max_history_chars: None,
     };
 
     for chunk in history {
@@ -105,6 +221,21 @@ pub fn extract_config(history: &[Chunk]) -> LlmConfig {
         }
         if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_MAX_TOKENS) {
             cfg.max_tokens = v
+                .as_u64()
+                .map(|n| n as u32)
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_COMPACTION_MODE) {
+            cfg.compaction_mode = v.as_str().map(String::from);
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_MAX_HISTORY_MESSAGES) {
+            cfg.max_history_messages = v
+                .as_u64()
+                .map(|n| n as u32)
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+        }
+        if let Some(v) = chunk.annotations.get(keys::CONFIG_LLM_MAX_HISTORY_CHARS) {
+            cfg.max_history_chars = v
                 .as_u64()
                 .map(|n| n as u32)
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()));
@@ -358,5 +489,162 @@ mod tests {
             let cfg = extract_config(&chunks);
             assert_eq!(cfg.model, Some("gemma3:1b".into()));
         });
+    }
+
+    fn test_cfg(mode: Option<&str>, max_messages: Option<u32>, max_chars: Option<u32>) -> LlmConfig {
+        LlmConfig {
+            backend: None,
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            max_tokens: None,
+            compaction_mode: mode.map(String::from),
+            max_history_messages: max_messages,
+            max_history_chars: max_chars,
+        }
+    }
+
+    fn test_messages() -> Vec<LlmMessage> {
+        vec![
+            LlmMessage { role: "system".into(), content: "sys".into() },
+            LlmMessage { role: "user".into(), content: "aaa".into() },
+            LlmMessage { role: "assistant".into(), content: "bbb".into() },
+            LlmMessage { role: "user".into(), content: "ccc".into() },
+        ]
+    }
+
+    #[test]
+    fn compaction_disabled_by_default() {
+        let (out, info) = apply_compaction(test_messages(), &test_cfg(None, Some(1), Some(1)));
+        assert_eq!(out.len(), 4);
+        assert_eq!(info.dropped_messages, 0);
+    }
+
+    #[test]
+    fn compaction_none_mode_is_identity() {
+        let (out, info) = apply_compaction(test_messages(), &test_cfg(Some("none"), Some(1), Some(1)));
+        assert_eq!(out.len(), 4);
+        assert_eq!(info.dropped_messages, 0);
+    }
+
+    #[test]
+    fn compaction_truncate_message_count() {
+        let (out, info) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), Some(2), None));
+        assert_eq!(out.len(), 3); // system + last 2
+        assert_eq!(out[0].role, "system");
+        assert_eq!(out[1].content, "bbb");
+        assert_eq!(out[2].content, "ccc");
+        assert_eq!(info.dropped_messages, 1);
+        assert_eq!(info.dropped_chars, 3);
+    }
+
+    #[test]
+    fn compaction_preserves_system_and_newest() {
+        // Budget of 0 is invalid → treated as unset → identity.
+        let (out, _) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), Some(0), None));
+        assert_eq!(out.len(), 4);
+        // Even a 1-char budget keeps the newest message alone.
+        let (out, info) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), None, Some(1)));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "system");
+        assert_eq!(out[1].content, "ccc");
+        assert_eq!(info.dropped_messages, 2);
+    }
+
+    #[test]
+    fn compaction_char_budget() {
+        // "aaa"+"bbb"+"ccc" = 9 chars; budget 6 keeps "bbb"+"ccc".
+        let (out, info) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), None, Some(6)));
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[1].content, "bbb");
+        assert_eq!(out[2].content, "ccc");
+        assert_eq!(info.dropped_messages, 1);
+    }
+
+    #[test]
+    fn compaction_both_budgets_first_hit_wins() {
+        // Count allows 3 but chars allow only 1 → char budget wins.
+        let (out, _) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), Some(3), Some(3)));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].content, "ccc");
+    }
+
+    #[test]
+    fn compaction_summarize_compacts_like_truncate() {
+        // apply_compaction itself drops identically in both modes; the
+        // summarize path additionally condenses `info.dropped` (see below).
+        let (out_t, _) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), Some(1), None));
+        let (out_s, info_s) = apply_compaction(test_messages(), &test_cfg(Some("summarize"), Some(1), None));
+        assert_eq!(out_t, out_s);
+        assert_eq!(info_s.dropped_messages, 2);
+        assert_eq!(info_s.dropped.len(), 2);
+        assert_eq!(info_s.dropped[0].content, "aaa");
+        assert_eq!(info_s.dropped[1].content, "bbb");
+    }
+
+    #[test]
+    fn compaction_dropped_is_empty_when_nothing_dropped() {
+        let (_, info) = apply_compaction(test_messages(), &test_cfg(Some("truncate"), Some(10), None));
+        assert_eq!(info.dropped_messages, 0);
+        assert!(info.dropped.is_empty());
+    }
+
+    #[test]
+    fn build_summary_request_covers_dropped_transcript() {
+        let (_, info) = apply_compaction(test_messages(), &test_cfg(Some("summarize"), Some(1), None));
+        let req = build_summary_request(&info.dropped);
+        assert_eq!(req.len(), 2);
+        assert_eq!(req[0].role, "system");
+        assert_eq!(req[1].role, "user");
+        assert!(req[1].content.contains("user: aaa"), "transcript must carry roles: {}", req[1].content);
+        assert!(req[1].content.contains("assistant: bbb"), "transcript must carry roles: {}", req[1].content);
+    }
+
+    #[test]
+    fn insert_summary_goes_after_system_prompt() {
+        let (compacted, _) = apply_compaction(test_messages(), &test_cfg(Some("summarize"), Some(1), None));
+        let out = insert_summary(compacted, "they discussed cats");
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].role, "system");
+        assert_eq!(out[0].content, "sys");
+        assert_eq!(out[1].role, "system");
+        assert!(out[1].content.contains("Prior conversation summary"), "{}", out[1].content);
+        assert!(out[1].content.contains("they discussed cats"), "{}", out[1].content);
+        assert_eq!(out[2].content, "ccc");
+    }
+
+    #[test]
+    fn insert_summary_without_system_prompt_goes_first() {
+        let msgs = vec![LlmMessage { role: "user".into(), content: "hi".into() }];
+        let out = insert_summary(msgs, "s");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "system");
+        assert!(out[0].content.contains("Prior conversation summary"));
+        assert_eq!(out[1].content, "hi");
+    }
+
+    #[test]
+    fn extract_config_reads_compaction_keys() {
+        let chunk = Chunk::new_null("test")
+            .with_annotation(keys::CONFIG_TYPE, "runtime")
+            .with_annotation(keys::CONFIG_LLM_COMPACTION_MODE, "truncate")
+            .with_annotation(keys::CONFIG_LLM_MAX_HISTORY_MESSAGES, 5u32)
+            .with_annotation(keys::CONFIG_LLM_MAX_HISTORY_CHARS, 1000u32);
+        let cfg = extract_config(&[chunk]);
+        assert_eq!(cfg.compaction_mode, Some("truncate".into()));
+        assert_eq!(cfg.max_history_messages, Some(5));
+        assert_eq!(cfg.max_history_chars, Some(1000));
+    }
+
+    #[test]
+    fn extract_config_compaction_later_wins() {
+        let c1 = Chunk::new_null("test")
+            .with_annotation(keys::CONFIG_TYPE, "runtime")
+            .with_annotation(keys::CONFIG_LLM_MAX_HISTORY_MESSAGES, 5u32);
+        let c2 = Chunk::new_null("test")
+            .with_annotation(keys::CONFIG_TYPE, "runtime")
+            .with_annotation(keys::CONFIG_LLM_MAX_HISTORY_MESSAGES, 2u32);
+        let cfg = extract_config(&[c1, c2]);
+        assert_eq!(cfg.max_history_messages, Some(2));
     }
 }

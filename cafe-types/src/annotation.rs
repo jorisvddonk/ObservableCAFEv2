@@ -26,6 +26,9 @@ pub mod keys {
     pub const CONFIG_LLM_MAX_TOKENS: &str = "config.llm.max_tokens";
     pub const CONFIG_LLM_MODEL: &str = "config.llm.model";
     pub const CONFIG_LLM_BACKEND: &str = "config.llm.backend";
+    pub const CONFIG_LLM_COMPACTION_MODE: &str = "config.llm.compaction_mode";
+    pub const CONFIG_LLM_MAX_HISTORY_MESSAGES: &str = "config.llm.max_history_messages";
+    pub const CONFIG_LLM_MAX_HISTORY_CHARS: &str = "config.llm.max_history_chars";
 
     pub const CONFIG_TTS_PROFILE: &str = "config.tts.profile";
     pub const CONFIG_TTS_ENGINE: &str = "config.tts.engine";

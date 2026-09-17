@@ -117,6 +117,15 @@ Annotation keys use dot-namespaced strings. All values are JSON-typed.
 | `config.temperature`      | number     | LLM temperature                                  |
 | `config.max_tokens`       | number     | Max tokens for LLM response                      |
 
+Namespaced LLM history-compaction keys (see ADR-125; `config.llm.*` on
+`config.type = "runtime"` null chunks):
+
+| Key                               | Value type | Description                                              |
+|-----------------------------------|------------|----------------------------------------------------------|
+| `config.llm.compaction_mode`      | string     | `none` (default), `truncate`, `summarize`                |
+| `config.llm.max_history_messages` | number     | Max user+assistant messages sent to the LLM              |
+| `config.llm.max_history_chars`    | number     | Max summed chars over user+assistant messages            |
+
 ### Web content
 
 | Key                       | Value type | Description                                      |

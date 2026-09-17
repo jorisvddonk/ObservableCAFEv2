@@ -5,6 +5,7 @@ use futures_util::stream::BoxStream;
 pub mod ollama;
 pub mod openai;
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct LlmMessage {
     pub role: String,
     pub content: String,

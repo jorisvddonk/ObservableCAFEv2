@@ -1,5 +1,5 @@
 use crate::backends::{LlmBackend, LlmMessage, LlmParams};
-use crate::context::{build_messages, extract_config};
+use crate::context::{apply_compaction, build_messages, build_summary_request, extract_config, insert_summary};
 use anyhow::Result;
 use async_trait::async_trait;
 use cafe_sdk::bus::{BusClient, SessionSubscription};
@@ -141,6 +141,19 @@ pub async fn run_session(
                         let cfg = extract_config(&history);
                         let model = cfg.model.clone().unwrap_or_else(|| default_model.clone());
                         let messages = build_messages(&history, cfg.system_prompt.as_deref());
+                        let (mut messages, compaction) = apply_compaction(messages, &cfg);
+                        if compaction.dropped_messages > 0 {
+                            info!(
+                                "cafe-llm: compacted history: dropped {} messages ({} chars), mode={} (session {})",
+                                compaction.dropped_messages,
+                                compaction.dropped_chars,
+                                cfg.compaction_mode.as_deref().unwrap_or("truncate"),
+                                session_id
+                            );
+                            if cfg.compaction_mode.as_deref() == Some("summarize") {
+                                messages = summarize_prefix(&backend, &model, messages, &compaction.dropped, &session_id).await;
+                            }
+                        }
 
                         let params = LlmParams {
                             model: model.clone(),
@@ -242,6 +255,44 @@ pub async fn run_session(
     }
 
     Ok(())
+}
+
+/// Condense a compacted-away history prefix via the backend and insert the
+/// summary into the compacted message list (prompt-only, never persisted).
+/// On any failure — or an empty summary — the truncated list is returned
+/// unchanged (truncate fallback). This is a direct backend call, not an
+/// `llm.invoke` round-trip, so it cannot recurse.
+async fn summarize_prefix(
+    backend: &Arc<dyn LlmBackend>,
+    model: &str,
+    messages: Vec<LlmMessage>,
+    dropped: &[LlmMessage],
+    session_id: &str,
+) -> Vec<LlmMessage> {
+    if dropped.is_empty() {
+        return messages;
+    }
+    let summary_params = LlmParams { model: model.to_string(), temperature: None, max_tokens: None };
+    match backend.complete_to_string(build_summary_request(dropped), &summary_params).await {
+        Ok(summary) => {
+            let summary = summary.trim();
+            if summary.is_empty() {
+                warn!("cafe-llm: empty compaction summary, keeping truncated history (session {})", session_id);
+                return messages;
+            }
+            info!(
+                "cafe-llm: summarized {} dropped messages into {} chars (session {})",
+                dropped.len(),
+                summary.len(),
+                session_id
+            );
+            insert_summary(messages, summary)
+        }
+        Err(e) => {
+            warn!("cafe-llm: compaction summary failed ({}), keeping truncated history (session {})", e, session_id);
+            messages
+        }
+    }
 }
 
 async fn handle_llm_response(

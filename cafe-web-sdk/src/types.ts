@@ -46,6 +46,9 @@ export interface SessionConfig {
   system_prompt?: string;
   temperature?: number;
   max_tokens?: number;
+  compaction_mode?: string;
+  max_history_messages?: number;
+  max_history_chars?: number;
   tags?: string[];
 }
 

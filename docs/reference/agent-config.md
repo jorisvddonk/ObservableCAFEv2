@@ -115,6 +115,9 @@ Common keys:
 | `config.llm.max_tokens` | Max response tokens. |
 | `config.llm.model` | Model name. |
 | `config.llm.backend` | Backend: `ollama`, `openai`, `kobold`. |
+| `config.llm.compaction_mode` | History compaction: `none` (default), `truncate`, `summarize` (dropped prefix condensed into the prompt). See [ADR-125](../adr-125-llm-compaction.md). |
+| `config.llm.max_history_messages` | Max user+assistant messages sent to the LLM (system excluded, oldest dropped first). |
+| `config.llm.max_history_chars` | Max summed chars over user+assistant messages sent to the LLM (whichever budget hits first wins). |
 | `config.tts.profile` / `config.tts.engine` | TTS voice profile / engine. |
 | `config.tts.enabled` | Gate for the `enabled_if` TTS step. |
 | `config.rss.url` | Feed URL for `rss-fetch`. |
