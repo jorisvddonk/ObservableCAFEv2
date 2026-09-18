@@ -40,6 +40,9 @@ MOCK_PORT = 18789
 class MockSpeechServerHandler(http.server.BaseHTTPRequestHandler):
     """Minimal mock that replies to POST /speak with a valid WAV."""
 
+    speak_texts = []  # every text received, in order
+    speak_lock = threading.Lock()
+
     def do_POST(self):
         if self.path.startswith("/speak"):
             content_len = int(self.headers.get("Content-Length", 0))
@@ -48,6 +51,8 @@ class MockSpeechServerHandler(http.server.BaseHTTPRequestHandler):
             text = req.get("text", "")
             sys.stderr.write(f"  mock /speak text={text!r}\n")
             sys.stderr.flush()
+            with MockSpeechServerHandler.speak_lock:
+                MockSpeechServerHandler.speak_texts.append(text)
 
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
@@ -100,6 +105,98 @@ def recv_line(sock):
 
 def send_msg(sock, msg):
     sock.sendall((json.dumps(msg) + "\n").encode())
+
+
+def publish_tts_invoke(bus_socket, session_id, text, engine="kokoro"):
+    """Publish one tts.invoke RPC; returns its call_id."""
+    call_id = str(uuid.uuid4())
+    rpc_request = {
+        "jsonrpc": "2.0",
+        "method": "tts.invoke",
+        "id": call_id,
+        "params": {"text": text, "engine": engine},
+    }
+    pub_sock = bus_connect(bus_socket)
+    now_ms = int(time.time() * 1000)
+    send_msg(pub_sock, {
+        "op": "publish",
+        "session_id": session_id,
+        "chunk": {
+            "id": str(uuid.uuid4()),
+            "content_type": "null",
+            "content": None,
+            "data": None,
+            "mime_type": None,
+            "producer": "com.nominal.tts-speech-server-e2e-test",
+            "timestamp": now_ms,
+            "annotations": {
+                "cafe.jsonrpc.request": rpc_request,
+                "cafe.transient": True,
+                "cafe.transient.retain_secs": 60,
+            },
+        },
+    })
+    print(f"  published tts.invoke (call_id={call_id})", file=sys.stderr)
+    pub_sock.close()
+    return call_id
+
+
+def await_tts_result(sub_sock, call_id, timeout=60):
+    """Read chunks until the matching RPC response + audio_complete arrive."""
+    sub_sock.settimeout(timeout)
+    result = None
+    binary_ref_id = None
+    audio_byte_size = None
+    audio_streaming_received = False
+    audio_complete_received = False
+    try:
+        while True:
+            line = recv_line(sub_sock)
+            if not line:
+                break
+            msg = json.loads(line)
+            if msg.get("event") == "chunk":
+                chunk = msg["chunk"]
+                ann = chunk.get("annotations", {})
+
+                if chunk.get("content_type") == "null" and ann.get("chat.audio_streaming"):
+                    audio_streaming_received = True
+                    print(f"  audio streaming signal", file=sys.stderr)
+
+                if chunk.get("content_type") == "binary_ref":
+                    binary_ref_id = chunk["id"]
+                    audio_byte_size = ann.get("cafe.binary.byte_size")
+                    print(f"  BinaryRef audio chunk: {binary_ref_id[:20]}... ({audio_byte_size} bytes)", file=sys.stderr)
+
+                if chunk.get("content_type") == "null" and ann.get("chat.audio_complete"):
+                    audio_complete_received = True
+                    print(f"  audio complete signal", file=sys.stderr)
+
+                rpc_resp = ann.get("cafe.jsonrpc.response")
+                if rpc_resp and rpc_resp.get("id") == call_id:
+                    result = rpc_resp
+                    print(f"  rpc response received", file=sys.stderr)
+
+                if result is not None and audio_complete_received:
+                    break
+    except socket.timeout:
+        print("  timeout waiting for response", file=sys.stderr)
+        assert False, "Timeout waiting for tts.invoke RPC response or BinaryRef chunk"
+
+    assert audio_streaming_received, "No audio_streaming signal received"
+    assert binary_ref_id is not None, "No BinaryRef audio chunk received"
+    assert audio_byte_size is not None and audio_byte_size > 0, "BinaryRef missing cafe.binary.byte_size"
+    assert audio_complete_received, "No audio_complete signal received"
+    assert result is not None, "No tts.invoke RPC response received"
+
+    err = result.get("error")
+    assert err is None, f"TTS synthesis failed: {err.get('message', '')}"
+
+    r = result.get("result", {})
+    chunk_id = r.get("chunk_id", "")
+    assert chunk_id, f"Missing chunk_id in TTS result: {json.dumps(result, indent=2)}"
+    print(f"  TTS synthesis successful (chunk_id={chunk_id})", file=sys.stderr)
+    return result, binary_ref_id, audio_byte_size
 
 
 def main():
@@ -184,94 +281,48 @@ def main():
 
             print("  subscribed", file=sys.stderr)
 
-            call_id = str(uuid.uuid4())
-            rpc_request = {
-                "jsonrpc": "2.0",
-                "method": "tts.invoke",
-                "id": call_id,
-                "params": {
-                    "text": "Hello world",
-                    "engine": "kokoro",
-                },
-            }
-
-            pub_sock = bus_connect(bus_socket)
-            now_ms = int(time.time() * 1000)
-            send_msg(pub_sock, {
-                "op": "publish",
-                "session_id": session_id,
-                "chunk": {
-                    "id": str(uuid.uuid4()),
-                    "content_type": "null",
-                    "content": None,
-                    "data": None,
-                    "mime_type": None,
-                    "producer": "com.nominal.tts-speech-server-e2e-test",
-                    "timestamp": now_ms,
-                    "annotations": {
-                        "cafe.jsonrpc.request": rpc_request,
-                        "cafe.transient": True,
-                        "cafe.transient.retain_secs": 60,
-                    },
-                },
-            })
-            print(f"  published tts.invoke (call_id={call_id})", file=sys.stderr)
-            pub_sock.close()
-
+            print("=== Phase 1: short text (single /speak) ===", file=sys.stderr)
+            call_id = publish_tts_invoke(bus_socket, session_id, "Hello world")
             print("=== Reading response ===", file=sys.stderr)
-            sub_sock.settimeout(60)
-            result = None
-            binary_ref_id = None
-            audio_byte_size = None
-            audio_streaming_received = False
-            audio_complete_received = False
-            try:
-                while True:
-                    line = recv_line(sub_sock)
-                    if not line:
-                        break
-                    msg = json.loads(line)
-                    if msg.get("event") == "chunk":
-                        chunk = msg["chunk"]
-                        ann = chunk.get("annotations", {})
+            result, binary_ref_id, audio_byte_size = await_tts_result(sub_sock, call_id)
+            short_byte_size = audio_byte_size
 
-                        if chunk.get("content_type") == "null" and ann.get("chat.audio_streaming"):
-                            audio_streaming_received = True
-                            print(f"  phase 1/4: audio streaming signal", file=sys.stderr)
-
-                        if chunk.get("content_type") == "binary_ref":
-                            binary_ref_id = chunk["id"]
-                            audio_byte_size = ann.get("cafe.binary.byte_size")
-                            print(f"  phase 2/4: BinaryRef audio chunk: {binary_ref_id[:20]}... ({audio_byte_size} bytes)", file=sys.stderr)
-
-                        if chunk.get("content_type") == "null" and ann.get("chat.audio_complete"):
-                            audio_complete_received = True
-                            print(f"  phase 3/4: audio complete signal", file=sys.stderr)
-
-                        rpc_resp = ann.get("cafe.jsonrpc.response")
-                        if rpc_resp and rpc_resp.get("id") == call_id:
-                            result = rpc_resp
-                            print(f"  phase 4/4: rpc response received", file=sys.stderr)
-
-                        if result is not None and audio_complete_received:
-                            break
-            except socket.timeout:
-                print("  timeout waiting for response", file=sys.stderr)
-                assert False, "Timeout waiting for tts.invoke RPC response or BinaryRef chunk"
-
-            assert audio_streaming_received, "No audio_streaming signal received"
-            assert binary_ref_id is not None, "No BinaryRef audio chunk received"
-            assert audio_byte_size is not None and audio_byte_size > 0, "BinaryRef missing cafe.binary.byte_size"
-            assert audio_complete_received, "No audio_complete signal received"
-            assert result is not None, "No tts.invoke RPC response received"
-
-            err = result.get("error")
-            assert err is None, f"TTS synthesis failed: {err.get('message', '')}"
-
-            r = result.get("result", {})
-            chunk_id = r.get("chunk_id", "")
-            assert chunk_id, f"Missing chunk_id in TTS result: {json.dumps(result, indent=2)}"
-            print(f"  TTS synthesis successful (chunk_id={chunk_id})", file=sys.stderr)
+            print("=== Phase 2: long text (chunked /speak, ADR-126) ===", file=sys.stderr)
+            long_text = (
+                "This is the first sentence of a longer sample passage that exists purely to give "
+                "the chunking logic enough text to work with. "
+                "It continues with a second sentence that adds a little more length without changing "
+                "the meaning in any important way. "
+                "A third sentence follows, describing a simple walk along a quiet path near a river "
+                "in the early morning. "
+                "The fourth sentence mentions a few birds, some distant hills, and a sky that is "
+                "slowly turning from grey to blue. "
+                "A fifth sentence observes that the air feels cool and that the day is likely to be "
+                "clear and pleasant. "
+                "The sixth sentence exists only to push the total length comfortably past the "
+                "threshold the test requires. "
+                "Finally, a seventh sentence closes the passage and reminds the reader that none of "
+                "this content matters beyond its length."
+            )
+            assert len(long_text) > 500, "test text must force multiple chunks"
+            with MockSpeechServerHandler.speak_lock:
+                speaks_before = len(MockSpeechServerHandler.speak_texts)
+            call_id2 = publish_tts_invoke(bus_socket, session_id, long_text)
+            result2, binary_ref_id2, audio_byte_size2 = await_tts_result(
+                sub_sock, call_id2, timeout=120)
+            with MockSpeechServerHandler.speak_lock:
+                new_speaks = MockSpeechServerHandler.speak_texts[speaks_before:]
+            assert len(new_speaks) >= 2, (
+                f"long text must be split into multiple /speak calls, got {len(new_speaks)}"
+            )
+            for t in new_speaks:
+                assert len(t) <= 300, f"chunk exceeds speak budget: {len(t)} chars"
+            assert audio_byte_size2 > short_byte_size, (
+                f"concatenated audio ({audio_byte_size2}) should exceed single-chunk audio ({short_byte_size})"
+            )
+            print(f"  long text chunked into {len(new_speaks)} /speak calls, "
+                  f"{audio_byte_size2} bytes total", file=sys.stderr)
+            binary_ref_id, audio_byte_size = binary_ref_id2, audio_byte_size2
 
             # Verify binary upload lifecycle
             print("=== Verifying binary upload lifecycle ===", file=sys.stderr)

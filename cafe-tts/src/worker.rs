@@ -187,7 +187,7 @@ async fn run_session_handler(
                 serde_json::json!({ "chunk_id": audio_chunk_id }),
             ),
             Err(e) => {
-                error!("cafe-tts: TTS error for call {}: {}", call_id, e);
+                error!("cafe-tts: TTS error for call {}: {:#}", call_id, e);
                 let err_chunk = Chunk::new_null("com.nominal.cafe-tts")
                     .with_annotation(keys::ERROR_MESSAGE, e.to_string())
                     .with_annotation("error.source", "tts")
