@@ -9,14 +9,17 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 /// Start a file watcher on the given directories.
-/// Returns a receiver that yields paths of changed .js files.
+/// Returns a receiver that yields paths of created/modified/removed .js files.
 pub fn start_watcher(dirs: &[String]) -> Result<(RecommendedWatcher, mpsc::Receiver<PathBuf>)> {
     let (tx, rx) = mpsc::channel::<PathBuf>(64);
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         if let Ok(event) = res {
+            // Remove is included so deleting an agent file unloads it; the
+            // supervisor distinguishes add/modify from delete by file
+            // existence at handling time.
             match event.kind {
-                EventKind::Modify(_) | EventKind::Create(_) => {
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
                     for path in event.paths {
                         if path.extension().map(|e| e == "js").unwrap_or(false) {
                             let _ = tx.blocking_send(path);

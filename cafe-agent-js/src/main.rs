@@ -201,9 +201,21 @@ async fn run_once(socket_path: &str, dirs: &[String], default_timeout: Duration)
                 }
             } => {
                 if let Some(path) = change {
-                    match loader::reload_file(&registry, &path) {
-                        Ok(name) => info!("cafe-agent-js: hot-reloaded agent '{name}' ({})", path.display()),
-                        Err(e) => warn!("cafe-agent-js: reload of {} ignored: {e:#}", path.display()),
+                    // Watcher also reports removals: a path that no longer
+                    // exists unloads its agent instead of failing to parse.
+                    if path.exists() {
+                        match loader::reload_file(&registry, &path) {
+                            Ok(name) => info!("cafe-agent-js: hot-reloaded agent '{name}' ({})", path.display()),
+                            Err(e) => warn!("cafe-agent-js: reload of {} ignored: {e:#}", path.display()),
+                        }
+                    } else {
+                        match loader::remove_by_path(&registry, &path) {
+                            Some(name) => info!(
+                                "cafe-agent-js: unloaded agent '{name}' ({} removed); its sessions stop on next event",
+                                path.display()
+                            ),
+                            None => {} // file outside any agent dir / never loaded
+                        }
                     }
                 }
             }

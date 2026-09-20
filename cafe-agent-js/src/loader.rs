@@ -117,6 +117,20 @@ pub fn reload_file(registry: &Registry, path: &Path) -> anyhow::Result<String> {
     Ok(name)
 }
 
+/// Remove the agent whose source file is `path` (file deleted at runtime).
+/// Returns the removed agent's name, or `None` if no agent came from it.
+/// Sessions of a removed agent stop on their next event (the session loop
+/// re-reads the registry) — nothing is left silently running.
+pub fn remove_by_path(registry: &Registry, path: &Path) -> Option<String> {
+    let mut reg = registry.write().unwrap_or_else(|e| e.into_inner());
+    let name = reg
+        .iter()
+        .find(|(_, a)| a.path == path)
+        .map(|(n, _)| n.clone())?;
+    reg.remove(&name);
+    Some(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +222,21 @@ async function main(cafe) {}
         let (reg, _) = load_all(&[dir.path().to_str().unwrap().into()]);
         std::fs::write(&path, locked.replace("locked", "locked2")).unwrap();
         assert!(reload_file(&reg, &path).is_err());
+    }
+
+    #[test]
+    fn remove_by_path_unloads_agent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write(&dir, "good.js", GOOD);
+        let (reg, _) = load_all(&[dir.path().to_str().unwrap().into()]);
+        assert!(reg.read().unwrap().contains_key("good"));
+
+        let removed = remove_by_path(&reg, &path);
+        assert_eq!(removed.as_deref(), Some("good"));
+        assert!(!reg.read().unwrap().contains_key("good"));
+
+        // Unknown path is a no-op, not an error.
+        assert!(remove_by_path(&reg, &dir.path().join("nope.js")).is_none());
     }
 
     #[test]
