@@ -28,6 +28,7 @@ graph TB
         jsagent[cafe-agent-js<br/>JS agents]
         sheet[cafe-sheetbot<br/>Spreadsheet]
         fetch[cafe-web-fetch<br/>URL fetcher]
+        rss[cafe-rss<br/>RSS/Atom fetch]
         mcp[cafe-mcp-bridge<br/>MCP protocol]
     end
 
@@ -46,6 +47,7 @@ graph TB
     bus --> jsagent
     bus --> sheet
     bus --> fetch
+    bus --> rss
     bus --> mcp
     bus --> server
 
@@ -105,6 +107,7 @@ graph LR
     bus --> comfy[cafe-comfy]
     bus --> sheet[cafe-sheetbot]
     bus --> fetch[cafe-web-fetch]
+    bus --> rss[cafe-rss]
     bus --> mcp[cafe-mcp-bridge]
     bus --> server[cafe-server]
     store --> agent

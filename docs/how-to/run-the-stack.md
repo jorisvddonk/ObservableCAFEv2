@@ -59,7 +59,7 @@ The stack (`process-compose.yml`) starts these services:
 | `cafe-server` | HTTP gateway | 4000 |
 | `cafe-mcp-bridge` | MCP endpoint | 3100 |
 | `cafe-knowledgebase` | Vector search | — (bus client) |
-| `cafe-web-fetch`, `cafe-tts`, `cafe-stt`, `cafe-comfy`, `cafe-sheetbot`, `cafe-rot13`, `cafe-beacon` | Feature services | — (bus clients) |
+| `cafe-web-fetch`, `cafe-rss`, `cafe-tts`, `cafe-stt`, `cafe-comfy`, `cafe-sheetbot`, `cafe-rot13`, `cafe-beacon` | Feature services | — (bus clients) |
 
 A few processes are **disabled** by default (`cafe-telegram`, `cafe-demo`) because
 they need credentials or are one-shot. Optional services like `cafe-comfy` run

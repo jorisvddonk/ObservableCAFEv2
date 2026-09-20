@@ -87,6 +87,7 @@ alternatives considered. They are the project's institutional memory.
 | [ADR-121](../adr-121-evaluator-schema-system.md) | Self-describing evaluator schemas announced on the bus. |
 | [ADR-127](../adr-127-js-agent-runtime.md) | Pure-JS agents (`manifest` + `main(cafe)`) replace TOML `[[steps]]` pipelines. |
 | [ADR-128](../adr-128-stt-agent-driven.md) | STT is agent-driven; `cafe-stt` no longer auto-transcribes uploads. |
+| [ADR-129](../adr-129-cafe-rss-service.md) | RSS fetch/parse as its own evaluator (`cafe-rss`). |
 
 ## Feature completeness
 

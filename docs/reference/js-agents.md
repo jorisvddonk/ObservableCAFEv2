@@ -156,6 +156,7 @@ Schedule changes need a restart.
 | `agents-js/dice.js` | `!roll 2d6`: `dice-detector` → `cafe.tool("dice.roll")`. |
 | `agents-js/epub-narrator.js` | EPUB narration (`epub.invoke`, `!load`/`!next`/`!chapter`/`!list`), 300s RPC timeout. |
 | `agents-js/sheetbot.js` | SheetBot tasks/sheets/artefacts; 19 tools, LLM tool-calling loop via `cafe.tool`. |
+| `agents-js/rss-summarizer.js` | Background cron (07:00 daily): `rss-fetch` → digest → `llm`. |
 | `agents-js/dice-llm.js` | LLM tool-calling round-trip via `cafe.tool`. |
 | `agents-js/heartbeat.js` | Background + `initial_config` + `cafe.config()` + manual ticks. |
 | `agents-js/ticker.js` | Cron schedule (`*/10 * * * * * *`). |

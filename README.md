@@ -30,6 +30,7 @@ binary framing with 4-byte length-prefixed bincode encoding.
 | `cafe-demo` | Rust | One-shot demo publisher |
 | `cafe-dice` | Rust | Test tool-calling agent (dice roller) |
 | `cafe-web-fetch` | Rust | Web content fetcher (bus agent, `!fetch <url>`) |
+| `cafe-rss` | Rust | RSS/Atom fetch evaluator (`rss-fetch.invoke`) |
 | `cafe-knowledgebase` | Rust | Vector search knowledge base (LanceDB, RAG) |
 | `cafe-knowledgebase-index` | Rust | CLI for indexing documents into knowledgebase |
 | `cafe-mcp-bridge` | Rust | MCP server — exposes bus tools via stdio/HTTP+SSE |
@@ -100,6 +101,7 @@ graph TD
         cafe-sheetbot --> cafe-sdk
         cafe-dice --> cafe-sdk
         cafe-web-fetch --> cafe-sdk
+        cafe-rss --> cafe-sdk
         cafe-knowledgebase --> cafe-sdk
         cafe-agent-runtime --> cafe-sdk
         cafe-agent-js --> cafe-sdk
@@ -128,6 +130,7 @@ graph TD
     cafe-sheetbot -.-> cafe-bus
     cafe-dice -.-> cafe-bus
     cafe-web-fetch -.-> cafe-bus
+    cafe-rss -.-> cafe-bus
     cafe-knowledgebase -.-> cafe-bus
     cafe-agent-runtime -.-> cafe-bus
     cafe-agent-js -.-> cafe-bus

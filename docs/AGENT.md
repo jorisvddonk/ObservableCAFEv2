@@ -45,6 +45,7 @@ Build and stabilise components in this order. Later components depend on earlier
  9. cafe-comfy             — depends on cafe-types; connects to cafe-bus (optional — needs ComfyUI)
 10. cafe-sheetbot          — depends on cafe-types; connects to cafe-bus
 11. cafe-web-fetch         — depends on cafe-types; connects to cafe-bus
+11b. cafe-rss            — depends on cafe-types; RSS/Atom fetch evaluator
 12. cafe-knowledgebase     — depends on cafe-types; connects to cafe-bus
 13. cafe-knowledgebase-index — depends on cafe-types; indexing tool
 14. cafe-mcp-bridge        — depends on cafe-types; connects to cafe-bus
@@ -82,6 +83,7 @@ enums, serialization) must be stable before writing logic in other crates.
 | cafe-comfy             | Rust       | `reqwest`, `tokio`, `serde_json`               |
 | cafe-sheetbot          | Rust       | `tokio`, `rhai`                                 |
 | cafe-web-fetch         | Rust       | `reqwest`, `tokio`, `scraper`                  |
+| cafe-rss               | Rust       | `reqwest`, `quick-xml`                         |
 | cafe-knowledgebase     | Rust       | `lance`, `tokio`                                |
 | cafe-mcp-bridge        | Rust       | `axum`, `tokio`                                |
 | cafe-mcp-client        | Rust       | `tokio`, `serde_json`                          |

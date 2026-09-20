@@ -263,6 +263,20 @@ processes:
       cafe-bus:
         condition: process_healthy
 
+  cafe-rss:
+    command: ./target/release/cafe-rss
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+
   cafe-knowledgebase:
     command: ./target/release/cafe-knowledgebase
     environment:
