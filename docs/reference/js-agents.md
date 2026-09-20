@@ -147,6 +147,9 @@ Schedule changes need a restart.
 | `agents-js/default.js` | Standard chat agent (migrated from `agents/default.toml`). |
 | `agents-js/rot13.js` | ROT13 echo (migrated from `agents/rot13.toml`). |
 | `agents-js/counter.js` | Stateful counter in JS-local state. |
+| `agents-js/stt.js` | Audio transcription via `stt.invoke` (agent-driven, [ADR-128](../adr-128-stt-agent-driven.md)). |
+| `agents-js/fetch.js` | `!fetch <url>` via `web-fetch.invoke`; content is untrusted. |
+| `agents-js/knowledgebase.js` | RAG: `knowledgebase.search` (raw RPC) → context chunk → `llm`. |
 | `agents-js/dice-llm.js` | LLM tool-calling round-trip via `cafe.tool`. |
 | `agents-js/heartbeat.js` | Background + `initial_config` + `cafe.config()` + manual ticks. |
 | `agents-js/ticker.js` | Cron schedule (`*/10 * * * * * *`). |
