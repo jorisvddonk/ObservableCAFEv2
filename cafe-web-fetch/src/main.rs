@@ -1,6 +1,9 @@
 use cafe_http_proxy_sdk::{self as proxy_sdk, ProxyRequest, ProxyResponse};
-use cafe_sdk::{keys, Chunk, ServerMessage};
-use tracing::{error, info, warn};
+use cafe_sdk::{keys, Chunk, JsonRpcResponse, ServerMessage};
+use tracing::{info, warn};
+
+/// Bus RPC by which agents request a fetch (the `web-fetch` evaluator type).
+const INVOKE_METHOD: &str = "web-fetch.invoke";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,6 +43,14 @@ async fn run(socket_path: &str) -> anyhow::Result<()> {
             if let Err(e) = proxy_sdk::publish_registration(&hb_client, &reg).await {
                 warn!("cafe-web-fetch: heartbeat registration failed: {}", e);
             }
+        }
+    });
+
+    // Agent-driven fetches: handle `web-fetch.invoke` on session subscriptions.
+    let rpc_client = client.clone();
+    tokio::spawn(async move {
+        if let Err(e) = handle_rpc_sessions(rpc_client).await {
+            warn!("cafe-web-fetch: rpc subscriber ended: {}", e);
         }
     });
 
@@ -120,6 +131,131 @@ async fn run(socket_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Subscribe to all sessions and serve `web-fetch.invoke` for each.
+async fn handle_rpc_sessions(client: cafe_sdk::bus::BusClient) -> anyhow::Result<()> {
+    let mut rx = client.subscribe_all().await?;
+    while let Some(msg) = rx.recv().await {
+        if let ServerMessage::SessionCreated { session_id, .. } = msg {
+            let c = client.clone();
+            tokio::spawn(async move {
+                if let Err(e) = run_rpc_session(session_id, c).await {
+                    warn!("cafe-web-fetch: session error: {}", e);
+                }
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Per-session loop serving the `web-fetch.invoke` RPC (agent-driven fetch).
+async fn run_rpc_session(
+    session_id: String,
+    client: cafe_sdk::bus::BusClient,
+) -> anyhow::Result<()> {
+    let mut rx = client.subscribe(&session_id).await?;
+    let mut history_complete = false;
+    while let Some(msg) = rx.recv().await {
+        let chunk = match msg {
+            ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
+            _ => continue,
+        };
+        if !history_complete {
+            continue;
+        }
+        let Some(request) = chunk.as_rpc_request() else {
+            continue;
+        };
+        if request.method != INVOKE_METHOD {
+            continue;
+        }
+        let call_id = request.id.clone();
+        let text = request.params["text"].as_str().unwrap_or("");
+        let url = request.params["url"]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| parse_fetch_url(text));
+
+        let response = match url {
+            None => JsonRpcResponse::err(
+                &call_id,
+                cafe_sdk::rpc_errors::INVALID_PARAMS,
+                "no URL found (send `!fetch <url>` in text, or a url param)",
+            ),
+            Some(url) => match fetch_url_text(&url).await {
+                Ok((stripped, content_type)) => {
+                    let chunk = build_content_chunk(&stripped, &url, &content_type);
+                    let chunk_id = chunk.id.clone();
+                    let _ = client.publish(&session_id, chunk).await;
+                    JsonRpcResponse::ok(
+                        &call_id,
+                        serde_json::json!({ "chunk_id": chunk_id, "url": url }),
+                    )
+                }
+                Err(e) => JsonRpcResponse::err(
+                    &call_id,
+                    cafe_sdk::rpc_errors::UPSTREAM_ERROR,
+                    e.to_string(),
+                ),
+            },
+        };
+
+        let resp_chunk = Chunk::new_null("com.nominal.cafe-web-fetch")
+            .with_annotation(keys::CAFE_JSONRPC_RESPONSE, &response)
+            .as_transient()
+            .with_retain(60);
+        let _ = client.publish(&session_id, resp_chunk).await;
+    }
+    Ok(())
+}
+
+/// Extract a URL from a `!fetch <url>` command, or accept a bare URL.
+fn parse_fetch_url(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let rest = trimmed
+        .strip_prefix("!fetch ")
+        .or_else(|| trimmed.strip_prefix("!fetch"))
+        .unwrap_or(trimmed)
+        .trim();
+    if rest.starts_with("http://") || rest.starts_with("https://") {
+        Some(rest.split_whitespace().next().unwrap_or(rest).to_string())
+    } else {
+        None
+    }
+}
+
+/// Fetch `url`, returning (html-stripped text, content type).
+async fn fetch_url_text(url: &str) -> anyhow::Result<(String, String)> {
+    let response = reqwest::get(url).await?;
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/plain")
+        .to_string();
+    let text = response.text().await?;
+    Ok((strip_html(&text), content_type))
+}
+
+/// Build the content chunk for a fetched page (untrusted web content).
+fn build_content_chunk(stripped: &str, url: &str, content_type: &str) -> Chunk {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    Chunk::new_text(stripped, "com.nominal.cafe-web-fetch")
+        .with_annotation(keys::WEB_SOURCE_URL, url)
+        .with_annotation(keys::WEB_CONTENT_TYPE, content_type)
+        .with_annotation(keys::WEB_FETCH_TIME, now_ms)
+        .with_annotation(
+            keys::SECURITY_TRUST_LEVEL,
+            serde_json::json!({ "trusted": false, "source": "web" }),
+        )
+}
+
 fn extract_session_id(path: &str) -> Option<String> {
     // Path is like /api/ext/sessions/:id/fetch
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
@@ -142,29 +278,8 @@ async fn handle_fetch(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing url in request body"))?;
 
-    let response = reqwest::get(url).await?;
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("text/plain")
-        .to_string();
-    let text = response.text().await?;
-    let stripped = strip_html(&text);
-
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-
-    let chunk = Chunk::new_text(stripped, "com.nominal.cafe-web-fetch")
-        .with_annotation(keys::WEB_SOURCE_URL, url)
-        .with_annotation(keys::WEB_CONTENT_TYPE, &content_type)
-        .with_annotation(keys::WEB_FETCH_TIME, now_ms)
-        .with_annotation(
-            keys::SECURITY_TRUST_LEVEL,
-            serde_json::json!({ "trusted": false, "source": "web" }),
-        );
+    let (stripped, content_type) = fetch_url_text(url).await?;
+    let chunk = build_content_chunk(&stripped, url, &content_type);
 
     let chunk_id = chunk.id.clone();
 
@@ -226,5 +341,39 @@ mod tests {
     #[test]
     fn extract_session_id_wrong_path() {
         assert_eq!(extract_session_id("/api/sessions/abc/fetch"), None);
+    }
+
+    #[test]
+    fn parse_fetch_url_from_command() {
+        assert_eq!(
+            parse_fetch_url("!fetch https://example.com").as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            parse_fetch_url("!fetch http://example.com/a?b=1 trailing").as_deref(),
+            Some("http://example.com/a?b=1")
+        );
+    }
+
+    #[test]
+    fn parse_fetch_url_bare_and_invalid() {
+        assert_eq!(
+            parse_fetch_url("https://example.com").as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(parse_fetch_url("!fetch not-a-url"), None);
+        assert_eq!(parse_fetch_url("hello world"), None);
+        assert_eq!(parse_fetch_url(""), None);
+    }
+
+    #[test]
+    fn build_content_chunk_marks_untrusted() {
+        let chunk = build_content_chunk("body", "https://example.com", "text/html");
+        assert_eq!(chunk.content.as_deref(), Some("body"));
+        let trust = chunk
+            .annotations
+            .get(cafe_sdk::keys::SECURITY_TRUST_LEVEL)
+            .expect("trust annotation");
+        assert_eq!(trust["trusted"], serde_json::json!(false));
     }
 }
