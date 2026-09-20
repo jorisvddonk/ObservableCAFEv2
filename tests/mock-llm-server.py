@@ -64,6 +64,9 @@ class MockLLMHandler(BaseHTTPRequestHandler):
         entry = {
             "model": model,
             "system_prompt": system_prompt,
+            # Full messages (role + content) so tests can assert what the
+            # model actually received, e.g. RAG context injected into history.
+            "messages": messages,
             "reply_index": idx,
             "timestamp": time.time(),
         }

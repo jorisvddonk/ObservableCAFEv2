@@ -368,6 +368,11 @@ def main():
             assert len(mock_reqs) == 2, f"expected 2 LLM requests, saw {len(mock_reqs)}"
             assert "dice-rolling" in mock_reqs[0]["system_prompt"], \
                 "initial_config system prompt never reached the model"
+            # Turn 2 must carry the tool result in its messages: cafe.tool
+            # publishes the readable chunk a follow-up LLM turn reads.
+            turn2 = json.dumps(mock_reqs[1].get("messages", []))
+            assert "dice.roll" in turn2 and "Tool call completed" in turn2, \
+                "tool result never reached the follow-up LLM turn"
             print("  mock LLM saw 2 turns with seeded system prompt", file=sys.stderr)
 
             # --- cleanup ---
