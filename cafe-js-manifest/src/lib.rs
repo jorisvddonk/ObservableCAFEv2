@@ -155,13 +155,32 @@ pub fn scan_directory(dir: &str) -> ScanResult {
 
 /// Directories to scan: `./agents-js` plus `CAFE_JS_AGENT_PATHS`
 /// (colon-separated extras). Mirrors the TOML `CAFE_AGENT_PATHS` pattern
-/// without sharing the variable.
+/// without sharing the variable. Empty segments are dropped and duplicates
+/// removed (order-preserving), so a trailing colon or a repeated `./agents-js`
+/// is harmless instead of a noisy double scan.
 pub fn agent_dirs() -> Vec<String> {
     let mut dirs = vec!["./agents-js".to_string()];
     if let Ok(extra) = std::env::var("CAFE_JS_AGENT_PATHS") {
-        dirs.extend(extra.split(':').map(String::from));
+        dirs.extend(split_paths(&extra));
     }
-    dirs
+    dedupe_dirs(dirs)
+}
+
+/// Split a colon-separated path list, dropping empty segments.
+fn split_paths(extra: &str) -> Vec<String> {
+    extra
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Remove duplicate directories, preserving first-seen order.
+fn dedupe_dirs(dirs: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    dirs.into_iter()
+        .filter(|d| seen.insert(d.clone()))
+        .collect()
 }
 
 /// Read a single agent file (used by hot-reload).
@@ -267,5 +286,32 @@ async function main(cafe) {}
     fn scan_missing_dir_reports_skip() {
         let res = scan_directory("/tmp/definitely-not-a-cafe-dir-12345");
         assert!(res.loaded.is_empty());
+    }
+
+    #[test]
+    fn split_paths_drops_empties() {
+        assert_eq!(split_paths("/a:/b"), vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(split_paths("/a:"), vec!["/a".to_string()]);
+        assert_eq!(split_paths(":/a::/b:"), vec!["/a".to_string(), "/b".to_string()]);
+        assert!(split_paths("").is_empty());
+        assert!(split_paths(":::").is_empty());
+    }
+
+    #[test]
+    fn dedupe_dirs_keeps_first_seen_order() {
+        assert_eq!(
+            dedupe_dirs(vec![
+                "./agents-js".into(),
+                "/extra".into(),
+                "./agents-js".into(),
+                "/extra".into(),
+                "/other".into()
+            ]),
+            vec![
+                "./agents-js".to_string(),
+                "/extra".to_string(),
+                "/other".to_string()
+            ]
+        );
     }
 }
