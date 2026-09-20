@@ -73,9 +73,6 @@ async fn run_session(
     client: cafe_sdk::bus::BusClient,
     config: Config,
 ) -> Result<()> {
-    // Track binary_ref chunks waiting for upload completion: chunk_id -> (mime_type)
-    let mut pending: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-
     let mut rx = client.subscribe(&session_id).await?;
 
     // Gate dispatch on history replay completion (ADR-123).
@@ -124,33 +121,10 @@ async fn run_session(
             }
         }
 
-        // ── Auto-transcription: binary_ref with chat.role=user ──
-        if chunk.content_type == ContentType::BinaryRef && chunk.role() == Some("user") {
-            let ref_id = chunk.id.clone();
-            let mime = chunk.mime_type.clone().unwrap_or_else(|| "audio/wav".into());
-            info!("cafe-stt: tracking binary_ref {} for auto-transcription", ref_id);
-            pending.insert(ref_id, mime);
-            continue;
-        }
-
-        // ── Auto-transcription: completion event after upload ──
-        if chunk.content_type == ContentType::Null {
-            let ann = &chunk.annotations;
-            if ann.get("cafe.binary.completed").and_then(|v| v.as_bool()) == Some(true) {
-                // Find the binary_ref_id from the mutation's target_id
-                if let Some(binary_ref_id) = ann.get("cafe.mutates.target_id").and_then(|v| v.as_str()) {
-                    if let Some(mime) = pending.remove(binary_ref_id) {
-                        info!("cafe-stt: upload completed for {}, transcribing...", binary_ref_id);
-                        if let Err(e) = transcribe_binary_ref(
-                            &config, &client, &session_id, binary_ref_id, &mime,
-                        ).await {
-                            warn!("cafe-stt: auto-transcription failed: {}", e);
-                        }
-                    }
-                }
-                continue;
-            }
-        }
+        // Transcription is agent-driven only: a session's agent calls
+        // `stt.invoke` (see agents-js/stt.js). cafe-stt deliberately does not
+        // auto-transcribe uploaded binary_refs — that produced a second
+        // transcription alongside the agent's invoke.
     }
 
     Ok(())
@@ -178,54 +152,6 @@ async fn transcribe_audio(
             .await
         }
     }
-}
-
-/// Transcribe a binary_ref after its upload completed: fetch read credentials from history,
-/// download audio from binary-store, transcribe via backend, publish assistant chunk.
-async fn transcribe_binary_ref(
-    config: &Config,
-    bus: &cafe_sdk::bus::BusClient,
-    session_id: &str,
-    binary_ref_id: &str,
-    mime_type: &str,
-) -> Result<()> {
-    let history = bus.get_history(session_id).await?;
-    let read_creds = find_read_credentials(&history, binary_ref_id)
-        .ok_or_else(|| anyhow::anyhow!("no read credentials found for binary_ref {}", binary_ref_id))?;
-
-    let read_url = read_creds["cafe.binary.read_url"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing read_url"))?;
-    let read_token = read_creds["cafe.binary.read_token"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing read_token"))?;
-
-    let fetch_url = format!("{}?token={}", read_url, read_token);
-    info!("cafe-stt: fetching audio from {}", fetch_url);
-    let resp = reqwest::Client::new()
-        .get(&fetch_url)
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("binary-store returned {} for {}", resp.status(), fetch_url);
-    }
-    let audio = resp.bytes().await?.to_vec();
-
-    // Convert to WAV (ffmpeg handles any input format)
-    let wav = convert_to_wav(&audio).await?;
-    info!("cafe-stt: converted {} bytes to {} bytes WAV", audio.len(), wav.len());
-
-    let (text, duration) = transcribe_audio(config, &wav, None, None).await?;
-
-    let chunk_id = uuid::Uuid::new_v4().to_string();
-    info!("cafe-stt: auto-transcribed '{}' ({:.1}s)", text.chars().take(60).collect::<String>(), duration);
-
-    // Publish as assistant text chunk
-    let text_chunk = Chunk::new_text(&text, "com.nominal.cafe-stt")
-        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
-    let _ = bus.publish(session_id, text_chunk).await;
-
-    Ok(())
 }
 
 /// Handle an stt.invoke RPC: transcribe audio and publish result.

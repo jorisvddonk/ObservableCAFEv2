@@ -1,6 +1,12 @@
 # ADR-114: Binary Upload Completion Event + Auto-Transcription
 
-**Status**: Implemented
+**Status**: Implemented (auto-transcription superseded by [ADR-128](./adr-128-stt-agent-driven.md))
+
+> **Note (2026-09-20):** the upload-completion event itself is unchanged, but
+> `cafe-stt` no longer auto-transcribes on it — transcription is agent-driven
+> via `stt.invoke` ([ADR-128](./adr-128-stt-agent-driven.md)). The
+> auto-transcription parts below (the sequence-diagram step and the "handles
+> both paths" consequence) describe the original design.
 
 ## Context
 
