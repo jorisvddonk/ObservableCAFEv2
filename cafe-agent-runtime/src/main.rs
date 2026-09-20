@@ -12,15 +12,50 @@ mod watcher;
 
 use anyhow::Result;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{ServerMessage, StepDef};
+use cafe_sdk::{AgentDefinition, ServerMessage, StepDef};
 use config::Config;
 use executor::PipelineExecutor;
 use registry::{AgentEntry, AgentRegistry};
 use schema_registry::SchemaRegistry;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tracing::{error, info, warn};
+
+/// Names of agents defined in the JS agent directories (`./agents-js` plus
+/// `CAFE_JS_AGENT_PATHS`). Scanned without executing anything — only the
+/// manifest is read.
+fn scan_js_agent_names() -> HashSet<String> {
+    let mut names = HashSet::new();
+    for dir in cafe_js_manifest::agent_dirs() {
+        for loaded in cafe_js_manifest::scan_directory(&dir).loaded {
+            names.insert(loaded.manifest.name);
+        }
+    }
+    names
+}
+
+/// Drop TOML agents whose name is claimed by a JS agent (JS wins).
+/// Returns the removed names.
+fn remove_shadowed(
+    agents: &mut Vec<(PathBuf, AgentDefinition)>,
+    js_names: &HashSet<String>,
+) -> Vec<String> {
+    let mut removed = Vec::new();
+    agents.retain(|(_, def)| {
+        if js_names.contains(&def.name) {
+            removed.push(def.name.clone());
+            false
+        } else {
+            true
+        }
+    });
+    // A name can appear in several TOML dirs; report each shadowed name once.
+    removed.sort();
+    removed.dedup();
+    removed
+}
 
 /// Everything the poller needs to know about an agent with RPC steps.
 #[derive(Clone)]
@@ -46,6 +81,19 @@ async fn main() -> Result<()> {
         let found = loader::scan_directory(dir);
         info!("cafe-agent-runtime: found {} agents in {}", found.len(), dir);
         all_agents.extend(found);
+    }
+
+    // 1b. JS agents shadow TOML agents of the same name (ADR-127). Without
+    // this, both cafe-agent-runtime and cafe-agent-js attach to the same
+    // session and every step runs twice.
+    let js_names = scan_js_agent_names();
+    let shadowed = remove_shadowed(&mut all_agents, &js_names);
+    if !shadowed.is_empty() {
+        info!(
+            "cafe-agent-runtime: {} agent(s) shadowed by JS agents: {:?}",
+            shadowed.len(),
+            shadowed
+        );
     }
 
     // 2. Wait for bus to be ready
@@ -368,3 +416,46 @@ async fn run_until_shutdown(
 }
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn def(name: &str) -> (PathBuf, AgentDefinition) {
+        (
+            PathBuf::from(format!("{name}.toml")),
+            AgentDefinition {
+                name: name.into(),
+                ..AgentDefinition::default()
+            },
+        )
+    }
+
+    #[test]
+    fn remove_shadowed_drops_js_claimed_names() {
+        let mut agents = vec![def("default"), def("dice"), def("rot13")];
+        let js: HashSet<String> = ["default".to_string(), "rot13".to_string()]
+            .into_iter()
+            .collect();
+        let removed = remove_shadowed(&mut agents, &js);
+        assert_eq!(removed, vec!["default".to_string(), "rot13".to_string()]);
+        let names: Vec<&str> = agents.iter().map(|(_, d)| d.name.as_str()).collect();
+        assert_eq!(names, vec!["dice"]);
+    }
+
+    #[test]
+    fn remove_shadowed_reports_each_name_once() {
+        // Same agent defined in two TOML dirs (e.g. repo + private).
+        let mut agents = vec![def("default"), def("default")];
+        let js: HashSet<String> = ["default".to_string()].into_iter().collect();
+        assert_eq!(remove_shadowed(&mut agents, &js), vec!["default".to_string()]);
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn remove_shadowed_no_js_agents_is_a_noop() {
+        let mut agents = vec![def("default")];
+        let removed = remove_shadowed(&mut agents, &HashSet::new());
+        assert!(removed.is_empty());
+        assert_eq!(agents.len(), 1);
+    }
+}

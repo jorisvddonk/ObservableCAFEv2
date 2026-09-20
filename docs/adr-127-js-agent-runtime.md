@@ -69,8 +69,15 @@ responses reject, so agents use `try/catch` and `Promise.all` directly.
 
 `cafe-agent-js` supersedes `cafe-agent-runtime`, which is frozen (bugfixes
 only). Sessions route by `agent_id`; a name defined in both worlds resolves
-to the JS agent in `GET /api/agents`. The two binaries coexist during the
-migration.
+to the JS agent. The two binaries coexist during the migration.
+
+JS shadowing is enforced at **runtime**, not only in listings:
+`cafe-agent-runtime` scans the JS agent directories (`./agents-js` +
+`CAFE_JS_AGENT_PATHS`) and excludes any TOML agent whose name a JS manifest
+claims. Without this, both runtimes attach to the same session and every step
+runs twice (observed: 4 evaluator chunks instead of 2). Migration therefore
+means "add the JS agent"; the TOML file may stay until the tests that drive
+it through the legacy runtime are migrated too.
 
 ### 6. Sandboxing posture (Phase 3 level)
 

@@ -45,7 +45,7 @@ Rules:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `name` | string | *(required)* | Unique identifier. Session ID for background agents. A JS agent shadows a TOML agent of the same name in `GET /api/agents`. |
+| `name` | string | *(required)* | Unique identifier. Session ID for background agents. A JS agent shadows a TOML agent of the same name — both in `GET /api/agents` and at runtime: `cafe-agent-runtime` excludes shadowed TOML agents so a name executes only in `cafe-agent-js` (otherwise both runtimes attach and every step runs twice). |
 | `description` | string | `""` | Human-readable purpose. |
 | `background` | bool | `false` | If `true`, the host auto-creates the session at boot and seeds config. |
 | `allows_reload` | bool | `true` | If `false`, file changes are logged and ignored. |
@@ -144,6 +144,8 @@ Schedule changes need a restart.
 | Agent | Highlights |
 |---|---|
 | `agents-js/demo.js` | Stateless rot13 echo; the minimal loop. |
+| `agents-js/default.js` | Standard chat agent (migrated from `agents/default.toml`). |
+| `agents-js/rot13.js` | ROT13 echo (migrated from `agents/rot13.toml`). |
 | `agents-js/counter.js` | Stateful counter in JS-local state. |
 | `agents-js/dice-llm.js` | LLM tool-calling round-trip via `cafe.tool`. |
 | `agents-js/heartbeat.js` | Background + `initial_config` + `cafe.config()` + manual ticks. |
