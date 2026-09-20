@@ -201,4 +201,4 @@ carries `provider = "mcp"`, and the `tool-executor` skips those calls so
 
 - Tool annotation details: [`cafe.tool.*` keys](../spec-cafe.md#tool-use).
 - The execution internals: [ADR-112](../adr-112-mcp-bridge.md).
-- How config flows to the LLM: [SessionConfig](../../cafe-agent-runtime/src/config.rs).
+- How config flows to the LLM: [SessionConfig](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/cafe-agent-runtime/src/config.rs).

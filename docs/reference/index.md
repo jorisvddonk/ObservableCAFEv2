@@ -21,7 +21,7 @@ it is (that's [Explanation](../explanation/)).
 |---|---|
 | [JS agent reference](js-agents.md) | The `agents-js/*.js` format: manifest, `main(cafe)`, events, promise RPC (current) |
 | [Agent config reference](agent-config.md) | The legacy TOML format: metadata fields, steps, triggers, initial chunk, tool definitions (frozen) |
-| [Environment variables](../AGENT.md#environment-variables-global) | Every env var read by the services and its default |
+| [Environment variables](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/internal-docs/AGENT.md#environment-variables-global) | Every env var read by the services and its default |
 
 ## Interfaces
 

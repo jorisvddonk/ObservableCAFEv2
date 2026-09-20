@@ -4,7 +4,7 @@
 a Unix domain socket (local) or [iroh QUIC](#iroh-transport) (remote P2P).
 
 **Note on wire format**: The bus uses a pluggable `BusCodec` trait
-([`cafe-types/src/codec.rs`](../cafe-types/src/codec.rs)).
+([`cafe-types/src/codec.rs`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/cafe-types/src/codec.rs)).
 The default codec is newline-delimited JSON (NDJSON), described below.
 With the `bincode-codec` feature, the bus uses length-prefixed bincode v2
 (4-byte little-endian length prefix + bincode payload).

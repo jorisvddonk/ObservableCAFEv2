@@ -54,7 +54,7 @@ generator order *is* the pipeline, and each RPC is one `await`. Errors reject
 
 ## Step 2 — The shipped agent
 
-This flow ships as [`agents-js/dice-llm.js`](../../agents-js/dice-llm.js) —
+This flow ships as [`agents-js/dice-llm.js`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/agents-js/dice-llm.js) —
 the JS port of `agents/dice-llm.toml`. Its manifest advertises the tool to
 the LLM exactly like the TOML `initial_chunk` did: a system prompt teaching
 the `<|tool_call|>` marker format plus `tools.available` with the
@@ -123,7 +123,7 @@ sequenceDiagram
 - **Retry**: wrap `cafe.tool` in `try/catch` with one retry on rejection.
 - **Stateful memory**: switch `mode` to `"stateful"` and keep a running total
   across rolls in a JS variable (see
-  [`agents-js/counter.js`](../../agents-js/counter.js)).
+  [`agents-js/counter.js`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/agents-js/counter.js)).
 
 ## Next steps
 

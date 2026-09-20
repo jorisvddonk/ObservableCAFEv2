@@ -14,7 +14,7 @@ supports.
 
 Separately, the term "agent" (TOML files, `AgentDefinition`, etc.) conflates
 the workflow definition with the runtime process.
-See [ADR-XXX](./adr-XXX-workflow-rename.md) for the eventual renaming plan.
+The eventual workflow/agent renaming is tracked alongside [ADR-127](./adr-127-js-agent-runtime.md), which renames the runtime concepts in practice.
 
 **Decision**:
 

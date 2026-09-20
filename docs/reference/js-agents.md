@@ -161,7 +161,7 @@ Schedule changes need a restart.
 | `agents-js/heartbeat.js` | Background + `initial_config` + `cafe.config()` + manual ticks. |
 | `agents-js/ticker.js` | Cron schedule (`*/10 * * * * * *`). |
 
-Type declarations for editors: [`agents-js/cafe.d.ts`](../../agents-js/cafe.d.ts).
+Type declarations for editors: [`agents-js/cafe.d.ts`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/agents-js/cafe.d.ts).
 
 ---
 

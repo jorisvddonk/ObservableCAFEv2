@@ -198,7 +198,7 @@ Key endpoints:
 
 ## Repository layout
 
-See the [README](../README.md#projects) for the current list of projects with descriptions and languages.
+See the [README](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/README.md#projects) for the current list of projects with descriptions and languages.
 
 ---
 

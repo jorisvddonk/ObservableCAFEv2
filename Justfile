@@ -38,6 +38,14 @@ lint:
     cargo clippy --workspace -- -D warnings
     cd cafe-telegram && go vet ./...
 
+# Build the documentation site into site/ (mdBook)
+docs-build:
+    mdbook build
+
+# Serve the docs locally with live reload (http://localhost:3000)
+docs-serve:
+    mdbook serve --open
+
 # Clean all build artifacts
 clean:
     cargo clean

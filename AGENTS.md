@@ -13,6 +13,21 @@ ADRs live in `docs/adr-NNN-title.md`. Each ADR has:
 
 Use the next available NNN (1xx for new).
 
+## Documentation site
+
+Docs are published as a static site built by **mdBook** from `docs/` (config in
+`book.toml`, output `site/`, gitignored).
+
+- `docs/SUMMARY.md` is the navigation — **every published page must be listed
+  there**, otherwise mdBook silently omits it. Update it when adding a page.
+- `docs/` contains publishable content only. Anything internal goes in
+  `internal-docs/` (mdBook copies non-markdown files verbatim, so internal
+  notes left in `docs/` would be published).
+- Mermaid works via the `mdbook-mermaid` preprocessor + vendored `mermaid.min.js`.
+- Build/serve locally: `just docs-build`, `just docs-serve`.
+- Deploy: `.github/workflows/docs.yml` (GitHub Pages, Actions artifact flow).
+  See [ADR-130](docs/adr-130-doc-site-mdbook.md).
+
 ## Commit conventions
 
 - Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, etc. Lowercase after prefix. Include crate/area scope when possible (e.g. `feat(cafe-tui):`). May reference ADRs.

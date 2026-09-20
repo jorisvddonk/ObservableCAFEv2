@@ -67,7 +67,7 @@ cargo build -p cafe-bus -p cafe-cli -p cafe-rot13 -p cafe-agent-js
 
 then start each binary with `CAFE_BUS_SOCKET` pointed at a temp socket and
 `CAFE_JS_AGENT_PATHS` at a scratch dir. The committed
-[`tests/js-agents-e2e.py`](../../tests/js-agents-e2e.py) is a complete
+[`tests/js-agents-e2e.py`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/tests/js-agents-e2e.py) is a complete
 example: registry assertions, RPC `call_id` correlation, stateful counters,
 ticks, cron, and both hot-reload paths.
 

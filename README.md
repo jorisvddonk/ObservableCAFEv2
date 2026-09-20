@@ -149,7 +149,9 @@ graph TD
 ## Documentation
 
 Documentation is organized using the [Diataxis](https://diataxis.fr/) framework —
-**[`docs/index.md`](docs/index.md)** is the hub.
+**[`docs/index.md`](docs/index.md)** is the hub. It is published as a site with
+mdBook: `just docs-serve` for a local preview, `just docs-build` for the static
+output in `site/` (see [ADR-130](docs/adr-130-doc-site-mdbook.md)).
 
 - **Tutorials** — `docs/tutorials/` — guided lessons: getting started, your first agent, a tool-calling agent, your first JS agent, a JS tool-calling agent
 - **How-to guides** — `docs/how-to/` — recipes: run the stack, use the CLI, connect via MCP, work with binary assets, set up the knowledge base, write E2E tests, connect over iroh, add a service

@@ -1,0 +1,72 @@
+name: Docs
+
+# Builds the mdBook site from docs/ and deploys it to GitHub Pages.
+# Requires: Settings -> Pages -> Source = "GitHub Actions" (one-time).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "book.toml"
+      - "theme/**"
+      - "mermaid.min.js"
+      - "mermaid-init.js"
+      - ".github/workflows/docs.yml"
+  # Build-check on PRs (deploy is gated to main below).
+  pull_request:
+    paths:
+      - "docs/**"
+      - "book.toml"
+      - "theme/**"
+      - "mermaid.min.js"
+      - "mermaid-init.js"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment, but don't cancel an in-progress one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: "0.5.4"
+
+      - name: Install mdbook-mermaid
+        run: cargo install mdbook-mermaid --version 0.17.1 --locked
+
+      - name: Build the book
+        run: mdbook build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

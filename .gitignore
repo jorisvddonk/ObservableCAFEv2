@@ -45,10 +45,13 @@ build/
 .pi/
 
 # Planning / scratch analysis
-docs/planning/
+internal-docs/planning/
 
 # Editor
 .vscode/
 .idea/
 *.swp
 .opencode/
+
+# mdBook documentation site output
+/site/

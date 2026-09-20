@@ -88,14 +88,14 @@ quadrant it always belonged to:
 | `docs/architecture.md` | Explanation | Background and reasoning |
 | `docs/feature-matrix.md` | Explanation | State of the design |
 | `docs/adr-*.md` | Explanation | Decision history |
-| `docs/AGENT.md` | Explanation (internal) | Context for AI coding agents |
+| `internal-docs/AGENT.md` | Internal (repo-only) | Context for AI coding agents |
 | `docs/cafe-comfy.md` | Reference | Service-specific facts |
 
 ---
 
 ## Conventions
 
-- New specs and ADRs follow the rules in [`../AGENTS.md`](../AGENTS.md): ADRs are
+- New specs and ADRs follow the rules in [`../AGENTS.md`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/AGENTS.md): ADRs are
   `docs/adr-NNN-title.md`, specs are `docs/spec-*.md`, how-tos are
   `docs/how-to/`, tutorials are `docs/tutorials/`.
 - Every how-to and tutorial links to the relevant reference and explanation pages;

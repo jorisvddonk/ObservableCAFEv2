@@ -113,5 +113,5 @@ start `cafe-bus` first.
 ## Reference
 
 - [Architecture and startup order](../architecture.md#startup-order)
-- [Environment variables](../AGENT.md#environment-variables-global)
+- [Environment variables](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/internal-docs/AGENT.md#environment-variables-global)
 - [How to: connect over iroh](connect-over-iroh.md) — run services against a bus on another machine

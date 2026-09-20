@@ -149,6 +149,6 @@ in production paths.
 
 ## Where to start if building a specific component
 
-Read `docs/AGENT.md` (this file), then read the corresponding `docs/<component>.md`.
+Read `internal-docs/AGENT.md` (this file), then read the corresponding `docs/<component>.md`.
 Each component doc contains: purpose, inputs/outputs, data flow, public interface,
 suggested file structure, and implementation notes.
