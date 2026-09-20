@@ -1,102 +1,80 @@
-# Documentation
+# ObservableCAFE
 
-ObservableCAFE's documentation follows the [Diataxis](https://diataxis.fr/) framework.
-Every document here serves exactly one purpose — learning, doing, lookup, or
-understanding — and links to its neighbours so you never get stuck between
-quadrants.
+ObservableCAFE is a **multi-agent LLM platform** built as a suite of small,
+composable programs that talk to each other over a central message bus. There
+is no monolith and no direct service-to-service calls: the LLM, speech, image
+generation, retrieval, and every tool are separate processes that connect to
+the same bus.
 
-The four quadrants:
+The design follows the **CAFE** model — **C**hunks, **A**nnotations,
+**F**unctions (evaluators), **E**vents:
 
-| Quadrant | Question it answers | Style | You |
-|---|---|---|---|
-| [Tutorials](tutorials/) | "Where do I start?" | Guided lessons | Follow along, step by step |
-| [How-to guides](how-to/) | "How do I do X?" | Recipes for real tasks | Working toward a goal |
-| [Reference](reference/) | "What is this exactly?" | Dry, complete facts | Looking something up |
-| [Explanation](explanation/) | "Why is it built this way?" | Background and reasoning | Building mental models |
+- Every event is an immutable **chunk** (text, binary, or null).
+- Chunks carry **annotations** — dot-namespaced metadata like `chat.role` or
+  `config.llm.model` — instead of a rigid schema.
+- **Evaluators** are the functions: given a chunk plus the session history,
+  they produce zero or more new chunks.
+- **Agents** wire evaluators into a pipeline. Here an agent is a plain
+  JavaScript module — `manifest` + `async function main(cafe)` — run by the
+  `cafe-agent-js` host.
 
-> A tutorial is where you *learn*; a how-to is where you *do*; reference is where
-> you *check*; explanation is where you *understand*.
+Nothing is stored out of band: a session *is* its ordered chunk history, and
+every service derives what it needs by scanning that history. The services are
+written in Rust (plus a Go bridge and TypeScript frontend), and the agent-facing
+API is promises all the way down — `await cafe.invoke("llm", {})`.
 
----
+## Quick start
 
-## Tutorials — start here
+```sh
+git clone https://github.com/jorisvddonk/ObservableCAFEv2
+cd ObservableCAFEv2
+cargo build --workspace     # build the Rust services
+./start.sh                  # start the bus, services and HTTP API
+```
 
-Learn by doing. Follow these in order; each one builds on the last.
+Then walk through **[Getting started](tutorials/getting-started.md)**, or jump
+straight to writing an agent in **[Your first JS
+agent](tutorials/your-first-js-agent.md)**.
 
-1. [Getting started](tutorials/getting-started.md) — build the workspace, start
-   the stack, and send your first message end to end.
-2. [Your first agent](tutorials/your-first-agent.md) — write an agent definition
-   that transforms text, no Rust required.
-3. [A tool-calling agent](tutorials/tool-calling-agent.md) — wire the LLM to a
-   tool and back, the full round-trip.
-4. [Your first JS agent](tutorials/your-first-js-agent.md) — the same idea as
-   (2) as a pure-JS agent: `manifest` + `async function main(cafe)`.
-5. [A JS tool-calling agent](tutorials/js-tool-calling-agent.md) — the
-   round-trip from (3) orchestrated in promises instead of TOML steps.
+## Key concepts
 
-## How-to guides — do real tasks
-
-Goal-oriented recipes. Pick whichever matches what you're trying to accomplish.
-
-| Task | Guide |
+| Concept | What it is |
 |---|---|
-| Start or stop all services | [Run the stack](how-to/run-the-stack.md) |
-| Talk to the bus from a shell | [Use the cafe-cli](how-to/use-the-cli.md) |
-| Give an AI assistant (opencode, Claude) access to the bus | [Connect via MCP](how-to/connect-mcp.md) |
-| Store and stream binary assets (audio, images, files) | [Work with binary assets](how-to/use-binary-assets.md) |
-| Give the LLM retrieval over your documents | [Set up the knowledge base](how-to/use-knowledgebase.md) |
-| Verify the whole stack works | [Write and run E2E tests](how-to/write-e2e-tests.md) |
-| Connect to the bus from another machine | [Connect over iroh](how-to/connect-over-iroh.md) |
-| Add a brand-new service to the stack | [Add a service](how-to/add-a-service.md) |
-| Debug a JS agent (logs, error chunks, hot-reload) | [Debug a JS agent](how-to/debug-js-agent.md) |
+| **Bus** | `cafe-bus`, a Unix-socket message bus. Every service connects to it; nothing calls anything else directly. |
+| **Chunk** | The unit of data — immutable, with a content type, a producer and annotations. |
+| **Annotation** | Key/value metadata on a chunk, e.g. `chat.role`, `cafe.tool.call`, `config.*`. |
+| **Session** | An ordered chunk history with input/output/error streams. State is derived from it. |
+| **Evaluator** | A function that turns a chunk plus history into more chunks (`llm`, `tts`, `rot13`, …). |
+| **Agent** | A JS module that orchestrates evaluators and tools for a session. |
+| **Service** | A standalone process exposing one capability over the bus. |
 
-## Reference — look it up
+## What you can build
 
-Complete, factual descriptions of every contract in the system.
+- **Chat and tool-calling agents** — the LLM decides, a tool runs over RPC, and
+  the result flows back into the answer ([JS tutorial](tutorials/js-tool-calling-agent.md)).
+- **Voice agents** — speech in and out via `cafe-stt` and `cafe-tts`.
+- **Image generation** — ComfyUI workflows driven by an agent (`cafe-comfy`).
+- **Retrieval-augmented answers** — a vector knowledge base (`cafe-knowledgebase`).
+- **Background and scheduled agents** — cron-driven JS agents that run on their own.
+- **Remote buses** — connect clients over iroh QUIC from another machine.
+- **AI-assistant integration** — expose the whole bus to opencode or Claude over MCP.
 
-- [Reference index](reference/) — data model, bus protocol, HTTP API, annotations, agents.
-- [Data model spec](spec-cafe.md) — Chunk, ContentType, annotation keys, sessions, agents.
-- [Bus protocol spec](spec-bus-protocol.md) — every message over the wire, including iroh.
-- [HTTP API spec](spec-http-api.md) — every REST + SSE endpoint of `cafe-server`.
-- [`cafe.*` annotation keys](cafe-annotations.md) — keys interpreted by the bus and platform services.
-- [JS agent reference](reference/js-agents.md) — the `agents-js/*.js` format: manifest, `main(cafe)`, events, promise RPC.
-- [Agent config reference](reference/agent-config.md) — the legacy TOML format for agent definitions (frozen; new agents are JS).
+## Browse the docs
 
-## Explanation — understand the design
+The documentation is split into four kinds, so you can go straight to the page
+that matches what you need:
 
-Why the system looks the way it does. Read these when you want the bigger picture,
-not when you need to get something done.
+| Section | Use it when you want to… |
+|---|---|
+| [Tutorials](tutorials/) | learn by following a guided lesson — **start here** |
+| [How-to guides](how-to/) | accomplish a specific task |
+| [Reference](reference/) | look up an exact contract: data model, bus protocol, HTTP API, annotations |
+| [Explanation](explanation/) | understand *why* — architecture and the ADR decision log |
 
-- [Architecture](architecture.md) — system overview, data flow, design principles.
-- [Feature matrix](feature-matrix.md) — where each feature lives and its status.
-- [Architecture Decision Records](explanation/) — every ADR, from the Unix socket
-  bus (ADR-001) to the evaluator schema system (ADR-121).
-
----
-
-## Mapping: where the old docs went
-
-Nothing was deleted or moved. The existing documentation now has a home in the
-quadrant it always belonged to:
-
-| Existing file | Quadrant | Why |
-|---|---|---|
-| `docs/spec-cafe.md` | Reference | Contract, looked up |
-| `docs/spec-bus-protocol.md` | Reference | Contract, looked up |
-| `docs/spec-http-api.md` | Reference | Contract, looked up |
-| `docs/cafe-annotations.md` | Reference | Key table, looked up |
-| `docs/architecture.md` | Explanation | Background and reasoning |
-| `docs/feature-matrix.md` | Explanation | State of the design |
-| `docs/adr-*.md` | Explanation | Decision history |
-| `internal-docs/AGENT.md` | Internal (repo-only) | Context for AI coding agents |
-| `docs/cafe-comfy.md` | Reference | Service-specific facts |
+New here? Read [Getting started](tutorials/getting-started.md), then
+[Architecture](architecture.md) for the bigger picture.
 
 ---
 
-## Conventions
-
-- New specs and ADRs follow the rules in [`../AGENTS.md`](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/AGENTS.md): ADRs are
-  `docs/adr-NNN-title.md`, specs are `docs/spec-*.md`, how-tos are
-  `docs/how-to/`, tutorials are `docs/tutorials/`.
-- Every how-to and tutorial links to the relevant reference and explanation pages;
-  keep those cross-links when editing.
+Source, issues and the full project list are on
+[GitHub](https://github.com/jorisvddonk/ObservableCAFEv2). Licensed MIT.

@@ -2,7 +2,7 @@
 
 # Home
 
-- [Documentation](index.md)
+- [Introduction](index.md)
 
 # Tutorials
 
