@@ -54,3 +54,4 @@ jobs:
           uv run tests/stt-speech-server-e2e.py
           uv run tests/session-fork-e2e.py
           uv run tests/llm-compaction-e2e.py
+          uv run tests/js-agents-e2e.py

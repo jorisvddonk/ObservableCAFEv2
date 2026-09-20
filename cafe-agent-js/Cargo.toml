@@ -1,0 +1,26 @@
+[package]
+name = "cafe-agent-js"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cafe-agent-js"
+path = "src/main.rs"
+
+[dependencies]
+cafe-types           = { path = "../cafe-types" }
+cafe-sdk             = { path = "../cafe-sdk", features = ["bus-client"] }
+cafe-js-manifest     = { path = "../cafe-js-manifest" }
+tokio                = { workspace = true }
+serde                = { workspace = true }
+serde_json           = { workspace = true }
+tracing              = { workspace = true }
+tracing-subscriber   = { workspace = true }
+anyhow               = { workspace = true }
+rquickjs             = { version = "0.14", features = ["futures"] }
+tokio-cron-scheduler = "0.10"
+notify               = "6"
+sha2                = "0.10"
+
+[dev-dependencies]
+tempfile = "3.0"

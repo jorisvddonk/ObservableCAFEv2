@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 cafe-sdk           = { path = "../cafe-sdk", features = ["bus-client", "iroh-client"] }
 cafe-http-proxy-sdk = { path = "../cafe-http-proxy-sdk" }
+cafe-js-manifest   = { path = "../cafe-js-manifest" }
 tokio              = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }

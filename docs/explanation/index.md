@@ -25,7 +25,8 @@ The central ideas:
 - **History is the source of truth.** Session state is reconstructed by scanning
   chunk history, not stored separately.
 - **Errors are out-of-band.** Errors go to an error stream, never the data stream.
-- **Agents are pipelines.** A TOML file wires named evaluators into a data flow.
+- **Agents are pipelines.** A JS module (`manifest` + `async function main(cafe)`)
+  wires evaluators into a data flow; the TOML form is frozen.
 
 ## Architecture Decision Records
 
@@ -84,6 +85,7 @@ alternatives considered. They are the project's institutional memory.
 | [ADR-112](../adr-112-mcp-bridge.md) | Expose bus tools over Model Context Protocol. |
 | [ADR-113](../adr-113-websocket-bridge.md) | WebSocket bridge for the web UI. |
 | [ADR-121](../adr-121-evaluator-schema-system.md) | Self-describing evaluator schemas announced on the bus. |
+| [ADR-127](../adr-127-js-agent-runtime.md) | Pure-JS agents (`manifest` + `main(cafe)`) replace TOML `[[steps]]` pipelines. |
 
 ## Feature completeness
 

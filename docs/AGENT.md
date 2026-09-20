@@ -37,7 +37,9 @@ Build and stabilise components in this order. Later components depend on earlier
  3. cafe-store             — depends on cafe-types; connects to cafe-bus as a subscriber
  4. cafe-binary-store      — depends on cafe-types, cafe-sdk; binary asset hosting
  5. cafe-llm               — depends on cafe-types; LLM calls
- 6. cafe-agent-runtime     — depends on cafe-types; connects to cafe-bus + cafe-store
+ 6. cafe-agent-runtime     — depends on cafe-types; connects to cafe-bus + cafe-store (TOML agents, frozen)
+ 6b. cafe-agent-js         — depends on cafe-types, cafe-js-manifest; JS agents in agents-js/ (current direction)
+ 6c. cafe-js-manifest      — no dependencies beyond JS engine; manifest schema shared by host + server
  7. cafe-tts               — depends on cafe-types; connects to cafe-bus (optional — needs Voicebox)
  8. cafe-stt               — depends on cafe-types; connects to cafe-bus (optional — needs Voicebox)
  9. cafe-comfy             — depends on cafe-types; connects to cafe-bus (optional — needs ComfyUI)
@@ -72,6 +74,9 @@ enums, serialization) must be stable before writing logic in other crates.
 | cafe-llm               | Rust       | `reqwest`, `tokio`, `futures-util`             |
 | cafe-server            | Rust       | `axum`, `tokio`, `tower-http`                  |
 | cafe-agent-runtime     | Rust       | `tokio`, `notify`, `tokio-cron-scheduler`      |
+| cafe-agent-js          | Rust       | `rquickjs` (`futures`), `tokio`, `notify`, `tokio-cron-scheduler` |
+| cafe-js-manifest       | Rust       | `rquickjs` (sync), `serde`, `glob`             |
+| agents-js              | JavaScript | plain scripts: `manifest` + `async function main(cafe)` |
 | cafe-tts               | Rust       | `reqwest`, `tokio`, `futures-util`             |
 | cafe-stt               | Rust       | `reqwest`, `tokio`, `hound`                    |
 | cafe-comfy             | Rust       | `reqwest`, `tokio`, `serde_json`               |
@@ -118,6 +123,8 @@ in production paths.
 | `CAFE_KNOWLEDGEBASE_EMBED_MODEL` | `user.gemma3-embed`            | cafe-knowledgebase              |
 | `CAFE_KNOWLEDGEBASE_EMBED_DIM`   | `1152`                         | cafe-knowledgebase              |
 | `CAFE_MCP_SERVERS`               | `mcp-servers.toml`             | cafe-mcp-client                 |
+| `CAFE_JS_AGENT_PATHS`            | *(none — `./agents-js` only)*  | cafe-agent-js, cafe-server      |
+| `CAFE_JS_RPC_TIMEOUT_SECS`       | `30`                           | cafe-agent-js                   |
 | `CAFE_TRACE`                     | `0`                            | all (enables debug logging)     |
 
 ---

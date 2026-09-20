@@ -24,7 +24,8 @@ graph TB
     end
 
     subgraph "Bridges"
-        agent[cafe-agent-runtime<br/>Agent pipeline]
+        agent[cafe-agent-runtime<br/>Agent pipeline (TOML, frozen)]
+        jsagent[cafe-agent-js<br/>JS agents]
         sheet[cafe-sheetbot<br/>Spreadsheet]
         fetch[cafe-web-fetch<br/>URL fetcher]
         mcp[cafe-mcp-bridge<br/>MCP protocol]
@@ -42,6 +43,7 @@ graph TB
     bus --> stt
     bus --> comfy
     bus --> agent
+    bus --> jsagent
     bus --> sheet
     bus --> fetch
     bus --> mcp
@@ -97,6 +99,7 @@ graph LR
     bus --> kb[cafe-knowledgebase]
     bus --> llm[cafe-llm]
     bus --> agent[cafe-agent-runtime]
+    bus --> jsagent[cafe-agent-js]
     bus --> tts[cafe-tts]
     bus --> stt[cafe-stt]
     bus --> comfy[cafe-comfy]
@@ -105,6 +108,7 @@ graph LR
     bus --> mcp[cafe-mcp-bridge]
     bus --> server[cafe-server]
     store --> agent
+    store --> jsagent
     store --> server
     server --> web[cafe-web]
     server --> tg[cafe-telegram]
@@ -115,6 +119,7 @@ graph LR
     style kb fill:#46a,color:#fff
     style llm fill:#46a,color:#fff
     style agent fill:#46a,color:#fff
+    style jsagent fill:#46a,color:#fff
     style server fill:#46a,color:#fff
 ```
 
@@ -140,7 +145,9 @@ State is derived from history, not stored separately.
 **Evaluator** — Function that takes a chunk + history and produces zero or more chunks.
 
 **Agent** — Pipeline builder. Wires evaluators into a data flow for a session type.
-In this implementation, agents are TOML files that declare a pipeline of named evaluators.
+Agents are pure-JS modules in `agents-js/` (`manifest` + `async function
+main(cafe)`), executed by `cafe-agent-js`; the `[[steps]]` TOML format run by
+`cafe-agent-runtime` is frozen. See [ADR-127](./adr-127-js-agent-runtime.md).
 
 ---
 

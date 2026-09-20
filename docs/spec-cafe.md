@@ -211,15 +211,33 @@ null chunk.
 An agent is a pipeline builder. It receives a session context at initialization and
 wires up a data flow from `input_stream` → evaluators → `output_stream`.
 
-Agent definition (interface):
+Agents are pure-JS modules in `agents-js/` executed by `cafe-agent-js`:
 
 ```
-name        string   — unique identifier; used as session ID for background agents
+manifest    object   — metadata (see below); parsed by cafe-js-manifest
+main(cafe)  async fn — the whole pipeline: `for await (const event of cafe.events())`
+                       with promise RPC (`cafe.invoke` / `cafe.rpc`)
+```
+
+JS manifest (interface):
+
+```
+name        string   — unique identifier; used as session ID for background agents (required)
 description string   — human-readable purpose
 background  bool     — if true, auto-starts on server boot
-allows_reload bool   — if false, hot-reload is skipped (for stateful agents)
-persists_state bool  — if false, history is not saved to SQLite
+allows_reload bool   — if false, hot-reload is skipped
+persists_state bool  — informational; kept for parity
+mode        string   — "stateless" (fresh runtime per event) or "stateful" (one runtime per session)
+schedule    string   — 7-field cron with seconds, for background tick events
+rpc_timeout_secs int — per-RPC await timeout
+initial_config object — annotations for the config-seeding null chunk
 ```
+
+The legacy TOML form (`agents/*.toml`, `[[steps]]` pipelines run by
+`cafe-agent-runtime`) is frozen: it still runs, but new agents are JS, and a
+JS agent shadows a TOML agent of the same name in `GET /api/agents`. Full
+contract: [JS agent reference](./reference/js-agents.md);
+[ADR-127](./adr-127-js-agent-runtime.md).
 
 ---
 

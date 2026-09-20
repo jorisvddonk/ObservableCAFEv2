@@ -54,7 +54,8 @@ The stack (`process-compose.yml`) starts these services:
 | `cafe-store` | SQLite persistence | — (bus client) |
 | `cafe-binary-store` | Binary asset storage | 4002 |
 | `cafe-llm` | LLM bridge | — (bus client) |
-| `cafe-agent-runtime` | Agent pipelines | — (bus client) |
+| `cafe-agent-runtime` | Agent pipelines (TOML, frozen) | — (bus client) |
+| `cafe-agent-js` | JS agents (`agents-js/*.js`) | — (bus client) |
 | `cafe-server` | HTTP gateway | 4000 |
 | `cafe-mcp-bridge` | MCP endpoint | 3100 |
 | `cafe-knowledgebase` | Vector search | — (bus client) |

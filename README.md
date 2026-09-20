@@ -19,7 +19,10 @@ binary framing with 4-byte length-prefixed bincode encoding.
 | `cafe-llm` | Rust | LLM backend bridge (OpenAI-compatible, Ollama) |
 | `cafe-server` | Rust | HTTP REST API + SSE streaming + dynamic HTTP proxy |
 | `cafe-tui` | Rust | Terminal UI (Ratatui) |
-| `cafe-agent-runtime` | Rust | Agent pipeline orchestrator, cron scheduler, hot-reload |
+| `cafe-agent-runtime` | Rust | Agent pipeline orchestrator, cron scheduler, hot-reload (TOML, frozen) |
+| `cafe-agent-js` | Rust | JS agent host (QuickJS): promise RPC, stateless/stateful modes, cron, hot-reload |
+| `cafe-js-manifest` | Rust (lib) | JS agent manifest schema + parser (shared by host and server) |
+| `agents-js` | JavaScript | Pure-JS agents (`manifest` + `async function main(cafe)`) |
 | `cafe-tts` | Rust | Text-to-Speech synthesis (Voicebox) |
 | `cafe-stt` | Rust | Speech-to-text transcription (Voicebox) |
 | `cafe-comfy` | Rust | Image generation (ComfyUI) |
@@ -99,6 +102,8 @@ graph TD
         cafe-web-fetch --> cafe-sdk
         cafe-knowledgebase --> cafe-sdk
         cafe-agent-runtime --> cafe-sdk
+        cafe-agent-js --> cafe-sdk
+        cafe-agent-js --> cafe-js-manifest
         cafe-mcp-client --> cafe-sdk
     end
 
@@ -125,6 +130,7 @@ graph TD
     cafe-web-fetch -.-> cafe-bus
     cafe-knowledgebase -.-> cafe-bus
     cafe-agent-runtime -.-> cafe-bus
+    cafe-agent-js -.-> cafe-bus
     cafe-mcp-client -.-> cafe-bus
     cafe-server -.-> cafe-bus
     cafe-cli -.-> cafe-bus
@@ -142,7 +148,7 @@ graph TD
 Documentation is organized using the [Diataxis](https://diataxis.fr/) framework —
 **[`docs/index.md`](docs/index.md)** is the hub.
 
-- **Tutorials** — `docs/tutorials/` — guided lessons: getting started, your first agent, a tool-calling agent
+- **Tutorials** — `docs/tutorials/` — guided lessons: getting started, your first agent, a tool-calling agent, your first JS agent, a JS tool-calling agent
 - **How-to guides** — `docs/how-to/` — recipes: run the stack, use the CLI, connect via MCP, work with binary assets, set up the knowledge base, write E2E tests, connect over iroh, add a service
 - **Reference** — `docs/reference/` + `docs/spec-*.md` — data model, bus protocol, HTTP API, annotation keys, agent config
 - **Explanation** — `docs/explanation/` + `docs/architecture.md`, `docs/adr-*.md` — architecture design and Architecture Decision Records (100+ ADRs covering bus, chunks, sessions, binary streaming, MCP, etc.)

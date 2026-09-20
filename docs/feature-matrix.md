@@ -72,6 +72,20 @@ Tests: `cafe-types` unit tests for `retain_secs()` / `with_retain()`.
 | **process-compose** | `cafe-binary-store` process | Done |
 | **E2E tests** | `binary-ref-e2e.py` — full write/read flow | Done |
 
+## JS agents
+
+| Layer | What | Status |
+|---|---|---|
+| **agents-js** | `demo`, `counter`, `heartbeat`, `ticker` example agents + `cafe.d.ts` editor types | Done |
+| **cafe-js-manifest** | `JsManifest` schema, sync-runtime extraction, `scan_directory`, `agent_dirs()` (`./agents-js` + `CAFE_JS_AGENT_PATHS`) | Done |
+| **cafe-agent-js** | QuickJS (rquickjs `futures`) host: `cafe.events()` generator, promise `invoke`/`rpc` with `call_id` correlation, `publishText`, `config` snapshots, stateless/stateful modes, background sessions + config seeding, cron ticks, `*.js` hot-reload, `GET /api/agents` JS listing (via shared manifest crate) | Done |
+| **cafe-server** | `GET /api/agents` merges TOML + JS lists with `source` field; JS wins name collisions | Done |
+| **tests** | `tests/js-agents-e2e.py` (registry, RPC correlation, stateful counter, background/config, ticks, cron, both hot-reload paths) in CI | Done |
+
+`cafe.tool()` dispatches bus-RPC tools with `cafe.tool.result` + readable-text publication (MCP-provider tools stay with `cafe-mcp-client`).
+
+Tests: `cafe-js-manifest` + `cafe-agent-js` unit tests (manifest validation, loader, scheduler, bridge) and the E2E above.
+
 ## Summary: feature boundaries
 
 ```

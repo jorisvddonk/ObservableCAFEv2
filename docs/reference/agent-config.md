@@ -1,4 +1,9 @@
-# Agent config reference
+# Agent config reference (TOML, legacy)
+
+> **Frozen.** TOML agents still run under `cafe-agent-runtime`, but all new
+> agents are pure-JS modules — see [JS agent reference](js-agents.md) and
+> [ADR-127](../adr-127-js-agent-runtime.md). A JS agent shadows a TOML agent
+> of the same name in `GET /api/agents`.
 
 An **agent** is a TOML file in `agents/` describing a pipeline of steps.
 `cafe-agent-runtime` watches this directory (hot-reload) and instantiates a

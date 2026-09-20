@@ -77,6 +77,22 @@ processes:
       cafe-store:
         condition: process_healthy
 
+  cafe-agent-js:
+    command: ./target/release/cafe-agent-js
+    environment:
+      - "RUST_BACKTRACE=1"
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 1
+      period_seconds: 1
+      failure_threshold: 10
+    depends_on:
+      cafe-bus:
+        condition: process_healthy
+      cafe-store:
+        condition: process_healthy
+
   cafe-server:
     command: ./target/release/cafe-server
     environment:

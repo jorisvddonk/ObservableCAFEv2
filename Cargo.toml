@@ -8,6 +8,8 @@ members = [
     "cafe-server",
     "cafe-tui",
     "cafe-agent-runtime",
+    "cafe-agent-js",
+    "cafe-js-manifest",
     "cafe-tts",
     "cafe-comfy",
     "cafe-sheetbot",

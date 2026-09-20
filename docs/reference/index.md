@@ -19,7 +19,8 @@ it is (that's [Explanation](../explanation/)).
 
 | Document | What it covers |
 |---|---|
-| [Agent config reference](agent-config.md) | The TOML format for agent definitions: metadata fields, steps, triggers, initial chunk, tool definitions |
+| [JS agent reference](js-agents.md) | The `agents-js/*.js` format: manifest, `main(cafe)`, events, promise RPC (current) |
+| [Agent config reference](agent-config.md) | The legacy TOML format: metadata fields, steps, triggers, initial chunk, tool definitions (frozen) |
 | [Environment variables](../AGENT.md#environment-variables-global) | Every env var read by the services and its default |
 
 ## Interfaces

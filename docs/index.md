@@ -29,6 +29,10 @@ Learn by doing. Follow these in order; each one builds on the last.
    that transforms text, no Rust required.
 3. [A tool-calling agent](tutorials/tool-calling-agent.md) — wire the LLM to a
    tool and back, the full round-trip.
+4. [Your first JS agent](tutorials/your-first-js-agent.md) — the same idea as
+   (2) as a pure-JS agent: `manifest` + `async function main(cafe)`.
+5. [A JS tool-calling agent](tutorials/js-tool-calling-agent.md) — the
+   round-trip from (3) orchestrated in promises instead of TOML steps.
 
 ## How-to guides — do real tasks
 
@@ -44,6 +48,7 @@ Goal-oriented recipes. Pick whichever matches what you're trying to accomplish.
 | Verify the whole stack works | [Write and run E2E tests](how-to/write-e2e-tests.md) |
 | Connect to the bus from another machine | [Connect over iroh](how-to/connect-over-iroh.md) |
 | Add a brand-new service to the stack | [Add a service](how-to/add-a-service.md) |
+| Debug a JS agent (logs, error chunks, hot-reload) | [Debug a JS agent](how-to/debug-js-agent.md) |
 
 ## Reference — look it up
 
@@ -54,7 +59,8 @@ Complete, factual descriptions of every contract in the system.
 - [Bus protocol spec](spec-bus-protocol.md) — every message over the wire, including iroh.
 - [HTTP API spec](spec-http-api.md) — every REST + SSE endpoint of `cafe-server`.
 - [`cafe.*` annotation keys](cafe-annotations.md) — keys interpreted by the bus and platform services.
-- [Agent config reference](reference/agent-config.md) — the TOML format for agent definitions.
+- [JS agent reference](reference/js-agents.md) — the `agents-js/*.js` format: manifest, `main(cafe)`, events, promise RPC.
+- [Agent config reference](reference/agent-config.md) — the legacy TOML format for agent definitions (frozen; new agents are JS).
 
 ## Explanation — understand the design
 

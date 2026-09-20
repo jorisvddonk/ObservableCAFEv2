@@ -190,17 +190,25 @@ The tool name should match the RPC method, e.g. `my_service_do_something` →
 
 ## Step 7 — Wire it into an agent
 
-Now any agent can use it:
+TOML agents are frozen; wire new usage through JS agents instead:
 
-```toml
-[[steps]]
-id = "my-step"
-type = "my-service"
-trigger = "user_message"
+```js
+// High-level: {evaluator}.invoke under the hood
+const res = await cafe.invoke("my-service", { text: input });
+// Raw RPC: any bus method, custom or namespaced
+const raw = await cafe.rpc("my-service.custom", { text: input });
 ```
 
-And LLM tools can reference it via `tools.available` with
-`tool_type = "rpc"` (see [Tutorial 3](../tutorials/tool-calling-agent.md)).
+Both resolve with the response `result` and reject with a real `Error` on
+RPC error/timeout (responses are correlated by `call_id` — see
+[ADR-006](../adr-006-jsonrpc-over-bus-annotations.md)). A method named
+`my-service.invoke` is what `cafe.invoke("my-service", …)` calls; anything
+else is reachable only via `cafe.rpc`.
+
+LLM tools can reference it via `tools.available` (now seeded through the JS
+manifest's `initial_config`) with `tool_type = "rpc"` (see [JS tool-calling
+tutorial](../tutorials/js-tool-calling-agent.md); the TOML original is
+[Tutorial 3](../tutorials/tool-calling-agent.md)).
 
 ## Step 8 — CI
 
