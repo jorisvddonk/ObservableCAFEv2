@@ -153,6 +153,9 @@ Schedule changes need a restart.
 | `agents-js/voice.js` | Chat + TTS on `llm_complete`, gated on `config.tts.enabled`. |
 | `agents-js/volition.js` | Voice with a persona (`config.agent.name` + system prompt). |
 | `agents-js/comfy.js` | Chat + ComfyUI image on `llm_complete`, gated on `config.comfy.enabled` (default off). |
+| `agents-js/dice.js` | `!roll 2d6`: `dice-detector` → `cafe.tool("dice.roll")`. |
+| `agents-js/epub-narrator.js` | EPUB narration (`epub.invoke`, `!load`/`!next`/`!chapter`/`!list`), 300s RPC timeout. |
+| `agents-js/sheetbot.js` | SheetBot tasks/sheets/artefacts; 19 tools, LLM tool-calling loop via `cafe.tool`. |
 | `agents-js/dice-llm.js` | LLM tool-calling round-trip via `cafe.tool`. |
 | `agents-js/heartbeat.js` | Background + `initial_config` + `cafe.config()` + manual ticks. |
 | `agents-js/ticker.js` | Cron schedule (`*/10 * * * * * *`). |

@@ -187,12 +187,12 @@ def main():
         try:
             with open(agent_log) as f:
                 log = f.read()
-            # 13 repo agents (demo, heartbeat, ticker, counter, dice-llm,
+            # 16 repo agents (demo, heartbeat, ticker, counter, dice-llm,
             # default, rot13, stt, fetch, knowledgebase, voice, volition,
-            # comfy) + 2 fixtures. Count is asserted exactly so an agent
-            # silently failing to load is a hard failure.
-            assert "loaded 15 JS agents" in log, f"registry did not load 15 agents:\n{log[-3000:]}"
-            print("  registry loaded 15 JS agents", file=sys.stderr)
+            # comfy, dice, epub, sheetbot) + 2 fixtures. Count is asserted
+            # exactly so an agent silently failing to load is a hard failure.
+            assert "loaded 18 JS agents" in log, f"registry did not load 18 agents:\n{log[-3000:]}"
+            print("  registry loaded 18 JS agents", file=sys.stderr)
 
             # --- 2. stateless file-loaded agent (repo demo.js) ---
             print("=== Stateless round-trip (demo) ===", file=sys.stderr)
