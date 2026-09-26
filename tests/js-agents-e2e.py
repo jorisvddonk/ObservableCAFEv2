@@ -204,9 +204,20 @@ def main():
             time.sleep(2)  # let the host attach before publishing
             r = run([CLI, "--bus", bus_socket, "publish", demo, "--text", "hello world"])
             assert r.returncode == 0, f"publish failed: {r.stderr}"
-            c = wait_for(CLI, bus_socket, demo, host_text("uryyb jbeyq"), 25,
-                         "demo rot13 reply from JS host")
-            assert c["producer"] == JS_HOST
+
+            def rot13_reply(c):
+                return (c.get("content_type") == "text"
+                        and c.get("producer") == "com.nominal.cafe-rot13"
+                        and c.get("annotations", {}).get("chat.role") == "assistant"
+                        and c.get("content") == "uryyb jbeyq")
+            wait_for(CLI, bus_socket, demo, rot13_reply, 25, "rot13 reply")
+            # Exactly one reply chunk: the agent must not republish an
+            # evaluator's output (that was a duplicate-reply bug).
+            replies = [c for c in history(CLI, bus_socket, demo)
+                       if c.get("content_type") == "text"
+                       and c.get("annotations", {}).get("chat.role") == "assistant"]
+            assert len(replies) == 1, \
+                f"expected exactly 1 assistant reply, saw {len(replies)}"
             # The RPC request/response pair is correlated by call_id.
             reqs = [x for x in history(CLI, bus_socket, demo)
                     if x.get("annotations", {}).get("cafe.jsonrpc.request", {})
@@ -250,8 +261,12 @@ def main():
             # --- 5. tick handling via cafe.config() ---
             r = run([CLI, "--bus", bus_socket, "publish", "heartbeat", "--text", "ping"])
             assert r.returncode == 0, f"publish failed: {r.stderr}"
-            wait_for(CLI, bus_socket, "heartbeat", host_text("cvat"), 25,
-                     "heartbeat echo (proves cafe.config snapshot path runs)")
+            # The user-message reply comes from cafe-rot13 (the agent only
+            # invokes it; it must not republish).
+            wait_for(CLI, bus_socket, "heartbeat",
+                     lambda c: c.get("content_type") == "text"
+                     and c.get("producer") == "com.nominal.cafe-rot13"
+                     and c.get("content") == "cvat", 25, "heartbeat rot13 reply")
             r = run([CLI, "--bus", bus_socket, "publish", "heartbeat", "--null",
                      "--annotation", "cafe.flow.signal=tick"])
             assert r.returncode == 0, f"tick publish failed: {r.stderr}"

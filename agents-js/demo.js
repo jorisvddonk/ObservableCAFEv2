@@ -21,8 +21,11 @@ const manifest = {
 async function main(cafe) {
   for await (const event of cafe.events()) {
     if (event.type === "user_message") {
-      const res = await cafe.invoke("rot13", { text: event.text });
-      await cafe.publishText(res.text);
+      // `rot13` publishes the reply chunk itself, so the agent must not also
+      // `publishText` it — that would produce a duplicate reply. Agents only
+      // publish content an evaluator did not (see heartbeat's tick reply, or
+      // knowledgebase's retrieved context).
+      await cafe.invoke("rot13", { text: event.text });
     }
   }
   return "demo: done";

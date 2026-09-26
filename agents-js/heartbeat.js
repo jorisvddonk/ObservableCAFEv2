@@ -21,8 +21,8 @@ async function main(cafe) {
   const cfg = await cafe.config();
   for await (const event of cafe.events()) {
     if (event.type === "user_message") {
-      const res = await cafe.invoke("rot13", { text: event.text });
-      await cafe.publishText(res.text);
+      // rot13 publishes the reply itself — don't republish it.
+      await cafe.invoke("rot13", { text: event.text });
     } else if (event.type === "tick") {
       const reply =
         (cfg && cfg["config.js.tick_reply"]) || "tick";

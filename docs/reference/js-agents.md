@@ -25,13 +25,20 @@ const manifest = {
 async function main(cafe) {
   for await (const event of cafe.events()) {
     if (event.type === "user_message") {
-      const res = await cafe.invoke("rot13", { text: event.text });
-      await cafe.publishText(res.text);
+      // `rot13` publishes the reply chunk itself, so the agent must not also
+      // publishText it — that would duplicate the reply.
+      await cafe.invoke("rot13", { text: event.text });
     }
   }
   return "demo: done";
 }
 ```
+
+> **Who publishes what:** an evaluator that produces user-visible output
+> publishes it itself (`rot13`, `web-fetch`, `stt`, `llm`, `tts`, `comfy`).
+> `cafe.publishText` is for content the agent composes — e.g. `heartbeat`'s
+> tick reply or `knowledgebase`'s retrieved context. Republishing an
+> evaluator's reply with `publishText` produces a duplicate.
 
 Rules:
 

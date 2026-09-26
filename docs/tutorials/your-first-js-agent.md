@@ -32,8 +32,8 @@ const manifest = {
 async function main(cafe) {
   for await (const event of cafe.events()) {
     if (event.type === "user_message") {
-      const res = await cafe.invoke("rot13", { text: event.text });
-      await cafe.publishText(res.text);
+      // rot13 publishes the reply itself — the agent just orchestrates.
+      await cafe.invoke("rot13", { text: event.text });
     }
   }
   return "hello-js: done";
@@ -46,8 +46,12 @@ Every agent has:
   (auto-start at boot), `allows_reload`, `persists_state`, `mode`
   (`stateless` or `stateful`).
 - `main(cafe)` — the whole pipeline. `cafe.events()` yields
-  `{ type, text }` events; `cafe.invoke("rot13", …)` awaits the evaluator's
-  RPC response as a Promise; `cafe.publishText(…)` answers the user.
+  `{ type, text }` events and `cafe.invoke("rot13", …)` awaits the evaluator's
+  RPC response as a Promise.
+- **`rot13` publishes the reply chunk itself**, so the agent does not call
+  `cafe.publishText` here. Use `cafe.publishText` only for text the agent
+  composes (see `agents-js/heartbeat.js` and `agents-js/knowledgebase.js`);
+  republishing an evaluator's reply duplicates it.
 
 Top-level code must be side-effect free — the host evaluates the file to find
 `manifest` and `main`. Full field list:
@@ -93,10 +97,11 @@ cafe-cli history "$SESSION"
 
 ## Step 5 — Change it live
 
-Edit `agents-js/hello-js.js` — for example, uppercase the reply:
+Edit `agents-js/hello-js.js` — for example, change what is sent to the
+evaluator:
 
 ```js
-await cafe.publishText(res.text.toUpperCase());
+await cafe.invoke("rot13", { text: event.text.toUpperCase() });
 ```
 
 Save. The host logs `hot-reloaded agent 'hello-js'` and the *same session*
