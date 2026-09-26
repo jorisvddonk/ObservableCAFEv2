@@ -99,9 +99,12 @@ from its own environment (`COMFY_WORKFLOW_PATH` / `COMFY_WORKFLOW_INPUT_NODE`).
 
 **Params:**
 
-| Field  | Type   | Description                               |
-|--------|--------|-------------------------------------------|
-| `text` | string | Prompt text (required)                    |
+| Field           | Type   | Description                                            |
+|-----------------|--------|--------------------------------------------------------|
+| `text`          | string | Prompt text (required; `prompt` is accepted as an alias) |
+| `workflow_path` | string | Override workflow file path for this call               |
+| `input_node`    | string | Override input node ID for this call                    |
+| `endpoint`      | string | Override ComfyUI base URL for this call                 |
 
 **Result:**
 
@@ -109,11 +112,10 @@ from its own environment (`COMFY_WORKFLOW_PATH` / `COMFY_WORKFLOW_INPUT_NODE`).
 { "chunk_id": "<uuid of published image chunk>" }
 ```
 
-> Only `text` is honoured. The evaluator's schema also advertises
-> `workflow_path` and `input_node`, but the handler does not read them — the
-> workflow and input node come from the service environment
-> (`COMFY_WORKFLOW_PATH`, `COMFY_WORKFLOW_INPUT_NODE`). Configure them on
-> `cafe-comfy`, not per call.
+`text` is required. The overrides fall back to the service defaults
+(`COMFY_WORKFLOW_PATH`, `COMFY_WORKFLOW_INPUT_NODE`, `COMFY_URL`) when omitted,
+so the legacy agent pipeline — which sends `config.comfy.workflow_path` /
+`config.comfy.workflow_input_node` as params — takes effect per session.
 
 ## Producer identifier
 
