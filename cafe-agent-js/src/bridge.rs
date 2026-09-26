@@ -126,8 +126,26 @@ cafe.invoke = async (evaluator, params) =>
   cafe._unwrap(await cafe._invoke(evaluator + ".invoke", JSON.stringify(params || {})));
 cafe.rpc = async (method, params) =>
   cafe._unwrap(await cafe._invoke(method, JSON.stringify(params || {})));
-cafe.publishText = async (text) =>
-  cafe._unwrap(await cafe._publishText(text));
+// General publish: text or null chunks with arbitrary annotations.
+// `spec` = { type?, content?, role?, annotations?, transient?, retain_secs? }
+cafe.publish = async function (spec) {
+  const s = spec || {};
+  return cafe._unwrap(await cafe._publish(JSON.stringify({
+    type: s.type || "text",
+    content: s.content,
+    role: s.role,
+    annotations: s.annotations || {},
+    transient: !!s.transient,
+    retain_secs: s.retain_secs,
+  })));
+};
+// Publish an assistant text chunk (sugar over cafe.publish). Pass `options`
+// to attach annotations: cafe.publishText("hi", { annotations: { "k": 1 } }).
+cafe.publishText = async (text, options) =>
+  cafe.publish({ ...(options || {}), type: "text", content: text });
+// Publish a null chunk carrying only annotations (config, signals, metadata).
+cafe.annotate = async (annotations) =>
+  cafe.publish({ type: "null", annotations: annotations || {} });
 cafe.tool = async (name, params) =>
   cafe._unwrap(await cafe._tool(name, JSON.stringify(params || {})));
 cafe.config = async () =>
@@ -185,10 +203,60 @@ if (typeof globalThis !== "undefined") globalThis.fetch = cafe.fetch;
 "#;
 
 // ---------------------------------------------------------------------------
+// Publishing — build a chunk from a JS spec (`cafe.publish`)
+// ---------------------------------------------------------------------------
+
+/// Build a chunk from a JS publish spec:
+/// `{ type?: "text"|"null", content?, role?, annotations?, transient?, retain_secs? }`.
+///
+/// `role` sets `chat.role`; text chunks default to `assistant` (like
+/// `publishText`), null chunks get no role unless one is given. Keys in
+/// `annotations` are applied verbatim, so agents can emit any annotation
+/// (`config.*`, `cafe.flow.signal`, custom namespaces, …).
+fn build_publish_chunk(spec: &serde_json::Value) -> Result<Chunk, String> {
+    let chunk_type = spec["type"].as_str().unwrap_or("text");
+    let producer = "com.nominal.cafe-agent-js";
+
+    let mut chunk = match chunk_type {
+        "text" => Chunk::new_text(spec["content"].as_str().unwrap_or(""), producer),
+        "null" => Chunk::new_null(producer),
+        other => {
+            return Err(format!(
+                "unsupported chunk type {other:?} (use \"text\" or \"null\")"
+            ))
+        }
+    };
+
+    match spec["role"].as_str() {
+        Some(role) => chunk = chunk.with_annotation(keys::CHAT_ROLE, role),
+        None if chunk_type == "text" => {
+            chunk = chunk.with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+        }
+        None => {}
+    }
+
+    if let Some(annotations) = spec["annotations"].as_object() {
+        for (key, value) in annotations {
+            chunk = chunk.with_annotation(key.clone(), value);
+        }
+    }
+
+    let retain_secs = spec["retain_secs"].as_u64();
+    if spec["transient"].as_bool().unwrap_or(false) || retain_secs.is_some() {
+        chunk = chunk.as_transient();
+        if let Some(secs) = retain_secs {
+            chunk = chunk.with_retain(secs);
+        }
+    }
+
+    Ok(chunk)
+}
+
+// ---------------------------------------------------------------------------
 // RPC — publish transient request, await matching response by call_id
 // ---------------------------------------------------------------------------
 
-/// Envelope returned (as a JSON string) by every `_invoke` / `_publishText`
+/// Envelope returned (as a JSON string) by every `_invoke` / `_publish`
 /// bridge call. JS unwraps it and throws a real `Error` on `ok: false`, so
 /// Rust never needs to construct a QuickJS exception — domain errors travel
 /// as data, and `rquickjs::Error` only surfaces for engine-level failures.
@@ -633,7 +701,7 @@ pub(crate) async fn run_js_stream(
 /// plain data (`sessionId`, `agentId`), streaming `nextEvent()` (resolves
 /// from the session's event channel; null when the sender is dropped, which
 /// ends `cafe.events()`), promise RPC (`_invoke`), tool execution (`_tool`),
-/// text publish (`_publishText`), live config (`_config`), and `log`.
+/// publish (`_publish`), live config (`_config`), and `log`.
 ///
 /// All cross-boundary values are strings (JSON). Async callbacks take their
 /// arguments as owned Rust values first, then perform bus I/O with no borrow
@@ -715,31 +783,35 @@ fn install_cafe(
     };
     cafe.set("_tool", tool)?;
 
-    // Publish an assistant text chunk; envelope reports failure to JS.
-    let publish_text = {
+    // Publish a chunk built from a JS spec; envelope reports failure to JS.
+    let publish = {
         let client = client.clone();
         let session_id = session_id.to_string();
         Function::new(
             ctx.clone(),
-            Async(move |text: String| {
+            Async(move |spec_json: String| {
                 let client = client.clone();
                 let session_id = session_id.clone();
                 async move {
+                    let spec: serde_json::Value =
+                        serde_json::from_str(&spec_json).unwrap_or(serde_json::Value::Null);
+                    let chunk = match build_publish_chunk(&spec) {
+                        Ok(chunk) => chunk,
+                        Err(e) => return Ok::<_, rquickjs::Error>(err_envelope(None, e)),
+                    };
+                    let chunk_id = chunk.id.clone();
                     let mut sub = match client.subscribe_session(&session_id).await {
                         Ok(s) => s,
                         Err(e) => {
-                            return Ok::<_, rquickjs::Error>(err_envelope(
-                                None,
-                                format!("subscribe failed: {e}"),
-                            ));
+                            return Ok(err_envelope(None, format!("subscribe failed: {e}")));
                         }
                     };
-                    let chunk = Chunk::new_text(&text, "com.nominal.cafe-agent-js")
-                        .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT);
                     match sub.publish(chunk).await {
                         Ok(()) => {
-                            info!("cafe-agent-js: published agent text ({})", text.len());
-                            Ok(ok_envelope(serde_json::json!({ "published": true })))
+                            info!("cafe-agent-js: published chunk {chunk_id}");
+                            Ok(ok_envelope(
+                                serde_json::json!({ "published": true, "id": chunk_id }),
+                            ))
                         }
                         Err(e) => Ok(err_envelope(None, format!("publish failed: {e}"))),
                     }
@@ -747,7 +819,7 @@ fn install_cafe(
             }),
         )?
     };
-    cafe.set("_publishText", publish_text)?;
+    cafe.set("_publish", publish)?;
 
     // Live config slot: refreshed by the supervisor on every event
     // (stateless: filled once; stateful: updated per event).
@@ -927,7 +999,9 @@ mod tests {
                         events: typeof cafe.events,
                         invoke: typeof cafe.invoke,
                         rpc: typeof cafe.rpc,
+                        publish: typeof cafe.publish,
                         publishText: typeof cafe.publishText,
+                        annotate: typeof cafe.annotate,
                         tool: typeof cafe.tool,
                         fetch: typeof cafe.fetch,
                         globalFetch: typeof globalThis.fetch,
@@ -941,8 +1015,8 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&shape).unwrap();
         assert_eq!(v["sessionId"], "sess-1");
         for key in [
-            "nextEvent", "events", "invoke", "rpc", "publishText", "tool", "fetch",
-            "globalFetch", "config", "log",
+            "nextEvent", "events", "invoke", "rpc", "publish", "publishText", "annotate",
+            "tool", "fetch", "globalFetch", "config", "log",
         ] {
             assert_eq!(v[key], "function", "{key} must be a function");
         }
@@ -1359,6 +1433,48 @@ async function main(cafe) {
             resolve_config(&[Chunk::new_text("hi", "test")]),
             serde_json::json!({})
         );
+    }
+
+    #[test]
+    fn publish_chunk_text_defaults_to_assistant_role() {
+        let c = build_publish_chunk(&serde_json::json!({"type": "text", "content": "hi"})).unwrap();
+        assert_eq!(c.content_type, ContentType::Text);
+        assert_eq!(c.content.as_deref(), Some("hi"));
+        assert_eq!(c.role(), Some(roles::ASSISTANT));
+    }
+
+    #[test]
+    fn publish_chunk_null_applies_annotations_without_default_role() {
+        let c = build_publish_chunk(&serde_json::json!({
+            "type": "null",
+            "annotations": { "cafe.flow.signal": "reset", "custom.n": 3 }
+        }))
+        .unwrap();
+        assert_eq!(c.content_type, ContentType::Null);
+        assert!(c.role().is_none());
+        assert_eq!(
+            c.get_annotation::<String>("cafe.flow.signal").as_deref(),
+            Some("reset")
+        );
+        assert_eq!(c.get_annotation::<i64>("custom.n"), Some(3));
+    }
+
+    #[test]
+    fn publish_chunk_role_override_and_transient_retain() {
+        let c = build_publish_chunk(&serde_json::json!({
+            "type": "text", "content": "x", "role": "user",
+            "annotations": { "a": "b" }, "transient": true, "retain_secs": 30
+        }))
+        .unwrap();
+        assert_eq!(c.role(), Some(roles::USER));
+        assert_eq!(c.get_annotation::<String>("a").as_deref(), Some("b"));
+        assert!(c.is_transient());
+        assert_eq!(c.retain_secs(), Some(30));
+    }
+
+    #[test]
+    fn publish_chunk_unknown_type_errors() {
+        assert!(build_publish_chunk(&serde_json::json!({"type": "binary"})).is_err());
     }
 
     #[test]

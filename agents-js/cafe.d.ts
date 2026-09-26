@@ -55,6 +55,27 @@ export interface FetchResponse {
   json(): Promise<any>;
 }
 
+/** Spec for `cafe.publish` (and the `options` of `cafe.publishText`). */
+export interface PublishInit {
+  /** Chunk content type. Default "text". */
+  type?: "text" | "null";
+  /** Text content (for `type: "text"`). */
+  content?: string;
+  /** Sets `chat.role`; text chunks default to "assistant". */
+  role?: string;
+  /** Arbitrary annotations, applied verbatim (e.g. "config.*", "cafe.flow.signal"). */
+  annotations?: Record<string, unknown>;
+  /** Publish as transient (not persisted). */
+  transient?: boolean;
+  /** Transient retention window in seconds (implies transient). */
+  retain_secs?: number;
+}
+
+export interface PublishResult {
+  published: true;
+  id: string;
+}
+
 export interface CafeApi {
   /** Async generator of session events; ends when the stream closes. */
   events(): AsyncGenerator<JsEvent>;
@@ -67,8 +88,18 @@ export interface CafeApi {
    * readable text for follow-up LLM turns. Resolves with the tool output.
    */
   tool(name: string, params?: unknown): Promise<any>;
-  /** Publish an assistant text chunk from the JS host. */
-  publishText(text: string): Promise<{ published: true }>;
+  /**
+   * Publish a chunk (text or null) with arbitrary annotations.
+   * Returns the published chunk id.
+   */
+  publish(spec: PublishInit): Promise<PublishResult>;
+  /**
+   * Publish an assistant text chunk (sugar over `publish`). Pass `options`
+   * to attach annotations, e.g. `publishText("hi", { annotations: { k: 1 } })`.
+   */
+  publishText(text: string, options?: PublishInit): Promise<PublishResult>;
+  /** Publish a null chunk carrying only annotations (config, signals, metadata). */
+  annotate(annotations: Record<string, unknown>): Promise<PublishResult>;
   /**
    * Outbound HTTP, shaped like the browser Fetch API. Resolves for HTTP error
    * statuses (ok:false); rejects with TypeError on transport errors. Also

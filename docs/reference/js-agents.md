@@ -92,11 +92,47 @@ All boundary values are JSON. Every async method returns a real Promise.
 | `cafe.invoke(evaluator, params)` | `Promise<any>` | `{evaluator}.invoke` RPC. Resolves with `result`, rejects with `Error` (message + optional `code`) on RPC error/timeout. |
 | `cafe.rpc(method, params)` | `Promise<any>` | Raw RPC for any bus method (e.g. `dice.roll`, custom service methods). Same resolve/reject contract. No side publishes. |
 | `cafe.tool(name, params)` | `Promise<any>` | Bus-RPC tool call: dispatches `{name}`, then publishes the bus-visible `cafe.tool.result` chunk plus the readable `Tool call completed…` assistant text a follow-up LLM turn reads. Resolves with the tool output. MCP-provider tools are out of scope (they stay with `cafe-mcp-client`). |
-| `cafe.publishText(text)` | `Promise<{published:true}>` | Assistant text chunk from the JS host. |
+| `cafe.publish(spec)` | `Promise<{published:true, id}>` | Publish a chunk from a spec: `{ type?: "text"\|"null", content?, role?, annotations?, transient?, retain_secs? }`. |
+| `cafe.publishText(text, options?)` | `Promise<{published:true, id}>` | Assistant text chunk (sugar over `publish`); pass `{ annotations }` to attach metadata. |
+| `cafe.annotate(annotations)` | `Promise<{published:true, id}>` | Publish a null chunk carrying only annotations (signals, config, metadata). |
 | `cafe.fetch(url, options?)` | `Promise<Response>` | Outbound HTTP, shaped like the browser Fetch API (see below). Also exposed as the global `fetch`. |
 | `cafe.config()` | `Promise<object>` | Merged runtime config: all `config.type == "runtime"` null chunks, later wins per key. Snapshot per event (stateless) / refreshed per event (stateful). |
 | `cafe.log(msg)` | `void` | Host log (`tracing::info`). |
 | `cafe.sessionId` / `cafe.agentId` | `string` | Current session / agent. |
+
+### Publishing with annotations
+
+`cafe.publish` builds a chunk from a spec, so agents can attach any
+annotation — custom namespaces, `config.*`, or flow signals:
+
+```js
+// A text chunk with metadata
+await cafe.publish({
+  type: "text",
+  content: "Analysis complete.",
+  annotations: {
+    "analysis.duration_ms": 1234,
+    "analysis.sources": ["a", "b"],
+  },
+});
+
+// A null chunk: annotations only (a signal, config, or marker)
+await cafe.annotate({
+  "cafe.flow.signal": "reset",
+  "demo.counter": 7,
+});
+
+// publishText is sugar; options are merged in
+await cafe.publishText("hi", { annotations: { "chat.source": "agent" } });
+```
+
+- `type` is `"text"` (default) or `"null"`; `content` is the text (text chunks).
+- `role` sets `chat.role` — text chunks default to `assistant`, null chunks
+  carry none unless you set it.
+- `annotations` are applied verbatim (values may be any JSON).
+- `transient: true` publishes without persisting; `retain_secs` keeps a
+  transient chunk visible to late subscribers for that window.
+- Resolves with `{ published: true, id }` (the chunk id).
 
 ### `cafe.fetch` (outbound HTTP)
 

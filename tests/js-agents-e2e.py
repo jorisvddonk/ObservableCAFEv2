@@ -106,6 +106,31 @@ async function main(cafe) {
 
 COUNTER2_V2 = COUNTER2_V1.replace('"v1:count=" + n', '"v2:count=" + n')
 
+ANNOTATOR = """\
+const manifest = {
+  name: "annotator",
+  description: "publishes chunks with custom annotations",
+  background: false,
+  allows_reload: true,
+  persists_state: false,
+  mode: "stateless",
+};
+
+async function main(cafe) {
+  for await (const event of cafe.events()) {
+    if (event.type === "user_message") {
+      await cafe.publish({
+        type: "text",
+        content: "annotated-reply",
+        annotations: { "test.kind": "annotation", "test.count": 3 },
+      });
+      await cafe.annotate({ "test.signal": "annotated-signal", "test.null": true });
+    }
+  }
+  return "annotator: done";
+}
+"""
+
 
 def run(cmd, **kwargs):
     print(f"  + {' '.join(cmd)}", file=sys.stderr)
@@ -157,6 +182,8 @@ def main():
             f.write(RELOADME_V1)
         with open(os.path.join(fixtures, "counter2.js"), "w") as f:
             f.write(COUNTER2_V1)
+        with open(os.path.join(fixtures, "annotator.js"), "w") as f:
+            f.write(ANNOTATOR)
         agent_log = os.path.join(tmpdir, "agent-js.log")
 
         env = os.environ.copy()
@@ -189,11 +216,11 @@ def main():
                 log = f.read()
             # 17 repo agents (demo, heartbeat, ticker, counter, dice-llm,
             # default, rot13, stt, fetch, knowledgebase, voice, volition,
-            # comfy, dice, epub-narrator, sheetbot, rss-summarizer) + 2
-            # fixtures. Count is asserted exactly so an agent silently
-            # failing to load is a hard failure.
-            assert "loaded 19 JS agents" in log, f"registry did not load 19 agents:\n{log[-3000:]}"
-            print("  registry loaded 19 JS agents", file=sys.stderr)
+            # comfy, dice, epub-narrator, sheetbot, rss-summarizer) + 3
+            # fixtures (reloadme, counter2, annotator). Count is asserted
+            # exactly so an agent silently failing to load is a hard failure.
+            assert "loaded 20 JS agents" in log, f"registry did not load 20 agents:\n{log[-3000:]}"
+            print("  registry loaded 20 JS agents", file=sys.stderr)
 
             # --- 2. stateless file-loaded agent (repo demo.js) ---
             print("=== Stateless round-trip (demo) ===", file=sys.stderr)
@@ -231,6 +258,37 @@ def main():
             assert resps[0]["annotations"]["cafe.jsonrpc.response"]["result"] == \
                 {"text": "uryyb jbeyq"}
             print("  stateless RPC round-trip with call_id correlation", file=sys.stderr)
+
+            # --- 2b. agent-published chunks carry custom annotations ---
+            print("=== Annotations (cafe.publish / cafe.annotate) ===", file=sys.stderr)
+            r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "annotator"])
+            assert r.returncode == 0, f"create-session failed: {r.stderr}"
+            annotator = r.stdout.strip()
+            assert annotator, "empty session id"
+            time.sleep(2)
+            r = run([CLI, "--bus", bus_socket, "publish", annotator, "--text", "go"])
+            assert r.returncode == 0, f"publish failed: {r.stderr}"
+
+            def annotated(c):
+                ann = c.get("annotations", {})
+                return (c.get("producer") == JS_HOST
+                        and c.get("content") == "annotated-reply"
+                        and ann.get("test.kind") == "annotation"
+                        and ann.get("test.count") == 3)
+            c = wait_for(CLI, bus_socket, annotator, annotated, 25,
+                         "annotated text chunk")
+            assert c["annotations"]["chat.role"] == "assistant", c["annotations"]
+
+            def signal(c):
+                ann = c.get("annotations", {})
+                return (c.get("producer") == JS_HOST
+                        and c.get("content_type") == "null"
+                        and ann.get("test.signal") == "annotated-signal"
+                        and ann.get("test.null") is True)
+            s = wait_for(CLI, bus_socket, annotator, signal, 25,
+                         "annotated null chunk")
+            assert "chat.role" not in s["annotations"], s["annotations"]
+            print("  text + null chunks carried custom annotations", file=sys.stderr)
 
             # --- 3. stateful counter accumulates JS-local state ---
             print("=== Stateful counter ===", file=sys.stderr)
@@ -392,7 +450,7 @@ def main():
             print("  mock LLM saw 2 turns with seeded system prompt", file=sys.stderr)
 
             # --- cleanup ---
-            for s in [demo, counter, reloadme, counter2, dicellm]:
+            for s in [demo, annotator, counter, reloadme, counter2, dicellm]:
                 r = run([CLI, "--bus", bus_socket, "delete-session", s])
                 assert r.returncode == 0, f"delete-session {s} failed: {r.stderr}"
 
