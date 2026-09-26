@@ -13,6 +13,10 @@ Tests:
 4. cafe-agent-runtime discovers the schema and propagates it into agent sessions
 5. A subscriber can find evaluator schemas in the agent's session history
 
+Phase 2 uses a TOML fixture agent owned by cafe-agent-runtime (JS agents
+shadow same-named TOML agents, so a real name like `rot13` would be ignored
+by the runtime).
+
 Usage:
     cargo build --release
     uv run tests/schema-announcement-e2e.py
@@ -111,8 +115,33 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
+
+        # A TOML agent owned by cafe-agent-runtime (unique name so no JS agent
+        # shadows it), used to verify in-session schema propagation.
+        agents_dir = os.path.join(tmpdir, "agents")
+        os.mkdir(agents_dir)
+        with open(os.path.join(agents_dir, "schema-e2e.toml"), "w") as f:
+            f.write(
+                'name = "schema-e2e"\n'
+                'description = "schema propagation fixture"\n'
+                "background = false\n"
+                "allows_reload = true\n"
+                "persists_state = false\n\n"
+                "[[steps]]\n"
+                'id = "rot13"\n'
+                'type = "rot13"\n'
+                'trigger = "user_message"\n'
+            )
+
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
+        # The runtime prefers ObservableCAFE_AGENT_SEARCH_PATHS over
+        # CAFE_AGENT_PATHS; set both so the fixture is found regardless of the
+        # caller's shell. (Also clear CAFE_JS_AGENT_PATHS so JS shadowing only
+        # sees ./agents-js.)
+        env["ObservableCAFE_AGENT_SEARCH_PATHS"] = agents_dir
+        env["CAFE_AGENT_PATHS"] = agents_dir
+        env.pop("CAFE_JS_AGENT_PATHS", None)
         env["RUST_LOG"] = "info"
 
         procs = {}
@@ -181,17 +210,17 @@ def main():
             e2e_session_id = "e2e-schema-test"
             conn2 = BusConnection(bus_socket)
 
-            # Create a session for the rot13 agent (so agent-runtime's
+            # Create a session for the fixture agent (so agent-runtime's
             # pipeline subscriber recognises it and publishes schemas)
             conn2.send_msg({
                 "op": "create_session",
                 "session_id": e2e_session_id,
-                "agent_id": "rot13",
+                "agent_id": "schema-e2e",
                 "config": {"ephemeral": {"keepalive_secs": 3600}},
             })
             resp = conn2.read_msg()
             assert resp.get("event") == "session_created", f"expected session_created, got {resp}"
-            print(f"  created session {e2e_session_id} for agent 'rot13'", file=sys.stderr)
+            print(f"  created session {e2e_session_id} for agent 'schema-e2e'", file=sys.stderr)
 
             # Subscribe and collect schema chunks published by agent-runtime
             # We may need to wait briefly for agent-runtime's pipeline subscriber

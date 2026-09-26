@@ -8,7 +8,7 @@ End-to-end test: configurable LLM history compaction (ADR-125).
 
 Flow (all phases hard-asserted, no graceful fallbacks):
 1. Start cafe-bus + mock LLM + cafe-llm + cafe-store + cafe-agent-runtime + cafe-server
-2. Create session with default agent
+2. Create session with a runtime-owned TOML fixture agent
 3. Phase A (message-count budget): config truncate/max_history_messages=2,
    chat msg-one/msg-two/msg-three, assert the last LLM request holds only the
    newest 2 non-system messages (msg-one compacted away, msg-three present)
@@ -154,6 +154,23 @@ def main():
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
         db_path = os.path.join(tmpdir, "cafe.db")
 
+        # A TOML fixture agent owned by cafe-agent-runtime (unique name so no
+        # JS agent shadows it); mirrors `default`'s llm-on-user-message step.
+        agents_dir = os.path.join(tmpdir, "agents")
+        os.mkdir(agents_dir)
+        with open(os.path.join(agents_dir, "compaction-e2e.toml"), "w") as f:
+            f.write(
+                'name = "compaction-e2e"\n'
+                'description = "llm compaction fixture"\n'
+                "background = false\n"
+                "allows_reload = true\n"
+                "persists_state = true\n\n"
+                "[[steps]]\n"
+                'id = "llm"\n'
+                'type = "llm"\n'
+                'trigger = "user_message"\n'
+            )
+
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["CAFE_DB_PATH"] = db_path
@@ -162,6 +179,9 @@ def main():
         env["LLM_BACKEND"] = "openai"
         env["OPENAI_URL"] = f"http://localhost:{MOCK_PORT}/v1"
         env["OPENAI_MODEL"] = "mock-model"
+        env["ObservableCAFE_AGENT_SEARCH_PATHS"] = agents_dir
+        env["CAFE_AGENT_PATHS"] = agents_dir
+        env.pop("CAFE_JS_AGENT_PATHS", None)
 
         mock_thread = threading.Thread(target=run_mock_server, daemon=True)
         mock_thread.start()
@@ -180,7 +200,7 @@ def main():
 
         try:
             print("=== Create session ===", file=sys.stderr)
-            r = subprocess.run([CLI, "--bus", bus_socket, "create-session", "--agent", "default"],
+            r = subprocess.run([CLI, "--bus", bus_socket, "create-session", "--agent", "compaction-e2e"],
                                capture_output=True, text=True)
             assert r.returncode == 0, r.stderr
             session_id = r.stdout.strip()

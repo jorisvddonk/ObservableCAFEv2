@@ -114,6 +114,23 @@ def main():
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
         db_path = os.path.join(tmpdir, "cafe.db")
 
+        # A TOML fixture agent owned by cafe-agent-runtime (unique name so no
+        # JS agent shadows it); mirrors `default`'s llm-on-user-message step.
+        agents_dir = os.path.join(tmpdir, "agents")
+        os.mkdir(agents_dir)
+        with open(os.path.join(agents_dir, "fork-e2e.toml"), "w") as f:
+            f.write(
+                'name = "fork-e2e"\n'
+                'description = "session fork fixture"\n'
+                "background = false\n"
+                "allows_reload = true\n"
+                "persists_state = true\n\n"
+                "[[steps]]\n"
+                'id = "llm"\n'
+                'type = "llm"\n'
+                'trigger = "user_message"\n'
+            )
+
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["CAFE_DB_PATH"] = db_path
@@ -122,6 +139,9 @@ def main():
         env["LLM_BACKEND"] = "openai"
         env["OPENAI_URL"] = f"http://localhost:{MOCK_PORT}/v1"
         env["OPENAI_MODEL"] = "gemma3:1b"
+        env["ObservableCAFE_AGENT_SEARCH_PATHS"] = agents_dir
+        env["CAFE_AGENT_PATHS"] = agents_dir
+        env.pop("CAFE_JS_AGENT_PATHS", None)
 
         mock_thread = threading.Thread(target=run_mock_server, daemon=True)
         mock_thread.start()
@@ -141,7 +161,7 @@ def main():
         try:
             # ── Create parent session and exchange messages ──
             print("=== Create parent session ===", file=sys.stderr)
-            parent_id = cli(bus_socket, "create-session", "--agent", "default")
+            parent_id = cli(bus_socket, "create-session", "--agent", "fork-e2e")
             print(f"  parent={parent_id}", file=sys.stderr)
 
             mock_requests.clear()
