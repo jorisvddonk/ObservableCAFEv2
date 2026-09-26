@@ -70,7 +70,14 @@ Parsed and validated by `cafe-js-manifest` (shared by the executor and
 `cafe.events()` is an async generator of:
 
 ```ts
-{ type: "user_message" | "llm_complete" | "tick", text: string }
+{
+  type: "user_message" | "llm_complete" | "tick",
+  text: string,
+  id: string,               // chunk that triggered the event
+  content_type: string,     // "text" | "binary" | "binary_ref" | "null"
+  role?: string,            // chat.role of the trigger chunk
+  annotations: object,      // trigger chunk's annotations
+}
 ```
 
 | Bus condition | Event |
@@ -78,6 +85,13 @@ Parsed and validated by `cafe-js-manifest` (shared by the executor and
 | Non-transient user text/`binary_ref` chunk | `user_message` (`text` = content) |
 | Assistant chunk with `chat.stream_complete` | `llm_complete` |
 | Null chunk with `cafe.flow.signal = "tick"` (cron or manual) | `tick` |
+
+`text` is the event's payload; `id`/`content_type`/`role`/`annotations`
+describe the chunk that triggered it, so agents can tell a text message from a
+`binary_ref` upload (both arrive as `user_message` with empty `text`) or read
+their own annotation conventions. For `llm_complete` the trigger is the
+`stream_complete` marker (`content_type: "null"`); `text` is the assembled
+assistant reply.
 
 Transient RPC plumbing never surfaces as events. The generator ends when the
 session's stream closes (stateless: after the single event).
@@ -92,9 +106,11 @@ All boundary values are JSON. Every async method returns a real Promise.
 | `cafe.invoke(evaluator, params)` | `Promise<any>` | `{evaluator}.invoke` RPC. Resolves with `result`, rejects with `Error` (message + optional `code`) on RPC error/timeout. |
 | `cafe.rpc(method, params)` | `Promise<any>` | Raw RPC for any bus method (e.g. `dice.roll`, custom service methods). Same resolve/reject contract. No side publishes. |
 | `cafe.tool(name, params)` | `Promise<any>` | Bus-RPC tool call: dispatches `{name}`, then publishes the bus-visible `cafe.tool.result` chunk plus the readable `Tool call completed…` assistant text a follow-up LLM turn reads. Resolves with the tool output. MCP-provider tools are out of scope (they stay with `cafe-mcp-client`). |
-| `cafe.publish(spec)` | `Promise<{published:true, id}>` | Publish a chunk from a spec: `{ type?: "text"\|"null", content?, role?, annotations?, transient?, retain_secs? }`. |
+| `cafe.publish(spec)` | `Promise<{published:true, id}>` | Publish a chunk from a spec: `{ type?: "text"\|"null"\|"binary", content?, data?, mime_type?, role?, annotations?, transient?, retain_secs? }`. |
 | `cafe.publishText(text, options?)` | `Promise<{published:true, id}>` | Assistant text chunk (sugar over `publish`); pass `{ annotations }` to attach metadata. |
 | `cafe.annotate(annotations)` | `Promise<{published:true, id}>` | Publish a null chunk carrying only annotations (signals, config, metadata). |
+| `cafe.history()` | `Promise<Chunk[]>` | Session history as chunk summaries (oldest first): `id`, `content_type`, `content`, `role`, `producer`, `mime_type`, `timestamp`, `transient`, `has_data`, `annotations`. Inline binary bytes are omitted (`has_data` flags them). |
+| `cafe.findToolCalls(text)` | `ToolCall[]` | Parse `<\|tool_call\|>…<\|tool_call_end\|>` markers into `{ name, parameters, provider? }` — same parsing as the host's tool detector. |
 | `cafe.fetch(url, options?)` | `Promise<Response>` | Outbound HTTP, shaped like the browser Fetch API (see below). Also exposed as the global `fetch`. |
 | `cafe.config()` | `Promise<object>` | Merged runtime config: all `config.type == "runtime"` null chunks, later wins per key. Snapshot per event (stateless) / refreshed per event (stateful). |
 | `cafe.log(msg)` | `void` | Host log (`tracing::info`). |
@@ -120,6 +136,13 @@ await cafe.publish({
 await cafe.annotate({
   "cafe.flow.signal": "reset",
   "demo.counter": 7,
+});
+
+// A binary chunk (base64 bytes + MIME type)
+await cafe.publish({
+  type: "binary",
+  data: "<base64>",
+  mime_type: "image/png",
 });
 
 // publishText is sugar; options are merged in
@@ -185,7 +208,7 @@ cafe.invoke("llm", {})` suffices; method-specific params (`text` for
 `rot13`/`tts`, `count`/`sides` for `dice.roll`) are the agent's job to
 compose, typically from the event and `cafe.config()`.
 
-Tool-calling agents parse `<|tool_call|>` markers and use `cafe.tool` — see
+Tool-calling agents use `cafe.findToolCalls(event.text)` and `cafe.tool` — see
 the [tool-calling tutorial](../tutorials/js-tool-calling-agent.md). Tool
 definitions for the LLM travel in `initial_config` under `tools.available`
 (same shape as TOML).

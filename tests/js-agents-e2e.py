@@ -132,6 +132,40 @@ async function main(cafe) {
 """ % FETCH_URL
 
 
+INSPECTOR = """\
+const manifest = {
+  name: "inspector",
+  description: "covers rich events, history and binary publish",
+  background: false,
+  allows_reload: true,
+  persists_state: false,
+  mode: "stateless",
+};
+
+async function main(cafe) {
+  for await (const event of cafe.events()) {
+    if (event.type !== "user_message") continue;
+    // Rich event fields: type, content_type, role, id.
+    await cafe.publishText(
+      "event:" + event.type + ":" + event.content_type + ":" +
+      (event.role || "") + ":" + (event.id ? "id" : "noid"));
+    // History includes the user message that triggered us.
+    const h = await cafe.history();
+    const users = h.filter(function (c) { return c.role === "user"; }).length;
+    await cafe.publishText("history-users:" + users);
+    // Binary chunk with MIME type + annotations.
+    await cafe.publish({
+      type: "binary",
+      data: "Ynl0ZXMgYXJlIGhlcmU=",
+      mime_type: "text/plain",
+      annotations: { "test.bin": true },
+    });
+  }
+  return "inspector: done";
+}
+"""
+
+
 class _FetchHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -225,6 +259,8 @@ def main():
             f.write(ANNOTATOR)
         with open(os.path.join(fixtures, "fetcher.js"), "w") as f:
             f.write(FETCHER)
+        with open(os.path.join(fixtures, "inspector.js"), "w") as f:
+            f.write(INSPECTOR)
         agent_log = os.path.join(tmpdir, "agent-js.log")
 
         env = os.environ.copy()
@@ -261,11 +297,12 @@ def main():
                 log = f.read()
             # 17 repo agents (demo, heartbeat, ticker, counter, dice-llm,
             # default, rot13, stt, fetch, knowledgebase, voice, volition,
-            # comfy, dice, epub-narrator, sheetbot, rss-summarizer) + 4
-            # fixtures (reloadme, counter2, annotator, fetcher). Count is
-            # asserted exactly so an agent silently failing to load fails.
-            assert "loaded 21 JS agents" in log, f"registry did not load 21 agents:\n{log[-3000:]}"
-            print("  registry loaded 21 JS agents", file=sys.stderr)
+            # comfy, dice, epub-narrator, sheetbot, rss-summarizer) + 5
+            # fixtures (reloadme, counter2, annotator, fetcher, inspector).
+            # Count is asserted exactly so an agent silently failing to load
+            # is a hard failure.
+            assert "loaded 22 JS agents" in log, f"registry did not load 22 agents:\n{log[-3000:]}"
+            print("  registry loaded 22 JS agents", file=sys.stderr)
 
             # --- 2. stateless file-loaded agent (repo demo.js) ---
             print("=== Stateless round-trip (demo) ===", file=sys.stderr)
@@ -358,6 +395,35 @@ def main():
                      "fetched chunk with web/security annotations")
             print("  fetched chunk carries web.* + untrusted security.trust-level",
                   file=sys.stderr)
+
+            # --- 2d. rich events, cafe.history(), binary publish ---
+            print("=== Events / history / binary ===", file=sys.stderr)
+            r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "inspector"])
+            assert r.returncode == 0, f"create-session failed: {r.stderr}"
+            inspector = r.stdout.strip()
+            assert inspector, "empty session id"
+            time.sleep(2)
+            r = run([CLI, "--bus", bus_socket, "publish", inspector, "--text", "go"])
+            assert r.returncode == 0, f"publish failed: {r.stderr}"
+
+            # The agent reports the trigger chunk's fields it observed.
+            wait_for(CLI, bus_socket, inspector, host_text("event:user_message:text:user:id"),
+                     25, "rich user_message event fields")
+            # cafe.history() saw the user message.
+            hc = wait_for(CLI, bus_socket, inspector,
+                          lambda c: c.get("producer") == JS_HOST
+                          and (c.get("content") or "").startswith("history-users:"),
+                          25, "history summary")
+            assert int(hc["content"].split(":")[1]) >= 1, hc["content"]
+            # Binary chunk with MIME + annotations.
+            def binary_chunk(c):
+                ann = c.get("annotations", {})
+                return (c.get("producer") == JS_HOST
+                        and c.get("content_type") == "binary"
+                        and c.get("mime_type") == "text/plain"
+                        and ann.get("test.bin") is True)
+            wait_for(CLI, bus_socket, inspector, binary_chunk, 25, "binary chunk")
+            print("  rich events + history + binary publish verified", file=sys.stderr)
 
             # --- 3. stateful counter accumulates JS-local state ---
             print("=== Stateful counter ===", file=sys.stderr)
@@ -519,7 +585,7 @@ def main():
             print("  mock LLM saw 2 turns with seeded system prompt", file=sys.stderr)
 
             # --- cleanup ---
-            for s in [demo, annotator, fetcher, counter, reloadme, counter2, dicellm]:
+            for s in [demo, annotator, fetcher, inspector, counter, reloadme, counter2, dicellm]:
                 r = run([CLI, "--bus", bus_socket, "delete-session", s])
                 assert r.returncode == 0, f"delete-session {s} failed: {r.stderr}"
 

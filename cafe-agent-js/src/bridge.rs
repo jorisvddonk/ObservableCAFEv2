@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use base64::Engine as _;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{
     keys, roles, Chunk, ContentType, JsonRpcRequest, ServerMessage, ToolResult,
@@ -16,13 +17,54 @@ use tracing::info;
 /// A single event delivered to a JS agent. Serialized as JSON and handed to
 /// `cafe.nextEvent()`; `cafe.events()` (defined in [`JS_PRELUDE`]) yields these
 /// one at a time so agent code is a plain `for await` loop.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Default)]
 pub struct JsEvent {
     /// `user_message` | `llm_complete` | `tick`
     #[serde(rename = "type")]
     pub event_type: String,
     /// User/assistant text (empty for ticks and binary events).
     pub text: String,
+    /// Id of the chunk that triggered the event.
+    #[serde(default)]
+    pub id: String,
+    /// Content type of the trigger chunk: `text` | `binary` | `binary_ref` | `null`.
+    #[serde(default)]
+    pub content_type: String,
+    /// `chat.role` of the trigger chunk, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Annotations of the trigger chunk.
+    #[serde(default)]
+    pub annotations: serde_json::Value,
+}
+
+/// Wire name for a content type, matching the chunk JSON field.
+fn content_type_str(ct: &ContentType) -> &'static str {
+    match ct {
+        ContentType::Text => "text",
+        ContentType::Binary => "binary",
+        ContentType::BinaryRef => "binary_ref",
+        ContentType::Null => "null",
+    }
+}
+
+/// Build an event from the chunk that triggered it, carrying the chunk's
+/// identity (id, content type, role, annotations) alongside the event text.
+fn event_from(chunk: &Chunk, event_type: &str, text: String) -> JsEvent {
+    JsEvent {
+        event_type: event_type.into(),
+        text,
+        id: chunk.id.clone(),
+        content_type: content_type_str(&chunk.content_type).to_string(),
+        role: chunk.role().map(str::to_string),
+        annotations: serde_json::Value::Object(
+            chunk
+                .annotations
+                .clone()
+                .into_iter()
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
+        ),
+    }
 }
 
 /// Assemble the latest assistant text from `history` for `llm_complete`
@@ -63,10 +105,11 @@ pub fn classify_event(chunk: &Chunk) -> Option<JsEvent> {
             ContentType::Text | ContentType::BinaryRef
         )
     {
-        return Some(JsEvent {
-            event_type: "user_message".into(),
-            text: chunk.content.clone().unwrap_or_default(),
-        });
+        return Some(event_from(
+            chunk,
+            "user_message",
+            chunk.content.clone().unwrap_or_default(),
+        ));
     }
     // LLM final chunk (stream_complete, non-transient, assistant) → llm_complete
     if chunk.role() == Some(roles::ASSISTANT)
@@ -74,10 +117,11 @@ pub fn classify_event(chunk: &Chunk) -> Option<JsEvent> {
             .get_annotation::<bool>(keys::CHAT_STREAM_COMPLETE)
             .unwrap_or(false)
     {
-        return Some(JsEvent {
-            event_type: "llm_complete".into(),
-            text: chunk.content.clone().unwrap_or_default(),
-        });
+        return Some(event_from(
+            chunk,
+            "llm_complete",
+            chunk.content.clone().unwrap_or_default(),
+        ));
     }
     // Scheduler tick → tick
     if chunk
@@ -85,10 +129,7 @@ pub fn classify_event(chunk: &Chunk) -> Option<JsEvent> {
         .as_deref()
         == Some("tick")
     {
-        return Some(JsEvent {
-            event_type: "tick".into(),
-            text: String::new(),
-        });
+        return Some(event_from(chunk, "tick", String::new()));
     }
     None
 }
@@ -133,6 +174,8 @@ cafe.publish = async function (spec) {
   return cafe._unwrap(await cafe._publish(JSON.stringify({
     type: s.type || "text",
     content: s.content,
+    data: s.data,
+    mime_type: s.mime_type,
     role: s.role,
     annotations: s.annotations || {},
     transient: !!s.transient,
@@ -150,6 +193,20 @@ cafe.tool = async (name, params) =>
   cafe._unwrap(await cafe._tool(name, JSON.stringify(params || {})));
 cafe.config = async () =>
   JSON.parse(await cafe._config());
+// Session history: array of chunk summaries (oldest first).
+cafe.history = async () =>
+  cafe._unwrap(await cafe._history());
+// Parse `<|tool_call|>{...}<|tool_call_end|>` markers, matching the host's
+// tool detector. Returns an array of { name, parameters, provider? }.
+cafe.findToolCalls = function (text) {
+  const calls = [];
+  const re = /<\|tool_call\|>\s*(\{.*?\})\s*<\|tool_call_end\|>/g;
+  let m;
+  while ((m = re.exec(String(text || ""))) !== null) {
+    try { calls.push(JSON.parse(m[1])); } catch (e) { /* skip malformed */ }
+  }
+  return calls;
+};
 
 // --- HTML5-style fetch -----------------------------------------------------
 // Not the real WHATWG implementation, but the common shape: resolves on any
@@ -224,10 +281,11 @@ if (typeof globalThis !== "undefined") globalThis.fetch = cafe.fetch;
 // ---------------------------------------------------------------------------
 
 /// Build a chunk from a JS publish spec:
-/// `{ type?: "text"|"null", content?, role?, annotations?, transient?, retain_secs? }`.
+/// `{ type?: "text"|"null"|"binary", content?, data?, mime_type?, role?,
+///    annotations?, transient?, retain_secs? }`.
 ///
-/// `role` sets `chat.role`; text chunks default to `assistant` (like
-/// `publishText`), null chunks get no role unless one is given. Keys in
+/// `role` sets `chat.role`; text and binary chunks default to `assistant`
+/// (like `publishText`), null chunks get no role unless one is given. Keys in
 /// `annotations` are applied verbatim, so agents can emit any annotation
 /// (`config.*`, `cafe.flow.signal`, custom namespaces, …).
 fn build_publish_chunk(spec: &serde_json::Value) -> Result<Chunk, String> {
@@ -237,16 +295,26 @@ fn build_publish_chunk(spec: &serde_json::Value) -> Result<Chunk, String> {
     let mut chunk = match chunk_type {
         "text" => Chunk::new_text(spec["content"].as_str().unwrap_or(""), producer),
         "null" => Chunk::new_null(producer),
+        "binary" => {
+            let data = spec["data"].as_str().unwrap_or("");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|e| format!("invalid base64 in data: {e}"))?;
+            let mime = spec["mime_type"]
+                .as_str()
+                .unwrap_or("application/octet-stream");
+            Chunk::new_binary(bytes, mime, producer)
+        }
         other => {
             return Err(format!(
-                "unsupported chunk type {other:?} (use \"text\" or \"null\")"
+                "unsupported chunk type {other:?} (use \"text\", \"null\" or \"binary\")"
             ))
         }
     };
 
     match spec["role"].as_str() {
         Some(role) => chunk = chunk.with_annotation(keys::CHAT_ROLE, role),
-        None if chunk_type == "text" => {
+        None if chunk_type == "text" || chunk_type == "binary" => {
             chunk = chunk.with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
         }
         None => {}
@@ -537,6 +605,35 @@ async fn http_fetch(url: String, options_json: String, timeout: Duration) -> Str
         }
         Err(e) => err_envelope(None, e.to_string()),
     }
+}
+
+/// Session history as a JSON array of chunk summaries (oldest first), the
+/// shape `cafe.history()` returns. Chunk `data` (binary bytes) is omitted to
+/// keep payloads small; `has_data` reports whether bytes are present.
+async fn history_json(client: &BusClient, session_id: &str) -> String {
+    let history = match client.get_history(session_id).await {
+        Ok(h) => h,
+        Err(e) => return err_envelope(None, format!("history failed: {e}")),
+    };
+    let chunks: Vec<serde_json::Value> = history
+        .iter()
+        .map(|chunk| {
+            let has_data = chunk.data.as_ref().map(|d| !d.is_empty()).unwrap_or(false);
+            serde_json::json!({
+                "id": chunk.id,
+                "content_type": content_type_str(&chunk.content_type),
+                "content": chunk.content,
+                "role": chunk.role(),
+                "producer": chunk.producer,
+                "mime_type": chunk.mime_type,
+                "timestamp": chunk.timestamp,
+                "transient": chunk.is_transient(),
+                "has_data": has_data,
+                "annotations": chunk.annotations,
+            })
+        })
+        .collect();
+    ok_envelope(serde_json::Value::Array(chunks))
 }
 
 /// Standard annotations for fetched web content, matching `cafe-web-fetch`:
@@ -888,6 +985,23 @@ fn install_cafe(
     };
     cafe.set("_config", config_fn)?;
 
+    // Session history: `cafe._history() -> envelopeJson` (array of summaries).
+    let history = {
+        let client = client.clone();
+        let session_id = session_id.to_string();
+        Function::new(
+            ctx.clone(),
+            Async(move || {
+                let client = client.clone();
+                let session_id = session_id.clone();
+                async move {
+                    Ok::<_, rquickjs::Error>(history_json(&client, &session_id).await)
+                }
+            }),
+        )?
+    };
+    cafe.set("_history", history)?;
+
     // Outbound HTTP: `cafe._fetch(url, optionsJson) -> envelopeJson`.
     // The prelude shapes the result into a Fetch-API-like Response.
     let fetch = Function::new(
@@ -948,14 +1062,14 @@ mod tests {
 
     #[test]
     fn classify_user_text_message() {
-        let ev = classify_event(&user_chunk("hello")).unwrap();
-        assert_eq!(
-            ev,
-            JsEvent {
-                event_type: "user_message".into(),
-                text: "hello".into(),
-            }
-        );
+        let chunk = user_chunk("hello");
+        let ev = classify_event(&chunk).unwrap();
+        assert_eq!(ev.event_type, "user_message");
+        assert_eq!(ev.text, "hello");
+        assert_eq!(ev.id, chunk.id);
+        assert_eq!(ev.content_type, "text");
+        assert_eq!(ev.role.as_deref(), Some(roles::USER));
+        assert_eq!(ev.annotations["chat.role"], roles::USER);
     }
 
     #[test]
@@ -1053,6 +1167,8 @@ mod tests {
                         invoke: typeof cafe.invoke,
                         rpc: typeof cafe.rpc,
                         publish: typeof cafe.publish,
+                        history: typeof cafe.history,
+                        findToolCalls: typeof cafe.findToolCalls,
                         publishText: typeof cafe.publishText,
                         annotate: typeof cafe.annotate,
                         tool: typeof cafe.tool,
@@ -1069,7 +1185,7 @@ mod tests {
         assert_eq!(v["sessionId"], "sess-1");
         for key in [
             "nextEvent", "events", "invoke", "rpc", "publish", "publishText", "annotate",
-            "tool", "fetch", "globalFetch", "config", "log",
+            "tool", "fetch", "globalFetch", "config", "history", "findToolCalls", "log",
         ] {
             assert_eq!(v[key], "function", "{key} must be a function");
         }
@@ -1402,6 +1518,7 @@ async function main(cafe) {
             &JsEvent {
                 event_type: "user_message".into(),
                 text: "hello".into(),
+                ..Default::default()
             },
             r#"
 async function main(cafe) {
@@ -1527,7 +1644,75 @@ async function main(cafe) {
 
     #[test]
     fn publish_chunk_unknown_type_errors() {
-        assert!(build_publish_chunk(&serde_json::json!({"type": "binary"})).is_err());
+        assert!(build_publish_chunk(&serde_json::json!({"type": "quantum"})).is_err());
+    }
+
+    #[test]
+    fn publish_chunk_binary_decodes_and_sets_mime() {
+        let c = build_publish_chunk(&serde_json::json!({
+            "type": "binary", "data": "Ynl0ZXMgYXJlIGhlcmU=", "mime_type": "text/plain",
+            "annotations": { "test.bin": true }
+        }))
+        .unwrap();
+        assert_eq!(c.content_type, ContentType::Binary);
+        assert_eq!(c.mime_type.as_deref(), Some("text/plain"));
+        assert_eq!(c.data.as_deref(), Some(&b"bytes are here"[..]));
+        assert_eq!(c.role(), Some(roles::ASSISTANT));
+        assert_eq!(c.get_annotation::<bool>("test.bin"), Some(true));
+    }
+
+    #[test]
+    fn publish_chunk_binary_bad_base64_errors() {
+        assert!(build_publish_chunk(&serde_json::json!({
+            "type": "binary", "data": "!!!not base64!!!"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn classify_llm_complete_carries_trigger_metadata() {
+        let chunk = Chunk::new_null("com.nominal.cafe-llm")
+            .with_annotation(keys::CHAT_ROLE, roles::ASSISTANT)
+            .with_annotation(keys::CHAT_STREAM_COMPLETE, true);
+        let ev = classify_event(&chunk).unwrap();
+        assert_eq!(ev.event_type, "llm_complete");
+        assert_eq!(ev.content_type, "null"); // the stream_complete marker
+        assert_eq!(ev.id, chunk.id);
+        assert_eq!(ev.role.as_deref(), Some(roles::ASSISTANT));
+    }
+
+    #[tokio::test]
+    async fn find_tool_calls_parses_markers() {
+        let client = BusClient::unix("/tmp/nonexistent-cafe-bus.sock");
+        let rt = AsyncRuntime::new().unwrap();
+        let ctx = AsyncContext::full(&rt).await.unwrap();
+        let out: String = ctx
+            .async_with(async |ctx| {
+                let (event_rx, config_slot) =
+                    oneshot_channel(r#"{"type":"tick","text":""}"#, "{}");
+                install_cafe(
+                    &ctx,
+                    &client,
+                    "sess-1",
+                    "js",
+                    event_rx,
+                    config_slot,
+                    Duration::from_secs(1),
+                )
+                .unwrap();
+                ctx.eval::<(), _>(JS_PRELUDE).unwrap();
+                ctx.eval::<String, _>(
+                    r#"JSON.stringify(cafe.findToolCalls(
+                        'x <|tool_call|>{"name":"dice.roll","parameters":{"count":2,"sides":6}}<|tool_call_end|> y'
+                    ))"#,
+                )
+                .unwrap()
+            })
+            .await;
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v[0]["name"], "dice.roll");
+        assert_eq!(v[0]["parameters"]["count"], 2);
+        assert_eq!(v.as_array().unwrap().len(), 1);
     }
 
     #[test]

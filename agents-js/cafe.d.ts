@@ -11,6 +11,36 @@ export type JsEventType = "user_message" | "llm_complete" | "tick";
 export interface JsEvent {
   type: JsEventType;
   text: string;
+  /** Id of the chunk that triggered the event. */
+  id: string;
+  /** Content type of the trigger chunk: "text" | "binary" | "binary_ref" | "null". */
+  content_type: string;
+  /** `chat.role` of the trigger chunk, if any. */
+  role?: string;
+  /** Annotations of the trigger chunk. */
+  annotations: Record<string, unknown>;
+}
+
+/** One chunk summary from `cafe.history()`. */
+export interface HistoryChunk {
+  id: string;
+  content_type: string;
+  content: string | null;
+  role: string | null;
+  producer: string;
+  mime_type: string | null;
+  timestamp: number;
+  transient: boolean;
+  /** Whether inline binary data is present (the bytes themselves are omitted). */
+  has_data: boolean;
+  annotations: Record<string, unknown>;
+}
+
+/** A parsed `<|tool_call|>` marker. */
+export interface ToolCallSpec {
+  name: string;
+  parameters?: Record<string, unknown>;
+  provider?: string;
 }
 
 export interface JsManifest {
@@ -65,9 +95,13 @@ export interface FetchResponse {
 /** Spec for `cafe.publish` (and the `options` of `cafe.publishText`). */
 export interface PublishInit {
   /** Chunk content type. Default "text". */
-  type?: "text" | "null";
+  type?: "text" | "null" | "binary";
   /** Text content (for `type: "text"`). */
   content?: string;
+  /** Base64-encoded bytes (for `type: "binary"`). */
+  data?: string;
+  /** MIME type (for `type: "binary"`; default application/octet-stream). */
+  mime_type?: string;
   /** Sets `chat.role`; text chunks default to "assistant". */
   role?: string;
   /** Arbitrary annotations, applied verbatim (e.g. "config.*", "cafe.flow.signal"). */
@@ -115,6 +149,10 @@ export interface CafeApi {
   fetch(url: string, options?: FetchInit): Promise<FetchResponse>;
   /** Merged runtime config snapshot (see resolve semantics in reference). */
   config(): Promise<Record<string, unknown>>;
+  /** Session history: chunk summaries, oldest first. */
+  history(): Promise<HistoryChunk[]>;
+  /** Parse `<|tool_call|>` markers from LLM text (host-consistent parsing). */
+  findToolCalls(text: string): ToolCallSpec[];
   /** Host log. */
   log(msg: string): void;
   sessionId: string;

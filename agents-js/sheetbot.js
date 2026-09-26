@@ -361,7 +361,7 @@ async function main(cafe) {
       await cafe.invoke("llm", {});
     } else if (event.type === "llm_complete") {
       let called = false;
-      for (const call of findToolCalls(event.text)) {
+      for (const call of cafe.findToolCalls(event.text)) {
         called = true;
         await cafe.tool(call.name, call.parameters || {});
       }
@@ -373,16 +373,3 @@ async function main(cafe) {
   return "sheetbot: done";
 }
 
-function findToolCalls(text) {
-  const calls = [];
-  const re = /<\|tool_call\|>\s*(\{.*?\})\s*<\|tool_call_end\|>/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    try {
-      calls.push(JSON.parse(m[1]));
-    } catch {
-      // Skip malformed markers; the LLM sees no result for them.
-    }
-  }
-  return calls;
-}

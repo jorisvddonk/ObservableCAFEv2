@@ -25,7 +25,7 @@ async function main(cafe) {
       await cafe.invoke("llm", {});            // 1. LLM writes text (maybe a tool call)
     } else if (event.type === "llm_complete") {
       let called = false;
-      for (const call of findToolCalls(event.text)) {
+      for (const call of cafe.findToolCalls(event.text)) {
         called = true;
         await cafe.tool(call.name, call.parameters || {});  // 2. run the tool
       }                                          // 3. result auto-published as context
@@ -36,17 +36,11 @@ async function main(cafe) {
   }
   return "dice-llm: done";
 }
-
-function findToolCalls(text) {
-  const calls = [];
-  const re = /<\|tool_call\|>\s*(\{.*?\})\s*<\|tool_call_end\|>/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    try { calls.push(JSON.parse(m[1])); } catch { /* skip malformed markers */ }
-  }
-  return calls;
-}
 ```
+
+`cafe.findToolCalls(text)` parses the `<|tool_call|>…<|tool_call_end|>` markers
+with the same logic as the host's tool detector — no need to re-implement the
+regex.
 
 No `tool-detector` / `tool-executor` steps, no `step_complete` wiring: the
 generator order *is* the pipeline, and each RPC is one `await`. Errors reject
@@ -59,7 +53,7 @@ the JS port of `agents/dice-llm.toml`. Its manifest advertises the tool to
 the LLM exactly like the TOML `initial_chunk` did: a system prompt teaching
 the `<|tool_call|>` marker format plus `tools.available` with the
 `dice.roll` JSON Schema, both under `initial_config`. Its `main` is the loop
-from Step 1 plus a `findToolCalls` regex helper. Read it now — the rest of
+from Step 1 (it uses `cafe.findToolCalls`). Read it now — the rest of
 this tutorial walks through running it.
 
 The key line is `await cafe.tool(call.name, call.parameters || {})`:
