@@ -3,6 +3,16 @@ use serde::{Deserialize, Serialize};
 /// Well-known session name where evaluators publish their schemas.
 pub const SCHEMA_SESSION: &str = "__schema__";
 
+/// Well-known session used to send control signals to the agent runtimes
+/// (`cafe-agent-js`, `cafe-agent-runtime`). Signals are transient — they are
+/// not persisted and are only seen by currently-connected runtimes.
+pub const AGENTS_SESSION: &str = "_cafe_agents";
+
+/// `cafe.flow.signal` value asking agent runtimes to re-scan their agent
+/// directories from disk. Published to [`AGENTS_SESSION`] by the admin
+/// reload endpoint.
+pub const SIGNAL_RELOAD_AGENTS: &str = "reload-agents";
+
 /// An evaluator's self-describing schema, advertised on the `__schema__`
 /// session as a null chunk with `cafe.schema.evaluator` annotation.
 ///
@@ -38,6 +48,12 @@ mod tests {
     #[test]
     fn schema_session_constant() {
         assert_eq!(SCHEMA_SESSION, "__schema__");
+    }
+
+    #[test]
+    fn agents_control_constants() {
+        assert_eq!(AGENTS_SESSION, "_cafe_agents");
+        assert_eq!(SIGNAL_RELOAD_AGENTS, "reload-agents");
     }
 
     #[test]

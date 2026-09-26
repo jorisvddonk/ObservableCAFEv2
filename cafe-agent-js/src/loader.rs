@@ -117,6 +117,19 @@ pub fn reload_file(registry: &Registry, path: &Path) -> anyhow::Result<String> {
     Ok(name)
 }
 
+/// Re-scan `dirs` from disk and replace the registry contents wholesale.
+/// Returns `(loaded_count, warnings)`. Used by the admin reload signal.
+pub fn reload_all(registry: &Registry, dirs: &[String]) -> (usize, Vec<String>) {
+    let (fresh, warnings) = load_all(dirs);
+    let fresh = fresh
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let count = fresh.len();
+    *registry.write().unwrap_or_else(|e| e.into_inner()) = fresh;
+    (count, warnings)
+}
+
 /// Remove the agent whose source file is `path` (file deleted at runtime).
 /// Returns the removed agent's name, or `None` if no agent came from it.
 /// Sessions of a removed agent stop on their next event (the session loop
@@ -237,6 +250,25 @@ async function main(cafe) {}
 
         // Unknown path is a no-op, not an error.
         assert!(remove_by_path(&reg, &dir.path().join("nope.js")).is_none());
+    }
+
+    #[test]
+    fn reload_all_replaces_registry_contents() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write(&dir, "a.js", GOOD);
+        let (reg, _) = load_all(&[dir.path().to_str().unwrap().into()]);
+        assert_eq!(reg.read().unwrap().len(), 1);
+
+        // Add a second agent on disk, then reload from disk.
+        std::fs::write(
+            dir.path().join("b.js"),
+            "const manifest = { name: \"second\" };\nasync function main(cafe) {}",
+        )
+        .unwrap();
+        let (count, warnings) = reload_all(&reg, &[dir.path().to_str().unwrap().into()]);
+        assert_eq!(count, 2, "{warnings:?}");
+        let reg = reg.read().unwrap();
+        assert!(reg.contains_key("good") && reg.contains_key("second"));
     }
 
     #[test]

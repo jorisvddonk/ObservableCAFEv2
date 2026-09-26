@@ -90,6 +90,7 @@ alternatives considered. They are the project's institutional memory.
 | [ADR-129](../adr-129-cafe-rss-service.md) | RSS fetch/parse as its own evaluator (`cafe-rss`). |
 | [ADR-130](../adr-130-doc-site-mdbook.md) | Documentation site built with mdBook, deployed to GitHub Pages. |
 | [ADR-131](../adr-131-js-agent-fetch.md) | JS agents can make outbound HTTP calls via `cafe.fetch` / global `fetch`. |
+| [ADR-132](../adr-132-agent-reload-signal.md) | Agent runtimes reload on an admin signal over the `_cafe_agents` control session. |
 
 ## Feature completeness
 

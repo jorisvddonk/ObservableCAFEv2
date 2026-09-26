@@ -103,3 +103,4 @@
 - [ADR-128: STT is agent-driven (no auto-transcription)](adr-128-stt-agent-driven.md)
 - [ADR-129: RSS as its own evaluator (cafe-rss)](adr-129-cafe-rss-service.md)
 - [ADR-131: Outbound HTTP from JS agents (cafe.fetch)](adr-131-js-agent-fetch.md)
+- [ADR-132: Agent reload control signal](adr-132-agent-reload-signal.md)

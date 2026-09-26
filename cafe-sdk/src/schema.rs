@@ -1,5 +1,10 @@
 use cafe_types::{keys, Chunk, EvaluatorSchema, SessionConfig};
 
+// Re-export the well-known session/signal constants. `cafe_sdk::schema` is
+// this module (which shadows the glob re-export of `cafe_types::schema`), so
+// consumers reach the constants through here.
+pub use cafe_types::schema::{AGENTS_SESSION, SCHEMA_SESSION, SIGNAL_RELOAD_AGENTS};
+
 /// Publish an evaluator's schema to the `__schema__` session.
 ///
 /// Called once by each evaluator on startup after connecting to the bus.

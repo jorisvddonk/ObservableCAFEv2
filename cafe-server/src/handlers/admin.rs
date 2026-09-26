@@ -131,10 +131,50 @@ pub async fn system_status(
     .into_response()
 }
 
+/// POST /api/admin/agents/reload — signal the agent runtimes to re-scan their
+/// agent directories from disk.
+///
+/// Fire-and-forget: a transient `cafe.flow.signal = "reload-agents"` chunk is
+/// published on the `_cafe_agents` control session. Live runtimes
+/// (`cafe-agent-js`) reload in place; file watchers also pick up changes
+/// without this.
 pub async fn reload_agents(
-    _state: State<AppState>,
+    State(state): State<AppState>,
     _admin: AdminUser,
 ) -> impl IntoResponse {
-    // Signal cafe-agent-runtime via bus (future implementation)
-    Json(json!({ "status": "reload requested" })).into_response()
+    use cafe_sdk::{keys, Chunk, SessionConfig};
+
+    let session = cafe_sdk::schema::AGENTS_SESSION;
+
+    // Ensure the control session exists (idempotent).
+    if let Err(e) = state
+        .bus
+        .create_session(session, session, SessionConfig::default())
+        .await
+    {
+        if e.code() != Some("SESSION_EXISTS") {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    }
+
+    let chunk = Chunk::new_null("com.nominal.cafe-server")
+        .with_annotation(
+            keys::CAFE_FLOW_SIGNAL,
+            cafe_sdk::schema::SIGNAL_RELOAD_AGENTS,
+        )
+        .as_transient();
+    #[allow(deprecated)]
+    if let Err(e) = state.bus.publish(session, chunk).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+
+    Json(json!({ "status": "reload requested", "session": session })).into_response()
 }

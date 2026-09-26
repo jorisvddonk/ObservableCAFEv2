@@ -168,6 +168,17 @@ async fn run_once(socket_path: &str, dirs: &[String], default_timeout: Duration)
         }
     };
 
+    // Admin reload signal: re-scan agent dirs on demand (see
+    // `cafe_types::schema::SIGNAL_RELOAD_AGENTS`).
+    {
+        let control = client.clone();
+        let reg = registry.clone();
+        let dirs = dirs.to_vec();
+        tokio::task::spawn_local(async move {
+            watch_reload_signals(control, reg, dirs).await;
+        });
+    }
+
     let mut rx = client.subscribe_all().await?;
     loop {
         tokio::select! {
@@ -545,5 +556,51 @@ async fn drive_stateful(
     };
     if tx.send(event_json).is_err() {
         warn!("cafe-agent-js: event stream for {session_id} is gone; dropping event");
+    }
+}
+
+/// Listen on the agents control session and re-scan agent directories when the
+/// reload signal arrives (`SIGNAL_RELOAD_AGENTS`). Best-effort: reconnects if
+/// the subscription drops.
+async fn watch_reload_signals(client: BusClient, registry: Registry, dirs: Vec<String>) {
+    let session = cafe_types::schema::AGENTS_SESSION;
+    loop {
+        let _ = client
+            .create_session(session, session, SessionConfig::default())
+            .await; // SESSION_EXISTS is fine
+        let mut sub = match client.subscribe_session(session).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("cafe-agent-js: reload-signal subscribe failed: {e}; retrying");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
+        };
+        let mut history_complete = false;
+        while let Some(msg) = sub.rx.recv().await {
+            let chunk = match msg {
+                ServerMessage::Chunk { chunk, .. } => chunk,
+                ServerMessage::HistoryComplete { .. } => {
+                    history_complete = true;
+                    continue;
+                }
+                _ => continue,
+            };
+            if !history_complete {
+                continue;
+            }
+            if chunk.get_annotation::<String>(keys::CAFE_FLOW_SIGNAL).as_deref()
+                != Some(cafe_types::schema::SIGNAL_RELOAD_AGENTS)
+            {
+                continue;
+            }
+            let (count, warnings) = loader::reload_all(&registry, &dirs);
+            for w in warnings {
+                warn!("cafe-agent-js: reload: {w}");
+            }
+            info!("cafe-agent-js: reloaded {count} JS agents on admin signal");
+        }
+        warn!("cafe-agent-js: reload-signal subscription ended; resubscribing");
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

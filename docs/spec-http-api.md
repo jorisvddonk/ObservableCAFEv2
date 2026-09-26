@@ -254,10 +254,14 @@ All admin endpoints require a token with `admin: true`.
 
 ### Agent management
 `GET /api/admin/agents` — background agent *sessions* currently registered
-`POST /api/admin/agents/reload` — currently a stub: returns
-`{"status":"reload requested"}` without reloading. Hot-reload is automatic —
-both `cafe-agent-runtime` and `cafe-agent-js` watch their agent directories
-and pick up changed files (see [ADR-127](adr-127-js-agent-runtime.md)).
+
+`POST /api/admin/agents/reload` — ask live agent runtimes to re-scan their
+agent directories. Publishes a transient `cafe.flow.signal = "reload-agents"`
+chunk on the `_cafe_agents` control session; `cafe-agent-js` reloads its
+registry in place. Fire-and-forget (no per-agent confirmation), and runtimes
+must be online — file watchers also reload on change. See
+[ADR-132](adr-132-agent-reload-signal.md). Response:
+`{"status":"reload requested","session":"_cafe_agents"}`
 
 ### System status
 `GET /api/admin/status`
