@@ -134,13 +134,12 @@ Each entry describes a tool the LLM may call:
 
 ```toml
 "tools.available" = [
-  { name = "dice.roll", description = "Roll dice",
-    parameters = { type = "object",
-      properties = { count = { type = "integer" }, sides = { type = "integer" } },
-      required = ["count", "sides"] },
-    tool_type = "rpc" },
+  { name = "dice.roll", description = "Roll dice", parameters = { type = "object", properties = { count = { type = "integer" }, sides = { type = "integer" } }, required = ["count", "sides"] }, tool_type = "rpc" },
 ]
 ```
+
+> TOML inline tables must stay **on one line** — keep each tool definition on a
+> single line like the real agents do (see `agents/dice-llm.toml`).
 
 | Field | Meaning |
 |---|---|

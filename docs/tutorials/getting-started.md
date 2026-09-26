@@ -31,8 +31,8 @@ process-compose version
 ## Step 1 — Clone and build
 
 ```sh
-git clone <your-fork-or-origin>
-cd observablecafe
+git clone https://github.com/jorisvddonk/ObservableCAFEv2
+cd ObservableCAFEv2
 
 # Build all Rust crates
 cargo build --workspace
@@ -53,10 +53,11 @@ the CLI, and the rest. It takes a while the first time.
 - `cafe-bus` — the message bus on a Unix socket at `/tmp/cafe-bus.sock`
 - `cafe-store` — SQLite persistence
 - `cafe-llm` — LLM bridge
-- `cafe-agent-runtime` — runs the agent pipelines
+- `cafe-agent-js` — runs the JS agents in `agents-js/`
+- `cafe-agent-runtime` — runs the legacy TOML pipelines (frozen)
 - `cafe-server` — HTTP API on port 4000
 - `cafe-mcp-bridge` — MCP endpoint on port 3100
-- and several more (binary-store, knowledgebase, tts, stt, comfy, …)
+- and several more (binary-store, knowledgebase, tts, stt, comfy, rss, …)
 
 Check that the bus socket exists:
 
@@ -97,12 +98,21 @@ Create a session and send it a message:
 SESSION=$(cafe-cli create-session --agent default)
 echo "session: $SESSION"
 
-cafe-cli chat "$SESSION" "Hello! What is the capital of France?"
+# `chat` goes through cafe-server, so it needs the admin token
+# (printed once on first startup — see "The token" below).
+TOKEN="<admin token>"
+cafe-cli --token "$TOKEN" chat "$SESSION" "Hello! What is the capital of France?"
 ```
+
+Note that `--token` is a **global** option — it goes before the subcommand.
 
 `chat` streams the assistant's reply as JSON chunks. You'll see the LLM's tokens
 arrive as `chat.is_streaming` chunks, then a final chunk with
 `chat.stream_complete: true`.
+
+> **The token**: on first startup, `cafe-server` prints an admin token to stdout
+> and stores it. Find it in the process-compose logs, then set `TOKEN` to it for
+> the HTTP examples below.
 
 ## Step 5 — See the history
 
@@ -124,17 +134,13 @@ The browser and the web SDK talk to `cafe-server`, not the bus directly.
 curl http://localhost:4000/health
 
 # List sessions
-curl -H "Authorization: Bearer <token>" http://localhost:4000/api/sessions
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/sessions
 ```
-
-> **The token**: on first startup, `cafe-server` prints an admin token to stdout
-> and stores it. Find it in the process-compose logs, or wherever you captured
-> startup output.
 
 Stream a chat over SSE:
 
 ```sh
-curl -N -H "Authorization: Bearer <token>" \
+curl -N -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"content":"Hello over HTTP!"}' \
   http://localhost:4000/api/sessions/$SESSION/chat

@@ -50,10 +50,12 @@ the chunk (e.g. binary write URLs injected by the binary store).
 ## Chat (streaming round-trip)
 
 The one-shot convenience command: sends a message and prints the assistant's
-SSE-streamed reply as JSON chunks.
+SSE-streamed reply as JSON chunks. It goes through `cafe-server`, so it needs
+the admin token (see [Getting started](../tutorials/getting-started.md)) — and
+`--token` is a global option, so it comes **before** the subcommand:
 
 ```sh
-cafe-cli chat "$SESSION" "What is the capital of France?"
+cafe-cli --token "$TOKEN" chat "$SESSION" "What is the capital of France?"
 ```
 
 ## Subscribe

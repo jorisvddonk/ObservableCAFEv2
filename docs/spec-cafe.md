@@ -276,6 +276,6 @@ See `docs/spec-bus-protocol.md` for the full protocol.
 {
   "op": "publish",
   "session_id": "my-session",
-  "chunk": { ...chunk fields... }
+  "chunk": { "id": "<chunk-id>" }
 }
 ```

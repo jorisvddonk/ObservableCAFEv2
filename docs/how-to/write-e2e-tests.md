@@ -50,6 +50,12 @@ Here's the skeleton every test follows (from `tests/bus-filters-e2e.py`):
 # dependencies = []
 # ///
 
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE_DIR = os.path.join(PROJECT_ROOT, "target", "release")
 CLI = os.path.join(RELEASE_DIR, "cafe-cli")
@@ -69,13 +75,15 @@ def main():
         env["CAFE_BUS_SOCKET"] = bus_socket
 
         # 3. Start the minimal bus
-        bus_proc = subprocess.Popen([BUS_BIN], env=env, ...)
+        bus_proc = subprocess.Popen([BUS_BIN], env=env,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)
         try:
             # 4. Exercise the system with the CLI, asserting every step
-            r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "default"])
+            r = subprocess.run([CLI, "--bus", bus_socket, "create-session",
+                                "--agent", "default"], capture_output=True, text=True)
             assert r.returncode == 0
-            ...
+            # ... publish, subscribe, assert on the chunks you expect ...
             print("=== ALL BUS FILTER TESTS PASSED ===", file=sys.stderr)
         finally:
             bus_proc.kill()

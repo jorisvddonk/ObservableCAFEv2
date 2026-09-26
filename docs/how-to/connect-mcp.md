@@ -125,9 +125,7 @@ type = "null"
 [initial_chunk.annotations]
 "config.type" = "runtime"
 "tools.available" = [
-  { name = "tavily_search", description = "Web search via Tavily",
-    parameters = { type = "object", properties = { query = { type = "string" } } },
-    provider = "mcp", tool_type = "mcp" },
+  { name = "tavily_search", description = "Web search via Tavily", parameters = { type = "object", properties = { query = { type = "string" } } }, provider = "mcp", tool_type = "mcp" },
 ]
 ```
 

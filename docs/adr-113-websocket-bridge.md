@@ -38,7 +38,7 @@ set query params.
 
 **Server → Client** (JSON messages):
 
-```json
+```jsonc
 {"event":"chunk","chunk":{"id":"...","content_type":"text","data":"hello"}}
 {"event":"history_complete","count":0}
 {"event":"error","message":"...","code":"..."}
@@ -46,7 +46,7 @@ set query params.
 
 **Client → Server** (JSON messages):
 
-```json
+```jsonc
 {"op":"publish","chunk":{"content_type":"binary_ref","mime_type":"audio/wav","annotations":{...}}}
 {"op":"subscribe","session_id":"<new>"}
 ```

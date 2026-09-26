@@ -161,7 +161,7 @@ Full specification in `docs/spec-bus-protocol.md`.
 Wire format: newline-delimited JSON (NDJSON) over Unix domain socket.
 
 Client → bus:
-```json
+```jsonc
 { "op": "publish", "session_id": "abc", "chunk": { ...chunk fields... } }
 { "op": "subscribe", "session_id": "abc" }
 { "op": "subscribe_filtered", "session_id": "abc", "content_types": ["BinaryRef"] }
@@ -173,7 +173,7 @@ Client → bus:
 ```
 
 Bus → client:
-```json
+```jsonc
 { "event": "chunk", "session_id": "abc", "chunk": { ...chunk fields... } }
 { "event": "history_complete", "session_id": "abc", "count": 42 }
 ```

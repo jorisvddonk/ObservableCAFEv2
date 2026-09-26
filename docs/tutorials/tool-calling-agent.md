@@ -59,11 +59,7 @@ type = "null"
 "config.type" = "runtime"
 "config.llm.system_prompt" = "You are a helpful assistant with access to a dice-rolling tool..."
 "tools.available" = [
-  { name = "dice.roll", description = "Roll one or more dice and return the total",
-    parameters = { type = "object",
-      properties = { count = { type = "integer" }, sides = { type = "integer" } },
-      required = ["count", "sides"] },
-    tool_type = "rpc" },
+  { name = "dice.roll", description = "Roll one or more dice and return the total", parameters = { type = "object", properties = { count = { type = "integer" }, sides = { type = "integer" } }, required = ["count", "sides"] }, tool_type = "rpc" },
 ]
 ```
 
@@ -116,12 +112,7 @@ You are a helpful assistant with access to a dice-rolling tool.
 ...
 """
 "tools.available" = [
-  { name = "dice.roll", description = "Roll one or more dice and return the total",
-    parameters = { type = "object",
-      properties = { count = { type = "integer", description = "Number of dice" },
-                     sides = { type = "integer", description = "Number of sides per die" } },
-      required = ["count", "sides"] },
-    tool_type = "rpc" },
+  { name = "dice.roll", description = "Roll one or more dice and return the total", parameters = { type = "object", properties = { count = { type = "integer", description = "Number of dice" }, sides = { type = "integer", description = "Number of sides per die" } }, required = ["count", "sides"] }, tool_type = "rpc" },
 ]
 ```
 
@@ -131,7 +122,8 @@ You are a helpful assistant with access to a dice-rolling tool.
 SESSION=$(cafe-cli create-session --agent dice-llm)
 echo "$SESSION"
 
-cafe-cli chat "$SESSION" "roll 2d6"
+# `chat` goes through cafe-server; set TOKEN to your admin token (Tutorial 1)
+cafe-cli --token "$TOKEN" chat "$SESSION" "roll 2d6"
 ```
 
 You should get an answer like "You rolled a total of 7!" — the result of an

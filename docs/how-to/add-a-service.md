@@ -24,7 +24,7 @@ Add it to the workspace in `Cargo.toml`:
 
 ```toml
 members = [
-    ...,
+    # ... existing members ...
     "cafe-my-service",
 ]
 ```
@@ -53,7 +53,7 @@ Model `src/main.rs` on `cafe-rot13`:
 
 ```rust
 use anyhow::Result;
-use cafe_sdk::{keys, Chunk, EvaluatorSchema, JsonRpcResponse, ServerMessage};
+use cafe_sdk::{keys, roles, Chunk, EvaluatorSchema, JsonRpcResponse, ServerMessage};
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -112,11 +112,22 @@ async fn subscribe_all(socket_path: &str) -> Result<()> {
 async fn run_session(session_id: String, client: cafe_sdk::bus::BusClient) -> Result<()> {
     let mut rx = client.subscribe(&session_id).await?;
 
+    // Gate RPC dispatch on history replay completion (ADR-123): replayed
+    // chunks must not trigger work before the session is caught up.
+    let mut history_complete = false;
+
     while let Some(msg) = rx.recv().await {
         let chunk = match msg {
             ServerMessage::Chunk { chunk, .. } => chunk,
+            ServerMessage::HistoryComplete { .. } => {
+                history_complete = true;
+                continue;
+            }
             _ => continue,
         };
+        if !history_complete {
+            continue;
+        }
 
         let Some(request) = chunk.as_rpc_request() else { continue; };
         if request.method != "my-service.invoke" {

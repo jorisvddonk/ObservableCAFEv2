@@ -77,7 +77,8 @@ Create a session with it and send a message:
 SESSION=$(cafe-cli create-session --agent hello-js)
 echo "$SESSION"
 
-cafe-cli chat "$SESSION" "Hello world"
+# `chat` goes through cafe-server; set TOKEN to your admin token (Tutorial 1)
+cafe-cli --token "$TOKEN" chat "$SESSION" "Hello world"
 ```
 
 The reply is `Uryyb jbeyq` — your message shifted by 13 letters, via this

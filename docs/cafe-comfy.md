@@ -52,28 +52,46 @@ Example minimal txt2img workflow:
 {
   "4": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "model.safetensors" } },
   "6": { "class_type": "CLIPTextEncode", "inputs": { "text": "", "clip": ["4", 1] } },
-  "8": { "class_type": "KSampler", "inputs": { ... } },
+  "8": { "class_type": "KSampler", "inputs": {} },
   "10": { "class_type": "SaveImage", "inputs": { "images": ["9", 0] } }
 }
 ```
 
 ## Agent configuration
 
-A `comfy` agent typically has pipeline `["trust-filter", "llm", "comfy"]`:
+A `comfy` agent runs the LLM on the user message, then runs the workflow when
+the LLM completes. The shipped agent is `agents-js/comfy.js`:
 
-```toml
-name = "comfy"
-pipeline = ["trust-filter", "llm", "comfy"]
+```js
+const manifest = {
+  name: "comfy",
+  description: "Image generation agent — runs a ComfyUI workflow and produces an image",
+  mode: "stateless",
+  initial_config: {
+    "config.type": "runtime",
+    "config.llm.system_prompt": "You are an image generation assistant. Respond with a detailed image prompt describing what to generate.",
+    "config.comfy.enabled": false,
+  },
+};
 
-[initial_chunk]
-type = "null"
-
-[initial_chunk.annotations]
-"config.type" = "runtime"
-"config.llm.system_prompt" = "You are an image generation assistant. ..."
-"config.comfy.workflow_path" = "workflow.json"
-"config.comfy.workflow_input_node" = "6"
+async function main(cafe) {
+  const cfg = await cafe.config();
+  for await (const event of cafe.events()) {
+    if (event.type === "user_message") {
+      await cafe.invoke("llm", {});
+    } else if (event.type === "llm_complete" && cfg["config.comfy.enabled"] === true) {
+      await cafe.invoke("comfy", { text: event.text });
+    }
+  }
+}
 ```
+
+`config.comfy.enabled` gates the step (default `false`; turn it on with a runtime
+config chunk). The workflow is **not** chosen per call — `cafe-comfy` loads it
+from its own environment (`COMFY_WORKFLOW_PATH` / `COMFY_WORKFLOW_INPUT_NODE`).
+
+> The legacy TOML form used `[[steps]]` with `type = "comfy"`. There is no
+> `pipeline = [...]` key in the agent format.
 
 ## RPC API
 
@@ -81,18 +99,21 @@ type = "null"
 
 **Params:**
 
-| Field                  | Type   | Description                                 |
-|------------------------|--------|---------------------------------------------|
-| `text`                 | string | Prompt text (from assembled LLM response)   |
-| `workflow_path`        | string | Override workflow file path                 |
-| `workflow_input_node`  | string | Override input node ID                      |
-| `endpoint`             | string | Override ComfyUI base URL                   |
+| Field  | Type   | Description                               |
+|--------|--------|-------------------------------------------|
+| `text` | string | Prompt text (required)                    |
 
 **Result:**
 
 ```json
 { "chunk_id": "<uuid of published image chunk>" }
 ```
+
+> Only `text` is honoured. The evaluator's schema also advertises
+> `workflow_path` and `input_node`, but the handler does not read them — the
+> workflow and input node come from the service environment
+> (`COMFY_WORKFLOW_PATH`, `COMFY_WORKFLOW_INPUT_NODE`). Configure them on
+> `cafe-comfy`, not per call.
 
 ## Producer identifier
 

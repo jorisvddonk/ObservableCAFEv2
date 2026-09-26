@@ -261,7 +261,7 @@ A chunk being delivered to a subscriber.
 {
   "event": "chunk",
   "session_id": "abc123",
-  "chunk": { ...chunk fields... }
+  "chunk": { "id": "<chunk-id>" }
 }
 ```
 

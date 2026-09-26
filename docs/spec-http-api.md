@@ -85,9 +85,40 @@ Response:
 ```json
 {
   "session_id": "abc123",
-  "chunks": [ ...array of chunk objects... ]
+  "chunks": [ { "id": "<chunk-id>" } ]
 }
 ```
+
+### Update session tags
+`PATCH /api/sessions/:id/tags`
+
+Request:
+```json
+{ "tags": ["work", "pinned"] }
+```
+
+### Session WebSocket
+`GET /api/sessions/:id/ws?token=<token>`
+
+A WebSocket that streams session chunks as JSON and accepts client messages
+(see ADR-113). Requires the token as a query parameter (browsers cannot set
+headers on a WebSocket handshake).
+
+---
+
+## Discovery
+
+### List agents
+`GET /api/agents`
+
+Merged TOML + JS agent list. Each entry has `id`, `description`, `background`
+and `source` (`"toml"` or `"js"`); a JS agent shadows a TOML agent of the same
+name. See [JS agent reference](reference/js-agents.md).
+
+### List models
+`GET /api/models`
+
+Models the configured LLM backend can reach (proxied from `cafe-llm`).
 
 ---
 
@@ -222,9 +253,11 @@ All admin endpoints require a token with `admin: true`.
 `DELETE /api/admin/tokens/:id`
 
 ### Agent management
-`GET /api/admin/agents` — list registered agents
-`POST /api/admin/agents/reload` — hot-reload agents with changed source
-`POST /api/admin/agents/reload-force` — force reload all agents
+`GET /api/admin/agents` — background agent *sessions* currently registered
+`POST /api/admin/agents/reload` — currently a stub: returns
+`{"status":"reload requested"}` without reloading. Hot-reload is automatic —
+both `cafe-agent-runtime` and `cafe-agent-js` watch their agent directories
+and pick up changed files (see [ADR-127](adr-127-js-agent-runtime.md)).
 
 ### System status
 `GET /api/admin/status`

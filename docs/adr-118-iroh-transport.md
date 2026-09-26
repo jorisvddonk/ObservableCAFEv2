@@ -1,6 +1,11 @@
 # ADR-118: iroh transport for remote bus connectivity
 
-**Status**: Implemented (commit TBD)
+**Status**: Implemented (access control refined by [ADR-120](./adr-120-iroh-allowlist.md))
+
+> **Note:** the access-control section below proposes a static
+> `CAFE_BUS_IROH_ALLOWED_PEERS` env var. That was **rejected** in favour of a
+> peer-ID allowlist database managed via `cafe-cli iroh-allowlist` — see
+> [ADR-120](./adr-120-iroh-allowlist.md), which supersedes those lines.
 
 **Context**: The cafe-bus currently listens exclusively on a Unix domain socket (`/tmp/cafe-bus.sock`). This confines all services to a single host (ADR-001). There is no way to run services on remote machines — a GPU-bound `cafe-comfy` or `cafe-llm` must be colocated with the bus. Similarly, `cafe-tui` and `cafe-cli` cannot connect from outside the LAN without a VPN or reverse proxy.
 

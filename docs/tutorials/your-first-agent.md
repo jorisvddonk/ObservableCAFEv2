@@ -90,7 +90,8 @@ Create a session with it and send a message:
 SESSION=$(cafe-cli create-session --agent hello)
 echo "$SESSION"
 
-cafe-cli chat "$SESSION" "Hello world"
+# `chat` goes through cafe-server; set TOKEN to your admin token (Tutorial 1)
+cafe-cli --token "$TOKEN" chat "$SESSION" "Hello world"
 ```
 
 Instead of an LLM response, the pipeline runs `rot13` over your text, so the

@@ -74,7 +74,8 @@ follow-up LLM turn reads from history — the equivalent of the old
 SESSION=$(cafe-cli create-session --agent dice-llm)
 echo "$SESSION"
 
-cafe-cli chat "$SESSION" "roll 2d6"
+# `chat` goes through cafe-server; set TOKEN to your admin token (Tutorial 1)
+cafe-cli --token "$TOKEN" chat "$SESSION" "roll 2d6"
 ```
 
 You should get "You rolled a total of 7!" — an actual `dice.roll` RPC

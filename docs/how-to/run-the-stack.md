@@ -69,7 +69,8 @@ but only do work when their backend is reachable.
 
 `process-compose up` (foreground) shows live output. Since services log to
 stdout/stderr, you can also inspect individual service logs through the
-process-compose UI (default at `http://localhost:8080` when run with `--port`).
+process-compose UI — `./start.sh` runs it detached with the UI on
+`http://localhost:8082` (it passes `--port 8082`).
 
 ## Stop the stack
 
