@@ -189,14 +189,31 @@ cafe.fetch = async function (url, options) {
   })));
   if (!env.ok) throw new TypeError("fetch failed: " + (env.error || "unknown error"));
   const r = env.result;
+  const annotations = r.annotations || {};
   return {
     ok: r.ok,
     status: r.status,
     statusText: r.statusText,
     url: r.url,
     headers: cafe._headers(r.headers),
+    // Standard web/security annotations for this fetch (untrusted content):
+    // web.source_url, web.content_type, web.fetch_time, security.trust-level.
+    annotations: annotations,
     text: async () => r.body,
     json: async () => JSON.parse(r.body),
+    // Publish the fetched body as a text chunk carrying those annotations
+    // (so the LLM skips it unless the agent overrides security.trust-level).
+    publish: async function (options) {
+      const o = options || {};
+      return cafe.publish({
+        type: "text",
+        role: o.role,
+        content: o.content === undefined ? r.body : o.content,
+        annotations: { ...annotations, ...(o.annotations || {}) },
+        transient: o.transient,
+        retain_secs: o.retain_secs,
+      });
+    },
   };
 };
 if (typeof globalThis !== "undefined") globalThis.fetch = cafe.fetch;
@@ -498,6 +515,15 @@ async fn http_fetch(url: String, options_json: String, timeout: Duration) -> Str
                 );
             }
             let body = response.text().await.unwrap_or_default();
+            let content_type = headers
+                .get("content-type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
             info!("cafe-agent-js: fetch {url} -> {}", status.as_u16());
             ok_envelope(serde_json::json!({
                 "ok": status.is_success(),
@@ -505,11 +531,38 @@ async fn http_fetch(url: String, options_json: String, timeout: Duration) -> Str
                 "statusText": status.canonical_reason().unwrap_or(""),
                 "url": final_url,
                 "headers": headers,
+                "annotations": web_annotations(&final_url, &content_type, now_ms),
                 "body": body,
             }))
         }
         Err(e) => err_envelope(None, e.to_string()),
     }
+}
+
+/// Standard annotations for fetched web content, matching `cafe-web-fetch`:
+/// source URL, content type, fetch time, and the platform's **untrusted**
+/// `security.trust-level` (so the LLM skips it unless an agent explicitly
+/// vets and re-tags it). `cafe.fetch` callers can attach these to a published
+/// chunk — `res.publish()` does so automatically.
+fn web_annotations(url: &str, content_type: &str, fetch_time_ms: i64) -> serde_json::Value {
+    let mut annotations = serde_json::Map::new();
+    annotations.insert(
+        keys::WEB_SOURCE_URL.to_string(),
+        serde_json::Value::String(url.to_string()),
+    );
+    annotations.insert(
+        keys::WEB_CONTENT_TYPE.to_string(),
+        serde_json::Value::String(content_type.to_string()),
+    );
+    annotations.insert(
+        keys::WEB_FETCH_TIME.to_string(),
+        serde_json::json!(fetch_time_ms),
+    );
+    annotations.insert(
+        keys::SECURITY_TRUST_LEVEL.to_string(),
+        serde_json::json!({ "trusted": false, "source": "web" }),
+    );
+    serde_json::Value::Object(annotations)
 }
 
 // ---------------------------------------------------------------------------
@@ -1475,6 +1528,16 @@ async function main(cafe) {
     #[test]
     fn publish_chunk_unknown_type_errors() {
         assert!(build_publish_chunk(&serde_json::json!({"type": "binary"})).is_err());
+    }
+
+    #[test]
+    fn web_annotations_match_the_web_fetch_trust_tags() {
+        let a = web_annotations("https://example.com/x", "text/html", 1234);
+        assert_eq!(a["web.source_url"], "https://example.com/x");
+        assert_eq!(a["web.content_type"], "text/html");
+        assert_eq!(a["web.fetch_time"], 1234);
+        assert_eq!(a["security.trust-level"]["trusted"], false);
+        assert_eq!(a["security.trust-level"]["source"], "web");
     }
 
     #[test]

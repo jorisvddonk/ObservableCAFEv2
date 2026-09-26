@@ -51,8 +51,15 @@ export interface FetchResponse {
   statusText: string;
   url: string;
   headers: FetchHeaders;
+  /** Standard web/security annotations for this fetch (untrusted content). */
+  annotations: Record<string, unknown>;
   text(): Promise<string>;
   json(): Promise<any>;
+  /**
+   * Publish the fetched body as a text chunk carrying its web/security
+   * annotations (untrusted by default).
+   */
+  publish(options?: PublishInit): Promise<PublishResult>;
 }
 
 /** Spec for `cafe.publish` (and the `options` of `cafe.publishText`). */

@@ -155,14 +155,29 @@ if (res.ok) {
   `body` (string) are supported. Request timeout is the agent's
   `rpc_timeout_secs`.
 - The returned object has `ok`, `status`, `statusText`, `url`, `headers`
-  (a `Headers`-like object with `get`/`has`/`forEach`/`entries`), `text()` and
-  `json()`.
+  (a `Headers`-like object with `get`/`has`/`forEach`/`entries`), `text()`,
+  `json()`, `annotations` and `publish()`.
 - Like the browser API it **resolves for HTTP error statuses** (`ok: false`)
   and **rejects** (`TypeError`) only on transport errors. Wrap in `try/catch`.
 
+**Trust:** a fetch carries the same annotations `cafe-web-fetch` uses —
+`web.source_url`, `web.content_type`, `web.fetch_time`, and
+`security.trust-level = { trusted: false, source: "web" }`. `res.annotations`
+exposes them, and `res.publish()` publishes the body as a chunk with those
+annotations, so fetched content stays out of the LLM (cafe-llm skips
+`trusted: false`) unless an agent explicitly vets and re-tags it:
+
+```js
+const res = await cafe.fetch("https://example.com/doc");
+await res.publish();                       // untrusted, annotated
+
+await res.publish({ annotations: {         // vet, then trust
+  "security.trust-level": { trusted: true, source: "agent" },
+} });
+```
+
 This is real network egress from agent code — see
-[ADR-131](../adr-131-js-agent-fetch.md). Feed content fetched this way is
-*not* trusted; it only reaches the LLM if the agent publishes it as a chunk.
+[ADR-131](../adr-131-js-agent-fetch.md).
 
 Params pass straight through: session-scoped evaluators (`llm`) read
 history and config from the session the request lands in, so `await

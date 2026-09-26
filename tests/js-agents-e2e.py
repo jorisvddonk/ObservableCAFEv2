@@ -34,7 +34,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE_DIR = os.path.join(PROJECT_ROOT, "target", "release")
@@ -105,6 +107,43 @@ async function main(cafe) {
 """
 
 COUNTER2_V2 = COUNTER2_V1.replace('"v1:count=" + n', '"v2:count=" + n')
+
+FETCH_PORT = 48211
+FETCH_URL = f"http://127.0.0.1:{FETCH_PORT}/doc.txt"
+
+FETCHER = """\
+const manifest = {
+  name: "fetcher",
+  description: "fetches a URL and publishes it with its annotations",
+  background: false,
+  allows_reload: true,
+  persists_state: false,
+  mode: "stateless",
+};
+
+async function main(cafe) {
+  for await (const event of cafe.events()) {
+    if (event.type !== "user_message") continue;
+    const res = await cafe.fetch("%s");
+    await res.publish();
+  }
+  return "fetcher: done";
+}
+""" % FETCH_URL
+
+
+class _FetchHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        body = b"fetched-body"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
 
 ANNOTATOR = """\
 const manifest = {
@@ -184,11 +223,17 @@ def main():
             f.write(COUNTER2_V1)
         with open(os.path.join(fixtures, "annotator.js"), "w") as f:
             f.write(ANNOTATOR)
+        with open(os.path.join(fixtures, "fetcher.js"), "w") as f:
+            f.write(FETCHER)
         agent_log = os.path.join(tmpdir, "agent-js.log")
 
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
         env["CAFE_JS_AGENT_PATHS"] = fixtures
+
+        # Local HTTP server for the cafe.fetch annotation phase.
+        fetch_srv = HTTPServer(("127.0.0.1", FETCH_PORT), _FetchHandler)
+        threading.Thread(target=fetch_srv.serve_forever, daemon=True).start()
 
         print("=== Starting cafe-bus ===", file=sys.stderr)
         bus_proc = subprocess.Popen([BUS_BIN], env=env,
@@ -216,11 +261,11 @@ def main():
                 log = f.read()
             # 17 repo agents (demo, heartbeat, ticker, counter, dice-llm,
             # default, rot13, stt, fetch, knowledgebase, voice, volition,
-            # comfy, dice, epub-narrator, sheetbot, rss-summarizer) + 3
-            # fixtures (reloadme, counter2, annotator). Count is asserted
-            # exactly so an agent silently failing to load is a hard failure.
-            assert "loaded 20 JS agents" in log, f"registry did not load 20 agents:\n{log[-3000:]}"
-            print("  registry loaded 20 JS agents", file=sys.stderr)
+            # comfy, dice, epub-narrator, sheetbot, rss-summarizer) + 4
+            # fixtures (reloadme, counter2, annotator, fetcher). Count is
+            # asserted exactly so an agent silently failing to load fails.
+            assert "loaded 21 JS agents" in log, f"registry did not load 21 agents:\n{log[-3000:]}"
+            print("  registry loaded 21 JS agents", file=sys.stderr)
 
             # --- 2. stateless file-loaded agent (repo demo.js) ---
             print("=== Stateless round-trip (demo) ===", file=sys.stderr)
@@ -289,6 +334,30 @@ def main():
                          "annotated null chunk")
             assert "chat.role" not in s["annotations"], s["annotations"]
             print("  text + null chunks carried custom annotations", file=sys.stderr)
+
+            # --- 2c. cafe.fetch annotates fetched content as untrusted ---
+            print("=== Fetch annotations ===", file=sys.stderr)
+            r = run([CLI, "--bus", bus_socket, "create-session", "--agent", "fetcher"])
+            assert r.returncode == 0, f"create-session failed: {r.stderr}"
+            fetcher = r.stdout.strip()
+            assert fetcher, "empty session id"
+            time.sleep(2)
+            r = run([CLI, "--bus", bus_socket, "publish", fetcher, "--text", "go"])
+            assert r.returncode == 0, f"publish failed: {r.stderr}"
+
+            def fetched(c):
+                ann = c.get("annotations", {})
+                return (c.get("producer") == JS_HOST
+                        and c.get("content") == "fetched-body"
+                        and ann.get("web.source_url") == FETCH_URL
+                        and ann.get("web.content_type") == "text/plain"
+                        and isinstance(ann.get("web.fetch_time"), int)
+                        and ann.get("security.trust-level", {}).get("trusted") is False
+                        and ann.get("security.trust-level", {}).get("source") == "web")
+            wait_for(CLI, bus_socket, fetcher, fetched, 25,
+                     "fetched chunk with web/security annotations")
+            print("  fetched chunk carries web.* + untrusted security.trust-level",
+                  file=sys.stderr)
 
             # --- 3. stateful counter accumulates JS-local state ---
             print("=== Stateful counter ===", file=sys.stderr)
@@ -450,11 +519,12 @@ def main():
             print("  mock LLM saw 2 turns with seeded system prompt", file=sys.stderr)
 
             # --- cleanup ---
-            for s in [demo, annotator, counter, reloadme, counter2, dicellm]:
+            for s in [demo, annotator, fetcher, counter, reloadme, counter2, dicellm]:
                 r = run([CLI, "--bus", bus_socket, "delete-session", s])
                 assert r.returncode == 0, f"delete-session {s} failed: {r.stderr}"
 
         finally:
+            fetch_srv.shutdown()
             for p in [bus_proc, rot13_proc, agent_proc, mock_proc, llm_proc, dice_proc]:
                 if p is not None:
                     p.kill()
