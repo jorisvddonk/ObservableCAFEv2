@@ -86,9 +86,40 @@ All boundary values are JSON. Every async method returns a real Promise.
 | `cafe.rpc(method, params)` | `Promise<any>` | Raw RPC for any bus method (e.g. `dice.roll`, custom service methods). Same resolve/reject contract. No side publishes. |
 | `cafe.tool(name, params)` | `Promise<any>` | Bus-RPC tool call: dispatches `{name}`, then publishes the bus-visible `cafe.tool.result` chunk plus the readable `Tool call completed…` assistant text a follow-up LLM turn reads. Resolves with the tool output. MCP-provider tools are out of scope (they stay with `cafe-mcp-client`). |
 | `cafe.publishText(text)` | `Promise<{published:true}>` | Assistant text chunk from the JS host. |
+| `cafe.fetch(url, options?)` | `Promise<Response>` | Outbound HTTP, shaped like the browser Fetch API (see below). Also exposed as the global `fetch`. |
 | `cafe.config()` | `Promise<object>` | Merged runtime config: all `config.type == "runtime"` null chunks, later wins per key. Snapshot per event (stateless) / refreshed per event (stateful). |
 | `cafe.log(msg)` | `void` | Host log (`tracing::info`). |
 | `cafe.sessionId` / `cafe.agentId` | `string` | Current session / agent. |
+
+### `cafe.fetch` (outbound HTTP)
+
+A Fetch-API-shaped HTTP client, also available as the global `fetch`:
+
+```js
+const res = await fetch("https://api.example.com/items", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ q: "hello" }),
+});
+if (res.ok) {
+  const data = await res.json();   // or await res.text()
+} else {
+  // res.status, res.statusText
+}
+```
+
+- `url`, `method` (default `GET`), `headers` (object or `[k, v]` pairs) and
+  `body` (string) are supported. Request timeout is the agent's
+  `rpc_timeout_secs`.
+- The returned object has `ok`, `status`, `statusText`, `url`, `headers`
+  (a `Headers`-like object with `get`/`has`/`forEach`/`entries`), `text()` and
+  `json()`.
+- Like the browser API it **resolves for HTTP error statuses** (`ok: false`)
+  and **rejects** (`TypeError`) only on transport errors. Wrap in `try/catch`.
+
+This is real network egress from agent code — see
+[ADR-131](../adr-131-js-agent-fetch.md). Feed content fetched this way is
+*not* trusted; it only reaches the LLM if the agent publishes it as a chunk.
 
 Params pass straight through: session-scoped evaluators (`llm`) read
 history and config from the session the request lands in, so `await

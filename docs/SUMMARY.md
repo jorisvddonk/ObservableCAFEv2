@@ -102,3 +102,4 @@
 - [ADR-127: JS Agent Runtime](adr-127-js-agent-runtime.md)
 - [ADR-128: STT is agent-driven (no auto-transcription)](adr-128-stt-agent-driven.md)
 - [ADR-129: RSS as its own evaluator (cafe-rss)](adr-129-cafe-rss-service.md)
+- [ADR-131: Outbound HTTP from JS agents (cafe.fetch)](adr-131-js-agent-fetch.md)

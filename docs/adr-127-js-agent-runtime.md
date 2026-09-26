@@ -81,8 +81,9 @@ it through the legacy runtime are migrated too.
 
 ### 6. Sandboxing posture (Phase 3 level)
 
-No fs/net/timers in the JS context — the only I/O is bus-mediated (`invoke`,
-`rpc`, `publishText`, `config`, `log`). Stateless runs have a 120 s overall
+No fs/timers in the JS context; I/O is bus-mediated (`invoke`, `rpc`,
+`publishText`, `config`, `log`). **Amended by [ADR-131](./adr-131-js-agent-fetch.md)**,
+which adds outbound HTTP via `cafe.fetch` / the global `fetch`. Stateless runs have a 120 s overall
 budget; every RPC await has a per-agent timeout; promise rejections are
 tracked into error chunks (`error.source: js-agent`), never silent.
 

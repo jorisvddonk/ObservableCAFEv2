@@ -132,6 +132,56 @@ cafe.tool = async (name, params) =>
   cafe._unwrap(await cafe._tool(name, JSON.stringify(params || {})));
 cafe.config = async () =>
   JSON.parse(await cafe._config());
+
+// --- HTML5-style fetch -----------------------------------------------------
+// Not the real WHATWG implementation, but the common shape: resolves on any
+// HTTP status, rejects only on network/transport errors.
+function normHeaders(h) {
+  if (!h) return {};
+  if (Array.isArray(h)) {
+    const out = {};
+    for (const pair of h) out[pair[0]] = pair[1];
+    return out;
+  }
+  if (typeof h.entries === "function") {
+    const out = {};
+    for (const pair of h.entries()) out[pair[0]] = pair[1];
+    return out;
+  }
+  return h;
+}
+cafe._headers = function (map) {
+  const lower = {};
+  for (const key of Object.keys(map || {})) lower[key.toLowerCase()] = map[key];
+  return {
+    get: (name) => (name in lower ? lower[String(name).toLowerCase()] : null),
+    has: (name) => String(name).toLowerCase() in lower,
+    forEach: (cb) => { for (const k of Object.keys(lower)) cb(lower[k], k); },
+    entries: () => Object.entries(lower),
+    keys: () => Object.keys(lower),
+    values: () => Object.values(lower),
+  };
+};
+cafe.fetch = async function (url, options) {
+  const opts = options || {};
+  const env = JSON.parse(await cafe._fetch(String(url), JSON.stringify({
+    method: opts.method || "GET",
+    headers: normHeaders(opts.headers),
+    body: opts.body === undefined || opts.body === null ? null : String(opts.body),
+  })));
+  if (!env.ok) throw new TypeError("fetch failed: " + (env.error || "unknown error"));
+  const r = env.result;
+  return {
+    ok: r.ok,
+    status: r.status,
+    statusText: r.statusText,
+    url: r.url,
+    headers: cafe._headers(r.headers),
+    text: async () => r.body,
+    json: async () => JSON.parse(r.body),
+  };
+};
+if (typeof globalThis !== "undefined") globalThis.fetch = cafe.fetch;
 "#;
 
 // ---------------------------------------------------------------------------
@@ -325,6 +375,72 @@ async fn tool_roundtrip(
             .await;
             err_envelope(code, message)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Outbound HTTP — `cafe.fetch`
+// ---------------------------------------------------------------------------
+
+/// Perform an outbound HTTP request on behalf of a JS agent.
+///
+/// Returns an envelope whose `result` is
+/// `{ ok, status, statusText, url, headers, body }`. HTTP error statuses are
+/// a *resolved* result (`ok: false`), matching the browser Fetch API; only
+/// transport failures produce `ok: false` at the envelope level, which the
+/// prelude turns into a rejected `TypeError`.
+///
+/// Agents are trusted local code, but this gives them the host's network
+/// egress — see ADR-131.
+async fn http_fetch(url: String, options_json: String, timeout: Duration) -> String {
+    let opts: serde_json::Value =
+        serde_json::from_str(&options_json).unwrap_or(serde_json::Value::Null);
+    let method = opts["method"].as_str().unwrap_or("GET").to_ascii_uppercase();
+    let body = opts["body"].as_str().map(str::to_string);
+
+    let client = match reqwest::Client::builder().timeout(timeout).build() {
+        Ok(c) => c,
+        Err(e) => return err_envelope(None, format!("http client error: {e}")),
+    };
+    let method = match reqwest::Method::from_bytes(method.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return err_envelope(None, format!("invalid HTTP method: {method}")),
+    };
+    let mut request = client.request(method, &url);
+    if let Some(headers) = opts["headers"].as_object() {
+        for (name, value) in headers {
+            if let Some(value) = value.as_str() {
+                request = request.header(name, value);
+            }
+        }
+    }
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+
+    match request.send().await {
+        Ok(response) => {
+            let status = response.status();
+            let final_url = response.url().to_string();
+            let mut headers = serde_json::Map::new();
+            for (name, value) in response.headers() {
+                headers.insert(
+                    name.as_str().to_string(),
+                    serde_json::Value::String(value.to_str().unwrap_or("").to_string()),
+                );
+            }
+            let body = response.text().await.unwrap_or_default();
+            info!("cafe-agent-js: fetch {url} -> {}", status.as_u16());
+            ok_envelope(serde_json::json!({
+                "ok": status.is_success(),
+                "status": status.as_u16(),
+                "statusText": status.canonical_reason().unwrap_or(""),
+                "url": final_url,
+                "headers": headers,
+                "body": body,
+            }))
+        }
+        Err(e) => err_envelope(None, e.to_string()),
     }
 }
 
@@ -647,6 +763,16 @@ fn install_cafe(
     };
     cafe.set("_config", config_fn)?;
 
+    // Outbound HTTP: `cafe._fetch(url, optionsJson) -> envelopeJson`.
+    // The prelude shapes the result into a Fetch-API-like Response.
+    let fetch = Function::new(
+        ctx.clone(),
+        Async(move |url: String, options_json: String| {
+            async move { Ok::<_, rquickjs::Error>(http_fetch(url, options_json, rpc_timeout).await) }
+        }),
+    )?;
+    cafe.set("_fetch", fetch)?;
+
     let log = Function::new(ctx.clone(), move |msg: String| {
         info!("cafe-agent-js [js]: {msg}");
     })?;
@@ -803,6 +929,8 @@ mod tests {
                         rpc: typeof cafe.rpc,
                         publishText: typeof cafe.publishText,
                         tool: typeof cafe.tool,
+                        fetch: typeof cafe.fetch,
+                        globalFetch: typeof globalThis.fetch,
                         config: typeof cafe.config,
                         log: typeof cafe.log
                     })"#,
@@ -812,7 +940,10 @@ mod tests {
             .await;
         let v: serde_json::Value = serde_json::from_str(&shape).unwrap();
         assert_eq!(v["sessionId"], "sess-1");
-        for key in ["nextEvent", "events", "invoke", "rpc", "publishText", "tool", "config", "log"] {
+        for key in [
+            "nextEvent", "events", "invoke", "rpc", "publishText", "tool", "fetch",
+            "globalFetch", "config", "log",
+        ] {
             assert_eq!(v[key], "function", "{key} must be a function");
         }
     }
@@ -1084,6 +1215,50 @@ async function main(cafe) {
         assert!(
             !out.contains("SyntaxError"),
             "rejection must not be a JSON parsing artefact, got: {out}"
+        );
+    }
+
+    /// `fetch` rejects with a `TypeError` on transport errors, like the
+    /// browser Fetch API (it resolves for HTTP error *statuses* instead).
+    #[tokio::test]
+    async fn fetch_rejects_on_network_error() {
+        let client = BusClient::unix("/tmp/nonexistent-cafe-bus.sock");
+        let rt = AsyncRuntime::new().unwrap();
+        let ctx = AsyncContext::full(&rt).await.unwrap();
+        let out: String = ctx
+            .async_with(async |ctx| {
+                let (tx, event_rx, config_slot) =
+                    test_channel(&[r#"{"type":"user_message","text":"hi"}"#], "{}");
+                drop(tx);
+                install_cafe(
+                    &ctx,
+                    &client,
+                    "sess-1",
+                    "js-demo",
+                    event_rx,
+                    config_slot,
+                    Duration::from_secs(2),
+                )
+                .unwrap();
+                ctx.eval::<(), _>(JS_PRELUDE).unwrap();
+                let promise: Promise = ctx
+                    .eval(
+                        r#"(async () => {
+                            try {
+                                await cafe.fetch("http://127.0.0.1:1/");
+                                return "NO-THROW";
+                            } catch (e) {
+                                return e.name + ":" + e.message;
+                            }
+                        })()"#,
+                    )
+                    .unwrap();
+                promise.into_future::<String>().await.unwrap()
+            })
+            .await;
+        assert!(
+            out.starts_with("TypeError:"),
+            "fetch must reject with TypeError on network error, got: {out}"
         );
     }
 

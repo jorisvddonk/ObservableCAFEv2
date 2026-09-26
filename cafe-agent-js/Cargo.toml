@@ -17,6 +17,7 @@ serde_json           = { workspace = true }
 tracing              = { workspace = true }
 tracing-subscriber   = { workspace = true }
 anyhow               = { workspace = true }
+reqwest              = { workspace = true }
 rquickjs             = { version = "0.14", features = ["futures"] }
 tokio-cron-scheduler = "0.10"
 notify               = "6"

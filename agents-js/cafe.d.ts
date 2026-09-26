@@ -29,6 +29,32 @@ export interface JsManifest {
   initial_config?: Record<string, unknown>;
 }
 
+export interface FetchInit {
+  method?: string;
+  headers?: Record<string, string> | [string, string][];
+  body?: string;
+}
+
+/** Headers-like view of a response (get/has/forEach/entries/keys/values). */
+export interface FetchHeaders {
+  get(name: string): string | null;
+  has(name: string): boolean;
+  forEach(cb: (value: string, name: string) => void): void;
+  entries(): [string, string][];
+  keys(): string[];
+  values(): string[];
+}
+
+export interface FetchResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  url: string;
+  headers: FetchHeaders;
+  text(): Promise<string>;
+  json(): Promise<any>;
+}
+
 export interface CafeApi {
   /** Async generator of session events; ends when the stream closes. */
   events(): AsyncGenerator<JsEvent>;
@@ -43,6 +69,12 @@ export interface CafeApi {
   tool(name: string, params?: unknown): Promise<any>;
   /** Publish an assistant text chunk from the JS host. */
   publishText(text: string): Promise<{ published: true }>;
+  /**
+   * Outbound HTTP, shaped like the browser Fetch API. Resolves for HTTP error
+   * statuses (ok:false); rejects with TypeError on transport errors. Also
+   * available as the global `fetch`.
+   */
+  fetch(url: string, options?: FetchInit): Promise<FetchResponse>;
   /** Merged runtime config snapshot (see resolve semantics in reference). */
   config(): Promise<Record<string, unknown>>;
   /** Host log. */
@@ -54,3 +86,6 @@ export interface CafeApi {
 declare const cafe: CafeApi;
 declare const manifest: JsManifest;
 declare function main(cafe: CafeApi): Promise<unknown>;
+
+/** `cafe.fetch` is also exposed as a global, Fetch-API-shaped function. */
+declare function fetch(url: string, options?: FetchInit): Promise<FetchResponse>;

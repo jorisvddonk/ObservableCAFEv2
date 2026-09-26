@@ -78,11 +78,16 @@ Tests: `cafe-types` unit tests for `retain_secs()` / `with_retain()`.
 |---|---|---|
 | **agents-js** | `demo`, `counter`, `heartbeat`, `ticker` example agents + `cafe.d.ts` editor types | Done |
 | **cafe-js-manifest** | `JsManifest` schema, sync-runtime extraction, `scan_directory`, `agent_dirs()` (`./agents-js` + `CAFE_JS_AGENT_PATHS`) | Done |
-| **cafe-agent-js** | QuickJS (rquickjs `futures`) host: `cafe.events()` generator, promise `invoke`/`rpc` with `call_id` correlation, `publishText`, `config` snapshots, stateless/stateful modes, background sessions + config seeding, cron ticks, `*.js` hot-reload, `GET /api/agents` JS listing (via shared manifest crate) | Done |
+| **cafe-agent-js** | QuickJS (rquickjs `futures`) host: `cafe.events()` generator, promise `invoke`/`rpc` with `call_id` correlation, `tool`, outbound `fetch` (HTML5-shaped; ADR-131), `publishText`, `config` snapshots, stateless/stateful modes, background sessions + config seeding, cron ticks, `*.js` hot-reload, `GET /api/agents` JS listing (via shared manifest crate) | Done |
 | **cafe-server** | `GET /api/agents` merges TOML + JS lists with `source` field; JS wins name collisions | Done |
 | **tests** | `tests/js-agents-e2e.py` (registry, RPC correlation, stateful counter, background/config, ticks, cron, both hot-reload paths) in CI | Done |
 
 `cafe.tool()` dispatches bus-RPC tools with `cafe.tool.result` + readable-text publication (MCP-provider tools stay with `cafe-mcp-client`).
+
+`cafe.fetch()` (and the global `fetch`) makes outbound HTTP calls from agent
+code, Fetch-API-shaped (resolves on HTTP error statuses, rejects on transport
+errors) — see [ADR-131](adr-131-js-agent-fetch.md). Services remain preferable
+for shared or trust-annotated fetching.
 
 Tests: `cafe-js-manifest` + `cafe-agent-js` unit tests (manifest validation, loader, scheduler, bridge) and the E2E above.
 

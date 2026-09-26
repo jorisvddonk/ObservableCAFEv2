@@ -89,6 +89,7 @@ alternatives considered. They are the project's institutional memory.
 | [ADR-128](../adr-128-stt-agent-driven.md) | STT is agent-driven; `cafe-stt` no longer auto-transcribes uploads. |
 | [ADR-129](../adr-129-cafe-rss-service.md) | RSS fetch/parse as its own evaluator (`cafe-rss`). |
 | [ADR-130](../adr-130-doc-site-mdbook.md) | Documentation site built with mdBook, deployed to GitHub Pages. |
+| [ADR-131](../adr-131-js-agent-fetch.md) | JS agents can make outbound HTTP calls via `cafe.fetch` / global `fetch`. |
 
 ## Feature completeness
 
