@@ -16,8 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install system dependencies
+        # ffmpeg is required by cafe-stt (converts uploaded audio to WAV) and
+        # exercised by the stt E2E tests.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ffmpeg
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
