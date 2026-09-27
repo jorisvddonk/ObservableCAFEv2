@@ -31,7 +31,9 @@ BUS_BIN = os.path.join(RELEASE_DIR, "cafe-bus")
 TTS_BIN = os.path.join(RELEASE_DIR, "cafe-tts")
 BINARY_STORE_BIN = os.path.join(RELEASE_DIR, "cafe-binary-store")
 
-VOICEBOX_URL = os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493")
+# Hermetic Voicebox mock (no real backend needed): tests/mock-voicebox-server.py
+MOCK_VOICEBOX = os.path.join(PROJECT_ROOT, "tests", "mock-voicebox-server.py")
+MOCK_PORT = 47941
 
 
 def run(cmd, **kwargs):
@@ -83,7 +85,24 @@ def main():
         binary_data_dir = os.path.join(tmpdir, "binary-store-data")
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
-        env["VOICEBOX_URL"] = VOICEBOX_URL
+
+        # Start the mock Voicebox (hermetic; no real backend needed).
+        mock_log = os.path.join(tmpdir, "mock-voicebox.log")
+        mock_proc = subprocess.Popen(
+            [sys.executable, MOCK_VOICEBOX, "--port", str(MOCK_PORT), "--log", mock_log],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", MOCK_PORT), timeout=1).close()
+                break
+            except OSError:
+                assert mock_proc.poll() is None, "mock voicebox exited before listening"
+                time.sleep(0.2)
+        else:
+            raise AssertionError("mock voicebox never listened")
+        env["VOICEBOX_URL"] = f"http://127.0.0.1:{MOCK_PORT}"
 
         procs = {}
 
@@ -288,6 +307,8 @@ def main():
             run([CLI, "--bus", bus_socket, "delete-session", session_id])
 
         finally:
+            mock_proc.kill()
+            mock_proc.wait()
             for name in ["cafe-bus", "cafe-tts", "cafe-binary-store"]:
                 log_path = os.path.join(tmpdir, f"{name}.log")
                 if os.path.exists(log_path):

@@ -30,7 +30,9 @@ BUS_BIN = os.path.join(RELEASE_DIR, "cafe-bus")
 STT_BIN = os.path.join(RELEASE_DIR, "cafe-stt")
 AUDIO_FILE = os.path.join(PROJECT_ROOT, "tests", "fixtures", "stt-test-audio.wav")
 
-VOICEBOX_URL = os.environ.get("VOICEBOX_URL", "http://127.0.0.1:17493")
+# Hermetic Voicebox mock (no real backend needed): tests/mock-voicebox-server.py
+MOCK_VOICEBOX = os.path.join(PROJECT_ROOT, "tests", "mock-voicebox-server.py")
+MOCK_PORT = 47942
 
 
 def run(cmd, **kwargs):
@@ -83,7 +85,24 @@ def main():
         bus_socket = os.path.join(tmpdir, "cafe-bus.sock")
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
-        env["VOICEBOX_URL"] = VOICEBOX_URL
+
+        # Start the mock Voicebox (hermetic; no real backend needed).
+        mock_log = os.path.join(tmpdir, "mock-voicebox.log")
+        mock_proc = subprocess.Popen(
+            [sys.executable, MOCK_VOICEBOX, "--port", str(MOCK_PORT), "--log", mock_log],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", MOCK_PORT), timeout=1).close()
+                break
+            except OSError:
+                assert mock_proc.poll() is None, "mock voicebox exited before listening"
+                time.sleep(0.2)
+        else:
+            raise AssertionError("mock voicebox never listened")
+        env["VOICEBOX_URL"] = f"http://127.0.0.1:{MOCK_PORT}"
 
         print("=== Starting cafe-bus ===", file=sys.stderr)
         bus_proc = subprocess.Popen([BUS_BIN], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -192,24 +211,18 @@ def main():
                 print("  ⚠️ no RPC response received", file=sys.stderr)
                 assert False, "No stt.invoke RPC response received"
 
-            # Check for error or success
-            err = result.get("error")
-            if err is not None:
-                print(f"  voicebox error: {err.get('message', '')[:200]}", file=sys.stderr)
-                print("  ⚠️ voicebox unavailable (RPC flow verified)", file=sys.stderr)
-            else:
-                r = result.get("result", {})
-                text = r.get("text", "")
-                duration = r.get("duration", 0)
-                chunk_id = r.get("chunk_id", "")
-                if text:
-                    print(f"  transcription: '{text[:120]}'", file=sys.stderr)
-                    print(f"  duration: {duration}s", file=sys.stderr)
-                    print(f"  chunk_id: {chunk_id}", file=sys.stderr)
-                    print("  ✅ transcription successful", file=sys.stderr)
-                else:
-                    print(f"  unexpected result: {json.dumps(result, indent=2)}", file=sys.stderr)
-                    assert False, f"Unexpected RPC result format"
+            # Hard assertions: transcription must succeed.
+            assert result.get("error") is None, \
+                f"stt.invoke failed: {result.get('error')}"
+            r = result.get("result", {})
+            text = r.get("text", "")
+            duration = r.get("duration", 0)
+            chunk_id = r.get("chunk_id", "")
+            assert text, f"empty transcription: {json.dumps(result)}"
+            print(f"  transcription: '{text[:120]}'", file=sys.stderr)
+            print(f"  duration: {duration}s", file=sys.stderr)
+            print(f"  chunk_id: {chunk_id}", file=sys.stderr)
+            print("  ✅ transcription successful", file=sys.stderr)
 
             run([CLI, "--bus", bus_socket, "delete-session", session_id])
 
@@ -237,12 +250,11 @@ def main():
                 p.kill()
             for p in [bus_proc, stt_proc]:
                 p.wait()
+            mock_proc.kill()
+            mock_proc.wait()
 
     print(file=sys.stderr)
-    if text:
-        print("=== ALL STT E2E TESTS PASSED ===", file=sys.stderr)
-    else:
-        print("=== STT E2E: partial (RPC flow OK, voicebox unavailable) ===", file=sys.stderr)
+    print("=== ALL STT E2E TESTS PASSED ===", file=sys.stderr)
 
 
 if __name__ == "__main__":
