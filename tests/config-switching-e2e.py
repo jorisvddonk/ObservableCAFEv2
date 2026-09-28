@@ -34,7 +34,7 @@ CLI = os.path.join(RELEASE_DIR, "cafe-cli")
 BUS_BIN = os.path.join(RELEASE_DIR, "cafe-bus")
 STORE_BIN = os.path.join(RELEASE_DIR, "cafe-store")
 LLM_BIN = os.path.join(RELEASE_DIR, "cafe-llm")
-AGENT_BIN = os.path.join(RELEASE_DIR, "cafe-agent-runtime")
+AGENTJS_BIN = os.path.join(RELEASE_DIR, "cafe-agent-js")
 SERVER_BIN = os.path.join(RELEASE_DIR, "cafe-server")
 
 MOCK_PORT = 49995
@@ -87,8 +87,8 @@ def run(cmd, **kwargs):
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
-def start_proc(cmd, env, logfile):
-    return subprocess.Popen(cmd, env=env, stdout=open(logfile, "w"), stderr=subprocess.STDOUT)
+def start_proc(cmd, env, logfile, cwd=None):
+    return subprocess.Popen(cmd, env=env, cwd=cwd, stdout=open(logfile, "w"), stderr=subprocess.STDOUT)
 
 
 def cli(socket_path, *args):
@@ -100,7 +100,7 @@ def cli(socket_path, *args):
 
 def main():
     for name, path in [("cafe-bus", BUS_BIN), ("cafe-store", STORE_BIN), ("cafe-llm", LLM_BIN),
-                        ("cafe-agent-runtime", AGENT_BIN), ("cafe-server", SERVER_BIN), ("cafe-cli", CLI)]:
+                        ("cafe-agent-js", AGENTJS_BIN), ("cafe-server", SERVER_BIN), ("cafe-cli", CLI)]:
         if not os.path.exists(path):
             print(f"Build {name} first: cargo build --release", file=sys.stderr)
             sys.exit(1)
@@ -127,10 +127,13 @@ def main():
         procs = {}
         for key, path in [
             ("bus", BUS_BIN), ("store", STORE_BIN), ("llm", LLM_BIN),
-            ("agent", AGENT_BIN), ("server", SERVER_BIN),
+            ("agent-js", AGENTJS_BIN), ("server", SERVER_BIN),
         ]:
             log = os.path.join(tmpdir, f"{key}.log")
-            procs[key] = start_proc([path], env, log)
+            # cafe-agent-js must run from the repo root to load ./agents-js,
+            # which is where the JS `default` chat agent lives.
+            procs[key] = start_proc([path], env, log,
+                                    cwd=PROJECT_ROOT if key == "agent-js" else None)
             time.sleep(1)
         time.sleep(2)
 
@@ -199,7 +202,7 @@ def main():
             print("\n=== ALL CONFIG SWITCHING TESTS PASSED ===", file=sys.stderr)
 
         finally:
-            for key in ["server", "agent", "llm", "store", "bus"]:
+            for key in ["server", "agent-js", "llm", "store", "bus"]:
                 p = procs.pop(key, None)
                 if p:
                     p.terminate()
