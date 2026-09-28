@@ -1,6 +1,6 @@
 # ADR-115: HTTP BinaryRef Publish Rejection
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Date:** 2026-07-07
 - **Driver:** Binary upload write credentials are delivered via `direct_to` (ADR-102), which requires the publishing connection to stay alive. HTTP connections are ephemeral, so credentials are unreachable.
 

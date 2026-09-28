@@ -1,6 +1,6 @@
 # ADR-001: Unix socket message bus
 
-**Status**: Accepted
+**Status**: Implemented
 
 **Context**: Services need to communicate. Options included HTTP REST, a message queue (NATS, RabbitMQ), gRPC, or a custom protocol over Unix sockets. REST adds HTTP overhead and polling latency. Message queues add operational complexity. gRPC requires schema coupling and stream management.
 

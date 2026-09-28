@@ -1,6 +1,6 @@
 # ADR-003: Annotations as metadata
 
-**Status**: Accepted
+**Status**: Implemented
 
 **Context**: Chunks carry text, binary, or null content. But chunks also need metadata: chat role, model name, security labels, tool calls, RPC messages, config overrides. A rigid typed schema for every metadata variant would create tight coupling between producers and consumers.
 

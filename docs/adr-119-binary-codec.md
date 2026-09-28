@@ -1,6 +1,6 @@
 # ADR-119: Binary codec with protocol negotiation
 
-**Status**: Implemented (commit TBD)
+**Status**: Implemented
 
 **Date**: 2026-07-11
 

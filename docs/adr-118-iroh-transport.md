@@ -1,6 +1,12 @@
 # ADR-118: iroh transport for remote bus connectivity
 
-**Status**: Implemented (access control refined by [ADR-120](./adr-120-iroh-allowlist.md))
+**Status**: Partly implemented — bus listener, SDK `IrohTransport`, allowlist
+(ADR-120), and service dial-out flags are implemented. The optional
+**cafe-server inbound iroh listener** (implementation-plan step 5, §"cafe-server
+remote access") is **not implemented**: cafe-server only dials out to the bus.
+Its protocol shape is still undecided (raw bus-protocol bridge vs. an
+HTTP-over-iroh tunnel), so it is tracked here as a known gap rather than
+guessed at. See [ADR-120](./adr-120-iroh-allowlist.md) for access control.
 
 > **Note:** the access-control section below proposes a static
 > `CAFE_BUS_IROH_ALLOWED_PEERS` env var. That was **rejected** in favour of a
@@ -109,5 +115,5 @@ Same NDJSON framing as the Unix socket transport. The existing `BusCodec` trait 
 2. Add `iroh` dependency to cafe-bus, implement iroh listener behind env-var gate.
 3. Add `IrohTransport` to cafe-sdk, implement `iroh-client` feature flag.
 4. Add `--bus-iroh-*` CLI flags to service binaries, construct `BusClient<IrohTransport>` when flags are present.
-5. Add iroh listener to cafe-server for remote TUI/CLI access.
+5. Add iroh listener to cafe-server for remote TUI/CLI access. **(Not implemented — see Status. Needs a decision on the wire protocol: raw `ClientMessage`/`ServerMessage` bridge vs. HTTP-over-iroh.)**
 6. (Future ADR): Enable bincode-codec for compact wire format over iroh streams.

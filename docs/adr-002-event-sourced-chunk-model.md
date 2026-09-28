@@ -1,6 +1,6 @@
 # ADR-002: Event-sourced chunk model
 
-**Status**: Accepted
+**Status**: Implemented
 
 **Context**: The system needs to represent conversational state, LLM interactions, tool calls, file transfers, and configuration changes. A mutable state model (update-in-place database rows) would lose history, make debugging harder, and complicate replay for late-joining subscribers.
 

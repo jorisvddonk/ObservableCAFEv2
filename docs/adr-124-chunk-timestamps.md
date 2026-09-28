@@ -1,6 +1,6 @@
 # ADR-124: Chunk timestamps are authoritative and preserved on fork
 
-**Status**: Accepted
+**Status**: Implemented (items 1–3; item 4, deriving retained deadlines from `Chunk.timestamp + TTL`, remains future work)
 
 **Context**: Every `Chunk` already carries a `timestamp: i64` (epoch milliseconds) set at
 creation (`cafe-types/src/chunk.rs`). However, several derived behaviors rely on

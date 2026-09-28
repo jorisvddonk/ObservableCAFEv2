@@ -1,6 +1,6 @@
 # ADR-004: Session-scoped routing
 
-**Status**: Accepted
+**Status**: Implemented
 
 **Context**: Chunks need to be routed to interested subscribers. Global broadcast (everyone sees everything) doesn't scale. Per-topic routing would need a topic registry and subscriber management.
 
