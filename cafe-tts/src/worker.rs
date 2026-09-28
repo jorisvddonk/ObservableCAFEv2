@@ -189,7 +189,7 @@ async fn run_session_handler(
             Err(e) => {
                 error!("cafe-tts: TTS error for call {}: {:#}", call_id, e);
                 let err_chunk = Chunk::new_null("com.nominal.cafe-tts")
-                    .with_annotation(keys::ERROR_MESSAGE, e.to_string())
+                    .with_annotation(keys::CAFE_ERROR_MESSAGE, e.to_string())
                     .with_annotation("error.source", "tts")
                     .with_annotation(keys::TTS_CALL_ID, &call_id);
                 let _ = sub.publish(err_chunk).await;
