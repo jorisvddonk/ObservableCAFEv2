@@ -138,6 +138,13 @@ pub async fn update_tags(
     Path(session_id): Path<String>,
     Json(body): Json<SetSessionTagsRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = cafe_sdk::validate_tags(&body.tags) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
     match state.bus.set_tags(&session_id, body.tags).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (

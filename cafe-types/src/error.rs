@@ -20,6 +20,9 @@ pub enum CafeError {
     #[error("invalid message: {0}")]
     InvalidMessage(String),
 
+    #[error("invalid tags: {0}")]
+    InvalidTags(String),
+
     #[error("payload too large")]
     PayloadTooLarge,
 
@@ -35,6 +38,7 @@ impl CafeError {
             CafeError::SessionExists(_) => "SESSION_EXISTS",
             CafeError::AgentNotFound(_) => "AGENT_NOT_FOUND",
             CafeError::InvalidMessage(_) => "INVALID_MESSAGE",
+            CafeError::InvalidTags(_) => "INVALID_TAGS",
             CafeError::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
             _ => "INTERNAL_ERROR",
         }

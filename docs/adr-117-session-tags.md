@@ -1,6 +1,8 @@
 # ADR-117: Session Tags
 
-**Status:** Accepted
+**Status:** Implemented
+
+**Date:** 2026-09-28
 
 **Driver:** UIs need to group, filter, and hide/show sessions by category. The existing classifiers (`agent_id`, `is_background`) are too coarse and partially broken (`is_background` is hardcoded to `false` everywhere).
 
@@ -100,7 +102,17 @@ On bus restart, cafe-store passes tags via `SessionConfig.tags` during restore.
 
 ### Tag validation
 
-Tags are free-form non-empty strings without whitespace. Validation at API entry points (HTTP, bus).
+Tags are free-form non-empty strings without whitespace. Validation is applied
+at every API entry point by `cafe_types::validate_tag` / `validate_tags`:
+
+- bus `CreateSession` (initial `config.tags`) and `SetSessionTags`
+- HTTP `PATCH /api/sessions/:id/tags`
+
+A valid tag is non-empty, contains no whitespace and no control characters, and
+is at most 64 characters. Invalid input is rejected with the `INVALID_TAGS` bus
+error (HTTP `400`) and never mutates session state. `cafe-cli` exposes
+`create-session --tag` and `set-tags --tag` so tags can be driven from the
+command line; `tests/session-tags-e2e.py` covers both entry points.
 
 ## Consequences
 

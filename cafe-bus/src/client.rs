@@ -355,6 +355,12 @@ async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
                 agent_id,
                 config,
             } => {
+                if let Some(tags) = &config.tags {
+                    if let Err(e) = cafe_types::validate_tags(tags) {
+                        send_error::<C>(&writer, Some(&session_id), &e.to_string(), e.code()).await;
+                        continue;
+                    }
+                }
                 let mut reg = registry.write().await;
                 if reg.contains(&session_id) {
                     send_error::<C>(
@@ -402,6 +408,10 @@ async fn client_loop<C: BusCodec, R: AsyncRead + Unpin>(
             }
 
             ClientMessage::SetSessionTags { session_id, tags } => {
+                if let Err(e) = cafe_types::validate_tags(&tags) {
+                    send_error::<C>(&writer, Some(&session_id), &e.to_string(), e.code()).await;
+                    continue;
+                }
                 let mut reg = registry.write().await;
                 if let Some(session) = reg.get_mut(&session_id) {
                     // Dual-write: publish annotation chunk to history

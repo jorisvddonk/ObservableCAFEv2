@@ -2,7 +2,7 @@ use anyhow::Result;
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::bus::IrohConfig;
 use cafe_sdk::http::HttpClient;
-use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SubscribeFilter};
+use cafe_sdk::{keys, Chunk, ContentType, ServerMessage, SessionConfig, SubscribeFilter};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -232,6 +232,16 @@ enum Command {
         session_id: Option<String>,
         #[arg(long, default_value = "default")]
         agent: String,
+        /// Initial tags (may be repeated)
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+    /// Replace a session's tags (omit --tag to clear)
+    SetTags {
+        session_id: String,
+        /// Tags to set (may be repeated)
+        #[arg(long = "tag")]
+        tags: Vec<String>,
     },
     /// Fork a session, copying its history verbatim; prints the new session ID
     ForkSession {
@@ -528,19 +538,31 @@ async fn main() -> Result<()> {
             println!("{}", json);
         }
 
-        Command::CreateSession { session_id, agent } => {
+        Command::CreateSession {
+            session_id,
+            agent,
+            tags,
+        } => {
+            let config = SessionConfig {
+                tags: if tags.is_empty() { None } else { Some(tags) },
+                ..Default::default()
+            };
             let id = match session_id {
                 Some(sid) => {
-                    client.create_session(&sid, &agent, Default::default()).await?;
+                    client.create_session(&sid, &agent, config).await?;
                     sid
                 }
                 None => {
                     let sid = uuid::Uuid::new_v4().to_string();
-                    client.create_session(&sid, &agent, Default::default()).await?;
+                    client.create_session(&sid, &agent, config).await?;
                     sid
                 }
             };
             println!("{}", id);
+        }
+
+        Command::SetTags { session_id, tags } => {
+            client.set_tags(&session_id, tags).await?;
         }
 
         Command::ForkSession { parent_session_id, session_id } => {

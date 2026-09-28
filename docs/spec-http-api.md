@@ -97,6 +97,11 @@ Request:
 { "tags": ["work", "pinned"] }
 ```
 
+Replaces the session's tags (an empty array clears them). Tags must be
+non-empty, contain no whitespace or control characters, and be at most 64
+characters (ADR-117). Invalid tags are rejected with `400 Bad Request` and
+leave the session's tags unchanged.
+
 ### Session WebSocket
 `GET /api/sessions/:id/ws?token=<token>`
 

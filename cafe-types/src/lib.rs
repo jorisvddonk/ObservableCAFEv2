@@ -10,6 +10,7 @@ pub mod jsonrpc;
 pub mod schema;
 pub mod session;
 pub mod step;
+pub mod tags;
 pub mod tools;
 
 pub use annotation::{keys, roles};
@@ -21,6 +22,7 @@ pub use jsonrpc::{rpc_errors, JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub use schema::EvaluatorSchema;
 pub use session::{AgentDefinition, SessionInfo};
 pub use step::StepDef;
+pub use tags::{validate_tag, validate_tags};
 pub use tools::{ToolCall, ToolDefinition, ToolResult};
 
 #[cfg(feature = "bincode-codec")]
