@@ -370,6 +370,7 @@ async fn attach_to_session(
         pipeline_info.steps.clone(),
         Duration::from_secs(pipeline_info.rpc_timeout_secs),
         pipeline_info.max_pipeline_depth,
+        schema_registry.clone(),
     ));
     tokio::spawn(async move {
         session_loop::run_session_loop(sid.clone(), sp, executor).await;

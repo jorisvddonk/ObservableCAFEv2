@@ -1,8 +1,11 @@
-use crate::config::SessionConfig;
+use crate::config::{self, SessionConfig};
+use crate::schema_registry::SchemaRegistry;
 use crate::tool_detector;
 use crate::tool_executor;
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{keys, Chunk, JsonRpcRequest, JsonRpcResponse, SdkError, ServerMessage, StepDef};
+use cafe_sdk::{
+    keys, Chunk, EvaluatorSchema, JsonRpcRequest, JsonRpcResponse, SdkError, ServerMessage, StepDef,
+};
 use std::collections::VecDeque;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -119,20 +122,36 @@ pub enum PipelineError {
 // ---------------------------------------------------------------------------
 
 /// Holds the ordered list of steps and dispatches them on trigger events.
+/// Schemas come from the live [`SchemaRegistry`] (ADR-121): param building
+/// and config resolution consult them, so adding an evaluator needs no
+/// changes here.
 #[derive(Clone)]
 pub struct PipelineExecutor {
     steps: Vec<StepDef>,
     rpc_timeout: Duration,
     max_depth: u32,
+    schemas: SchemaRegistry,
 }
 
 impl PipelineExecutor {
-    pub fn new(steps: Vec<StepDef>, rpc_timeout: Duration, max_depth: u32) -> Self {
+    pub fn new(
+        steps: Vec<StepDef>,
+        rpc_timeout: Duration,
+        max_depth: u32,
+        schemas: SchemaRegistry,
+    ) -> Self {
         Self {
             steps,
             rpc_timeout,
             max_depth,
+            schemas,
         }
+    }
+
+    /// Resolve the session config against currently known evaluator schemas.
+    pub async fn resolve_config(&self, history: &[Chunk]) -> SessionConfig {
+        let schemas = self.schemas.snapshot().await;
+        config::resolve_session_config(history, &schemas)
     }
 
     /// Called when a triggering event occurs. Uses a work queue to handle
@@ -263,64 +282,79 @@ fn is_enabled(step: &StepDef, config: &SessionConfig) -> bool {
     match &step.enabled_if {
         None => true,
         Some(key) => config
-            .extra
+            .values
             .get(key.as_str())
+            .or_else(|| config.extra.get(key.as_str()))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
     }
 }
 
-/// Build RPC params for a given namespace and pipeline context.
-fn build_rpc_params(namespace: &str, ctx: &PipelineContext) -> serde_json::Value {
-    match namespace {
-        "llm" => serde_json::json!({
-            "session_id": ctx.session_id,
-        }),
-        "tts" => serde_json::json!({
-            "text":     ctx.assembled_llm_text.as_deref().unwrap_or(""),
-            "profile":  ctx.config.tts_profile,
-            "engine":   ctx.config.tts_engine,
-            "backend":  ctx.config.tts_backend,
-            "endpoint": ctx.config.tts_endpoint,
-        }),
-        "stt" => {
-            // Scan session history for the most recent binary_ref chunk with chat.role=user
-            // and pass its ID + mime_type so cafe-stt can find read credentials and transcribe.
-            let mut params = serde_json::json!({
-                "session_id": ctx.session_id,
-            });
-            // History is fetched by the caller before dispatch_rpc — we don't have it here.
-            // Instead, the RPC handler (cafe-stt) will scan history itself.
-            // We just need to ensure the binary_ref_id is available somehow.
-            // The simplest fix: pass the entire history's binary_ref info via the session.
-            // For now, cafe-stt handles scanning. This requires the binary_ref to be
-            // non-transient so cafe-stt can find it in history.
-            params
-        }
-        "comfy" => {
-            let mut params = serde_json::json!({
-                "prompt": ctx.assembled_llm_text.as_deref().unwrap_or(""),
-            });
-            if let Some(path) = &ctx.config.comfy_workflow_path {
-                params["workflow_path"] = serde_json::Value::String(path.clone());
+/// Build RPC params for a given namespace and pipeline context, driven by the
+/// evaluator's announced schema (ADR-121) instead of per-evaluator code.
+///
+/// Rules, in order, for each property declared in `rpc_params_schema`:
+/// - `session_id` → the session id (always sent, as before).
+/// - `text` / `prompt` → the assembled LLM text, else the user text, else `""`.
+///   (`prompt` is the legacy LLM-output alias cafe-comfy accepts.)
+/// - anything else → the session config value at the key named by the
+///   property's `x-config-key` extension, or `config.{namespace}.{name}` when
+///   absent; skipped when unset.
+///
+/// With no schema (unknown or not-yet-announced evaluator), the historical
+/// default applies: `session_id` plus `text` when available. All known
+/// handlers read params with `as_str().unwrap_or(...)`, so sending `""`
+/// instead of omitting is equivalent — and `session_id` extras are ignored.
+fn build_rpc_params(
+    namespace: &str,
+    ctx: &PipelineContext,
+    schema: Option<&EvaluatorSchema>,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "session_id": ctx.session_id,
+    });
+
+    let text = || {
+        ctx.assembled_llm_text
+            .as_deref()
+            .or_else(|| ctx.user_text.as_deref())
+            .unwrap_or("")
+    };
+
+    match schema.and_then(|s| s.rpc_params_schema.get("properties")) {
+        Some(props) if props.is_object() => {
+            // serde_json::Map iterates in sorted key order — deterministic.
+            for (name, spec) in props.as_object().expect("checked is_object") {
+                match name.as_str() {
+                    "session_id" => {}
+                    "text" | "prompt" => {
+                        params[name] = serde_json::Value::String(text().to_string());
+                    }
+                    other => {
+                        let config_key = spec
+                            .get("x-config-key")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("config.{namespace}.{other}"));
+                        if let Some(value) = ctx.config.values.get(&config_key) {
+                            params[other] = value.clone();
+                        }
+                    }
+                }
             }
-            if let Some(node) = &ctx.config.comfy_workflow_input_node {
-                params["input_node"] = serde_json::Value::String(node.clone());
-            }
-            params
         }
         _ => {
-            let mut params = serde_json::json!({
-                "session_id": ctx.session_id,
-            });
-            let text = ctx.assembled_llm_text.as_deref()
-                .or_else(|| ctx.user_text.as_deref());
-            if let Some(text) = text {
-                params["text"] = serde_json::Value::String(text.to_string());
+            if let Some(t) = ctx
+                .assembled_llm_text
+                .as_deref()
+                .or_else(|| ctx.user_text.as_deref())
+            {
+                params["text"] = serde_json::Value::String(t.to_string());
             }
-            params
         }
     }
+
+    params
 }
 
 impl PipelineExecutor {
@@ -333,7 +367,8 @@ impl PipelineExecutor {
         bus: &BusClient,
     ) -> Result<Option<(TriggerType, PipelineContext)>, PipelineError> {
         let namespace = &step.step_type;
-        let params = build_rpc_params(namespace, context);
+        let schema = self.schemas.get(namespace).await;
+        let params = build_rpc_params(namespace, context, schema.as_ref());
         let method = format!("{}.invoke", namespace);
         let request = JsonRpcRequest::new(&method, params);
         let call_id = request.id.clone();
@@ -632,8 +667,48 @@ mod tests {
     }
 
     fn arb_session_config() -> impl Strategy<Value = SessionConfig> {
-        prop::collection::hash_map("[a-z._-]{1,30}", arb_annotation_value(), 0..5)
-            .prop_map(|extra| SessionConfig { extra, ..SessionConfig::default() })
+        prop::collection::hash_map("[a-z._-]{1,30}", arb_annotation_value(), 0..5).prop_map(
+            |entries| {
+                let extra: std::collections::HashMap<String, serde_json::Value> =
+                    entries.clone().into_iter().collect();
+                SessionConfig {
+                    values: entries,
+                    extra,
+                }
+            },
+        )
+    }
+
+    /// A schema with no declared params (unknown evaluator / not yet announced).
+    fn empty_params_schema() -> EvaluatorSchema {
+        EvaluatorSchema {
+            name: "unknown".into(),
+            description: "no params".into(),
+            config_schema: serde_json::json!({"type": "object", "properties": {}}),
+            rpc_params_schema: serde_json::json!({"type": "object", "properties": {}}),
+        }
+    }
+
+    /// A schema declaring `session_id` plus the given property names, all
+    /// typed as strings with no per-property special casing.
+    fn params_schema(namespace: &str, props: &[&str]) -> EvaluatorSchema {
+        let mut properties = serde_json::Map::new();
+        properties.insert(
+            "session_id".into(),
+            serde_json::json!({"type": "string"}),
+        );
+        for p in props {
+            properties.insert((*p).into(), serde_json::json!({"type": "string"}));
+        }
+        EvaluatorSchema {
+            name: namespace.into(),
+            description: format!("{namespace} params"),
+            config_schema: serde_json::json!({"type": "object", "properties": {}}),
+            rpc_params_schema: serde_json::json!({
+                "type": "object",
+                "properties": serde_json::Value::Object(properties),
+            }),
+        }
     }
 
     fn arb_pipeline_context() -> impl Strategy<Value = PipelineContext> {
@@ -821,7 +896,7 @@ mod tests {
         run_proptest(
             (arb_namespace(), arb_pipeline_context()),
             |(namespace, ctx): (String, PipelineContext)| {
-                let params = build_rpc_params(&namespace, &ctx);
+                let params = build_rpc_params(&namespace, &ctx, None);
                 assert!(params.is_object());
             },
         );
@@ -830,40 +905,141 @@ mod tests {
     #[test]
     fn build_rpc_params_llm_has_session_id() {
         run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
-            let params = build_rpc_params("llm", &ctx);
+            let schema = params_schema("llm", &[]);
+            let params = build_rpc_params("llm", &ctx, Some(&schema));
             assert_eq!(params["session_id"], ctx.session_id);
         });
     }
 
     #[test]
-    fn build_rpc_params_tts_has_text() {
+    fn build_rpc_params_tts_has_text_from_schema() {
         run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
-            let params = build_rpc_params("tts", &ctx);
+            let schema = params_schema("tts", &["text", "profile", "engine"]);
+            let params = build_rpc_params("tts", &ctx, Some(&schema));
+            // `text` is always populated (assembled LLM text, else user text,
+            // else the empty string) so downstream consumers never see null.
             assert!(params["text"].is_string());
-        });
-    }
-
-    #[test]
-    fn build_rpc_params_comfy_has_prompt() {
-        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
-            let params = build_rpc_params("comfy", &ctx);
-            assert!(params["prompt"].is_string());
-        });
-    }
-
-    #[test]
-    fn build_rpc_params_stt_has_session_id() {
-        run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
-            let params = build_rpc_params("stt", &ctx);
             assert_eq!(params["session_id"], ctx.session_id);
         });
     }
 
     #[test]
-    fn build_rpc_params_fallback_has_session_id() {
+    fn build_rpc_params_comfy_has_prompt_from_schema() {
         run_proptest(arb_pipeline_context(), |ctx: PipelineContext| {
-            let params = build_rpc_params("unknown-namespace", &ctx);
-            assert!(params["session_id"].is_string());
+            // cafe-comfy declares `prompt` (legacy alias for assembled text).
+            let schema = params_schema("comfy", &["prompt", "workflow_path", "input_node"]);
+            let params = build_rpc_params("comfy", &ctx, Some(&schema));
+            assert!(params["prompt"].is_string());
+            assert_eq!(params["session_id"], ctx.session_id);
         });
+    }
+
+    #[test]
+    fn build_rpc_params_copies_declared_config_values() {
+        let mut ctx = PipelineContext {
+            session_id: "s1".into(),
+            config: SessionConfig::default(),
+            assembled_llm_text: Some("hello".into()),
+            user_text: None,
+            depth: 0,
+        };
+        ctx.config.values.insert(
+            "config.tts.profile".into(),
+            serde_json::json!("narrator"),
+        );
+        let schema = params_schema("tts", &["text", "profile"]);
+        let params = build_rpc_params("tts", &ctx, Some(&schema));
+        assert_eq!(params["profile"], "narrator");
+        assert_eq!(params["text"], "hello");
+    }
+
+    #[test]
+    fn build_rpc_params_omits_unset_config_values() {
+        let ctx = PipelineContext {
+            session_id: "s1".into(),
+            config: SessionConfig::default(),
+            assembled_llm_text: Some("hi".into()),
+            user_text: None,
+            depth: 0,
+        };
+        let schema = params_schema("tts", &["text", "profile"]);
+        let params = build_rpc_params("tts", &ctx, Some(&schema));
+        // Unset config keys are omitted, never sent as null.
+        assert!(params.get("profile").is_none());
+    }
+
+    #[test]
+    fn build_rpc_params_honours_x_config_key() {
+        let mut ctx = PipelineContext {
+            session_id: "s1".into(),
+            config: SessionConfig::default(),
+            assembled_llm_text: Some("hi".into()),
+            user_text: None,
+            depth: 0,
+        };
+        // comfy's `input_node` param maps to `config.comfy.workflow_input_node`.
+        ctx.config.values.insert(
+            "config.comfy.workflow_input_node".into(),
+            serde_json::json!("7"),
+        );
+        let schema = EvaluatorSchema {
+            name: "comfy".into(),
+            description: "comfy".into(),
+            config_schema: serde_json::json!({"type": "object", "properties": {}}),
+            rpc_params_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "input_node": {
+                        "type": "string",
+                        "x-config-key": "config.comfy.workflow_input_node"
+                    }
+                }
+            }),
+        };
+        let params = build_rpc_params("comfy", &ctx, Some(&schema));
+        assert_eq!(params["input_node"], "7");
+    }
+
+    #[test]
+    fn build_rpc_params_falls_back_to_user_text() {
+        let ctx = PipelineContext {
+            session_id: "s1".into(),
+            config: SessionConfig::default(),
+            assembled_llm_text: None,
+            user_text: Some("from user".into()),
+            depth: 0,
+        };
+        let schema = params_schema("comfy", &["prompt"]);
+        let params = build_rpc_params("comfy", &ctx, Some(&schema));
+        assert_eq!(params["prompt"], "from user");
+    }
+
+    #[test]
+    fn build_rpc_params_without_schema_uses_legacy_default() {
+        let ctx = PipelineContext {
+            session_id: "s1".into(),
+            config: SessionConfig::default(),
+            assembled_llm_text: Some("legacy".into()),
+            user_text: None,
+            depth: 0,
+        };
+        let params = build_rpc_params("whatever", &ctx, None);
+        assert_eq!(params["session_id"], "s1");
+        assert_eq!(params["text"], "legacy");
+    }
+
+    #[test]
+    fn build_rpc_params_empty_schema_omits_text() {
+        let ctx = PipelineContext {
+            session_id: "s1".into(),
+            config: SessionConfig::default(),
+            assembled_llm_text: Some("ignored".into()),
+            user_text: None,
+            depth: 0,
+        };
+        let schema = empty_params_schema();
+        let params = build_rpc_params("stt", &ctx, Some(&schema));
+        assert_eq!(params["session_id"], "s1");
+        assert!(params.get("text").is_none());
     }
 }

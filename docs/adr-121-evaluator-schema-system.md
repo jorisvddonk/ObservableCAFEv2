@@ -1,6 +1,8 @@
 # ADR-121: Evaluator Schema System
 
-**Status**: Design complete, not yet implemented (commits to follow)
+**Status**: Implemented
+
+**Date**: 2026-09-28
 
 **Driver**: Need for dynamic evaluator registration and self-describing evaluator configuration
 
@@ -60,6 +62,24 @@ with schema-driven iteration. For each step in a pipeline:
 - Look up the evaluator's `rpc_params_schema`.
 - For each property, extract the matching value from the pipeline context.
 - Unknown keys go into `SessionConfig.extra` (same as today).
+
+`SessionConfig` no longer carries per-evaluator typed fields: it is a
+schema-agnostic key/value map (`values`, plus `extra` for keys not declared in
+any known schema). This removes the last place a new evaluator would have
+required editing `cafe-agent-runtime`.
+
+Param extraction applies these rules, in order, per declared property:
+- `session_id` → the session id (always sent).
+- `text` / `prompt` → the assembled LLM text, else the user text, else `""`.
+  (`prompt` is the legacy alias [cafe-comfy](../cafe-comfy) accepts.)
+- otherwise → the session config value named by the property's optional
+  `x-config-key` extension (a JSON Schema `x-` extension), defaulting to
+  `config.{name}.{property}`; omitted when unset. The extension exists because
+  a param name does not always match its config key, e.g. comfy's `input_node`
+  param reads `config.comfy.workflow_input_node`.
+
+When no schema is known yet (evaluator offline / not announced), extraction
+falls back to the historical default: `session_id` plus `text` when available.
 
 This means adding a new evaluator requires **zero code changes** in
 `cafe-agent-runtime` — just a new evaluator crate that implements

@@ -50,7 +50,7 @@ async fn subscribe_sessions(
                 "text": { "type": "string", "description": "Image generation prompt (alias: prompt)" },
                 "prompt": { "type": "string", "description": "Legacy alias for text" },
                 "workflow_path": { "type": "string", "description": "Override workflow file path (loaded per call)" },
-                "input_node": { "type": "string", "description": "Override input node ID" },
+                "input_node": { "type": "string", "description": "Override input node ID", "x-config-key": "config.comfy.workflow_input_node" },
                 "endpoint": { "type": "string", "description": "Override ComfyUI base URL for this call" }
             }
         }),

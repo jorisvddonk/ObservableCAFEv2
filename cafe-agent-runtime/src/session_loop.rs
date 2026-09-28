@@ -1,4 +1,3 @@
-use crate::config::resolve_session_config;
 use crate::executor::{PipelineContext, PipelineExecutor, TriggerType};
 use cafe_sdk::bus::BusClient;
 use cafe_sdk::{keys, roles, Chunk, ContentType, ServerMessage};
@@ -104,7 +103,7 @@ pub async fn run_session_loop(
                     continue;
                 }
             };
-            let config = resolve_session_config(&history);
+            let config = executor.resolve_config(&history).await;
 
             let assembled_llm_text = if trigger_type == TriggerType::LlmComplete {
                 let text = extract_last_assistant_text(&history);

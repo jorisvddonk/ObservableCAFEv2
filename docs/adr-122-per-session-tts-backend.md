@@ -14,13 +14,17 @@ backend nor overrode a URL at runtime — a per-session switch was impossible.
 **Decision**:
 
 1. **New config key `config.tts.backend`** with enum values `"voicebox"` /
-   `"speech-server"`. Added `keys::CONFIG_TTS_BACKEND` in cafe-types and a
-   `tts_backend: Option<String>` field on `SessionConfig`, resolved by
-   `apply_config_key` like the other `config.tts.*` keys.
-2. **Passed through the existing RPC-params channel**: `build_rpc_params` for
-   the `tts` namespace now includes `backend` and `endpoint` alongside the
-   existing `profile`/`engine`, matching how those values already flow from the
-   agent runtime to the evaluator.
+   `"speech-server"`. Added `keys::CONFIG_TTS_BACKEND` in cafe-types. Under the
+   original typed `SessionConfig` it was a `tts_backend: Option<String>` field
+   resolved by `apply_config_key`; after the schema-driven refactor
+   ([ADR-121](./adr-121-evaluator-schema-system.md)) it is simply a declared
+   `config.tts.*` key that resolves through `SessionConfig.values` like every
+   other evaluator key — no per-evaluator code in cafe-agent-runtime.
+2. **Passed through the existing RPC-params channel**: the `tts` evaluator
+   declares `backend` and `endpoint` in its `rpc_params_schema` alongside the
+   existing `profile`/`engine`, so schema-driven param extraction
+   ([ADR-121](./adr-121-evaluator-schema-system.md)) sends them from session
+   config to the evaluator.
 3. **Dual-client service**: cafe-tts constructs both `VoiceboxClient` and
    `SpeechServerClient` at startup regardless of the env default. A new
    `TtsService` owns both plus the process default backend and dispatches per

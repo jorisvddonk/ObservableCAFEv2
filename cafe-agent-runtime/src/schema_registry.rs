@@ -22,6 +22,14 @@ impl SchemaRegistry {
         self.inner.read().await.get(name).cloned()
     }
 
+    /// Snapshot all currently known schemas (sorted by name for determinism).
+    pub async fn snapshot(&self) -> Vec<EvaluatorSchema> {
+        let mut schemas: Vec<EvaluatorSchema> =
+            self.inner.read().await.values().cloned().collect();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
+    }
+
     pub async fn insert(&self, schema: EvaluatorSchema) {
         let name = schema.name.clone();
         self.inner.write().await.insert(name, schema);
