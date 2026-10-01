@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use tracing::warn;
 
-use super::{LlmBackend, LlmMessage, LlmParams};
+use super::{BackendModels, LlmBackend, LlmMessage, LlmParams};
 
 /// Canonicalize a backend name so `opencode_go` and `opencode-go` are the same
 /// provider. Names are matched case-insensitively.
@@ -106,8 +106,43 @@ impl LlmBackend for BackendRouter {
         Ok(models)
     }
 
+    async fn list_backends(&self) -> Result<Vec<BackendModels>> {
+        let mut out = Vec::new();
+        for entry in &self.entries {
+            let models = match entry.backend.list_models().await {
+                Ok(mut list) => {
+                    list.sort();
+                    list.dedup();
+                    list
+                }
+                Err(e) => {
+                    warn!(
+                        "cafe-llm: backend {} model listing failed: {}",
+                        entry.name, e
+                    );
+                    Vec::new()
+                }
+            };
+            out.push(BackendModels {
+                backend: entry.name.clone(),
+                default_model: entry.default_model.clone(),
+                models,
+            });
+        }
+        Ok(out)
+    }
+
     fn default_model_for(&self, backend: Option<&str>) -> Option<String> {
         self.resolve(backend).default_model.clone()
+    }
+
+    fn default_backend(&self) -> Option<(String, Option<String>)> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| e.name == self.default_name)
+            .unwrap_or(&self.entries[0]);
+        Some((entry.name.clone(), entry.default_model.clone()))
     }
 }
 

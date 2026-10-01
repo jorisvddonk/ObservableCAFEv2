@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cafe_sdk::bus::BusClient;
-use cafe_sdk::{Chunk, EvaluatorSchema, ServerMessage, SessionConfig};
+use cafe_sdk::{keys, Chunk, EvaluatorSchema, ModelCatalog, ServerMessage, SessionConfig};
 use tracing::{info, warn};
 
 use crate::backends::LlmBackend;
@@ -75,7 +75,7 @@ async fn connect_and_run(
     }
     let v: Vec<_> = all_models.iter().cloned().collect();
     info!("cafe-llm: {} models (initial, default seeded)", v.len());
-    publish_model_registry(&client, &v).await?;
+    publish_model_registry(&client, &backend, &v).await?;
 
     // Subscribe to all sessions — snapshot replays history + sends SessionCreated for existing sessions,
     // and the event listener forwards SessionCreated for new sessions created later.
@@ -108,7 +108,7 @@ async fn connect_and_run(
                         if all_models.len() > before {
                             let v: Vec<_> = all_models.iter().cloned().collect();
                             info!("cafe-llm: {} models (added {}, total {})", v.len(), all_models.len() - before, all_models.len());
-                            publish_model_registry(&client, &v).await?;
+                            publish_model_registry(&client, &backend, &v).await?;
                         }
                     }
                 }
@@ -136,7 +136,11 @@ fn spawn_session(
     });
 }
 
-async fn publish_model_registry(client: &BusClient, models: &[String]) -> anyhow::Result<()> {
+async fn publish_model_registry(
+    client: &BusClient,
+    backend: &Arc<dyn LlmBackend>,
+    models: &[String],
+) -> anyhow::Result<()> {
     if let Err(e) = client
         .create_session(REGISTRY_SESSION_ID, "_llm_registry", SessionConfig::default())
         .await
@@ -147,10 +151,24 @@ async fn publish_model_registry(client: &BusClient, models: &[String]) -> anyhow
         }
     }
 
+    // Structured catalog: every configured backend with its default model and
+    // the models it serves. The web UI uses this to set `config.llm.backend`
+    // together with `config.llm.model` when the user picks a model.
+    let (default_backend, _) = backend.default_backend().unzip();
+    let catalog = ModelCatalog {
+        default_backend,
+        backends: backend.list_backends().await.unwrap_or_default(),
+    };
+
+    // `config.available_models` is retained as a flat, human-readable list for
+    // consumers that only need names; the catalog is the authoritative shape.
     let models_json = serde_json::to_string(models)?;
+    let catalog_json = serde_json::to_string(&catalog)?;
+
     let chunk = Chunk::new_null("com.nominal.cafe-llm")
-        .with_annotation("config.type", "runtime")
-        .with_annotation("config.available_models", models_json);
+        .with_annotation(keys::CONFIG_TYPE, "runtime")
+        .with_annotation("config.available_models", models_json)
+        .with_annotation(keys::CONFIG_MODEL_CATALOG, catalog_json);
 
     client.publish(REGISTRY_SESSION_ID, chunk).await?;
 

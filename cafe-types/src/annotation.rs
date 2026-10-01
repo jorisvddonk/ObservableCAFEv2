@@ -51,6 +51,10 @@ pub mod keys {
     pub const CONFIG_AGENT_NAME: &str = "config.agent.name";
     pub const SESSION_TAGS: &str = "session.tags";
 
+    /// Serialized [`crate::ModelCatalog`] published by cafe-llm to the registry
+    /// session, describing every LLM backend and the models it serves.
+    pub const CONFIG_MODEL_CATALOG: &str = "config.model_catalog";
+
     pub const WEB_SOURCE_URL: &str = "web.source_url";
     pub const WEB_CONTENT_TYPE: &str = "web.content_type";
     pub const WEB_FETCH_TIME: &str = "web.fetch_time";

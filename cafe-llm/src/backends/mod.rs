@@ -2,6 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 
+pub use cafe_sdk::BackendModels;
+
 pub mod ollama;
 pub mod openai;
 pub mod opencode_go;
@@ -52,6 +54,19 @@ pub trait LlmBackend: Send + Sync {
 
     /// List available models from the backend.
     async fn list_models(&self) -> Result<Vec<String>>;
+
+    /// List models grouped by backend, for a caller that needs to know which
+    /// provider serves each model. Plain backends report nothing; the router
+    /// reports every configured backend.
+    async fn list_backends(&self) -> Result<Vec<BackendModels>> {
+        Ok(Vec::new())
+    }
+
+    /// The backend a session uses when it sets no `config.llm.backend`, and
+    /// that backend's default model. Plain backends return `None`.
+    fn default_backend(&self) -> Option<(String, Option<String>)> {
+        None
+    }
 
     /// Default model to use when a session selects a provider but not a model.
     /// Only the router (which owns multiple providers) returns `Some`; plain
