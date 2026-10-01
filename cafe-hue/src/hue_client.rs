@@ -128,7 +128,7 @@ pub async fn discover_bridge() -> anyhow::Result<String> {
 /// instructing the caller to retry after pressing it.
 pub async fn register(bridge_url: &str) -> anyhow::Result<String> {
     let http = Client::builder().danger_accept_invalid_certs(true).build()?;
-    let body = serde_json::json!({"devicetype": "cafe-hue#observablecafe"});
+    let body = serde_json::json!({"devicetype": "cafe-hue#CAFE"});
     let url = format!("{}/api", bridge_url);
 
     let resp = http

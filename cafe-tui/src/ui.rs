@@ -72,7 +72,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .map(|m| format!(" [{}]", m))
         .unwrap_or_default();
     let title = format!(
-        " ObservableCAFE  │  {}  [{}]{}{}{} ",
+        " CAFE  │  {}  [{}]{}{}{} ",
         session_name, agent, model_indicator, fork_indicator, raw_indicator
     );
     let status = app.status_msg.as_deref().unwrap_or("");

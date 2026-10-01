@@ -31,7 +31,7 @@ pub fn merge_agent_lists(mut toml: Vec<AgentInfo>, mut js: Vec<AgentInfo>) -> Ve
 }
 
 /// GET /api/agents — list available agent definitions by scanning agent TOML
-/// files (`./agents`, `ObservableCAFE_AGENT_SEARCH_PATHS`/`CAFE_AGENT_PATHS`)
+/// files (`./agents`, `CAFE_AGENT_SEARCH_PATHS`/`CAFE_AGENT_PATHS`)
 /// plus JS agents (`./agents-js`, `CAFE_JS_AGENT_PATHS`).
 pub async fn list_agents(
     State(_state): State<AppState>,
@@ -46,7 +46,7 @@ pub async fn list_agents(
 
 fn toml_dirs() -> Vec<String> {
     let mut dirs: Vec<String> = vec!["./agents".to_string()];
-    if let Ok(paths_str) = std::env::var("ObservableCAFE_AGENT_SEARCH_PATHS")
+    if let Ok(paths_str) = std::env::var("CAFE_AGENT_SEARCH_PATHS")
         .or_else(|_| std::env::var("CAFE_AGENT_PATHS"))
     {
         dirs.extend(paths_str.split(':').map(String::from));

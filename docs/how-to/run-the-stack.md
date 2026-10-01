@@ -1,6 +1,6 @@
 # How to: Run the stack
 
-This guide shows you how to build, start, and stop the full ObservableCAFE stack,
+This guide shows you how to build, start, and stop the full CAFE stack,
 and how to recover when something goes wrong.
 
 ---
@@ -114,5 +114,5 @@ start `cafe-bus` first.
 ## Reference
 
 - [Architecture and startup order](../architecture.md#startup-order)
-- [Environment variables](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/internal-docs/AGENT.md#environment-variables-global)
+- [Environment variables](https://github.com/jorisvddonk/CAFE/blob/main/internal-docs/AGENT.md#environment-variables-global)
 - [How to: connect over iroh](connect-over-iroh.md) — run services against a bus on another machine

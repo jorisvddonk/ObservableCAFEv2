@@ -1,6 +1,6 @@
 [book]
-title = "ObservableCAFE"
-description = "A Unix-philosophy reimplementation of the ObservableCAFE architecture as a suite of small, composable programs."
+title = "CAFE"
+description = "A Unix-philosophy reimplementation of the CAFE architecture as a suite of small, composable programs."
 src = "docs"
 language = "en"
 
@@ -10,9 +10,9 @@ build-dir = "site"
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "navy"
-git-repository-url = "https://github.com/jorisvddonk/ObservableCAFEv2"
-edit-url-template = "https://github.com/jorisvddonk/ObservableCAFEv2/edit/main/{path}"
-site-url = "/ObservableCAFEv2/"
+git-repository-url = "https://github.com/jorisvddonk/CAFE"
+edit-url-template = "https://github.com/jorisvddonk/CAFE/edit/main/{path}"
+site-url = "/CAFE/"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 additional-css = ["theme/custom.css"]
 

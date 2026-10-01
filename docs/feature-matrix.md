@@ -91,6 +91,35 @@ for shared or trust-annotated fetching.
 
 Tests: `cafe-js-manifest` + `cafe-agent-js` unit tests (manifest validation, loader, scheduler, bridge) and the E2E above.
 
+## Chunk deletion
+
+| Layer | What | Status |
+|---|---|---|
+| **cafe-types** | `FLOW_TARGET_CHUNK_ID` annotation key | Done |
+| **cafe-bus** | `SessionState::publish` applies a `cafe.flow.signal = "delete"` chunk by removing the target from `history` and retained buffers before broadcasting; `remove_chunk(id)` | Done |
+| **cafe-store** | Deletes the target row on the delete signal, so it is gone after reload | Done |
+| **cafe-server** | `DELETE /api/sessions/:id/chunks/:chunk_id` publishes the control chunk | Done |
+| **cafe-web-sdk** | `deleteChunk` / `deleteChunks` | Done |
+| **cafe-web** | Chunk-viewer Delete / Delete +N after buttons + Shift+Delete; `hiddenChunkIds` hides tombstoned/deleted chunks in chat, raw, and viewer views | Done |
+
+See [ADR-135](adr-135-chunk-deletion.md).
+
+Tests: `cafe-bus` unit tests (delete removes from history + retained, non-delete signal is a no-op), `cafe-web` streaming tests (deletion target + hiding).
+
+## LLM backend selection & model catalog
+
+| Layer | What | Status |
+|---|---|---|
+| **cafe-types** | `ModelCatalog` / `BackendModels` with `all_models` / `backend_for`; `CONFIG_MODEL_CATALOG` key | Done |
+| **cafe-llm** | `OpenCodeGoBackend` (three wire protocols); `BackendRouter` dispatching on `config.llm.backend`; publishes the catalog + flat list to `_cafe_llm_registry` | Done |
+| **cafe-server** | `GET /api/models` returns the catalog | Done |
+| **cafe-web-sdk** | `readModelCatalog` / `parseModelCatalog` / `backendForModel` (reads the registry session) | Done |
+| **cafe-web** | `/model` command with autocomplete; sets model + backend together | Done |
+
+See [ADR-133](adr-133-opencode-go-backend.md), [ADR-134](adr-134-per-session-llm-backend.md), [ADR-136](adr-136-model-catalog.md).
+
+Tests: `cafe-types` catalog tests, `cafe-llm` routing/body/parse tests, `cafe-web` catalog tests, and `tests/opencode-go-e2e.py` (all three protocols + per-session selection) in CI.
+
 ## Summary: feature boundaries
 
 ```

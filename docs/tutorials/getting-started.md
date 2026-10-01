@@ -1,6 +1,6 @@
 # Tutorial 1: Getting started
 
-Welcome! By the end of this tutorial you will have the whole ObservableCAFE stack
+Welcome! By the end of this tutorial you will have the whole CAFE stack
 running on your machine and will have sent a message through it — from your
 terminal, through the bus, through the LLM, and back.
 
@@ -31,8 +31,8 @@ process-compose version
 ## Step 1 — Clone and build
 
 ```sh
-git clone https://github.com/jorisvddonk/ObservableCAFEv2
-cd ObservableCAFEv2
+git clone https://github.com/jorisvddonk/CAFE
+cd CAFE
 
 # Build all Rust crates
 cargo build --workspace

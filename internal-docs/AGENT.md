@@ -1,4 +1,4 @@
-# ObservableCAFE — AI Agent Context
+# CAFE — AI Agent Context
 
 This document is the entry point for an AI coding agent working in this repository.
 Read this first, then read the specific doc for the component you are building.
@@ -7,10 +7,11 @@ Read this first, then read the specific doc for the component you are building.
 
 ## What this project is
 
-ObservableCAFE is a multi-agent LLM execution platform built on the **CAFE architecture**
+CAFE is a multi-agent LLM execution platform built on the **CAFE architecture**
 (Chunks, Annotations, Functions/Evaluators). It is a Rust/Go/TypeScript monorepo that
-reimplements the original TypeScript [ObservableCAFE](https://github.com/jorisvddonk/ObservableCAFE)
-as a suite of small Unix-philosophy programs that communicate over a shared message bus.
+reimplements the original TypeScript
+[ObservableCAFE](https://github.com/jorisvddonk/ObservableCAFE) as a suite of
+small Unix-philosophy programs that communicate over a shared message bus.
 
 The core idea: LLM agents should generate scripts/plans upfront rather than reasoning
 step-by-step in a loop. Data flows through the system as immutable **Chunks** (text,
@@ -22,7 +23,7 @@ binary, or null) annotated with metadata. Pipelines are declarative — they des
 ## Repository layout
 
 ```
-observablecafe/
+CAFE/
 ```
 
 ---

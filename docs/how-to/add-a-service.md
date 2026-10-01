@@ -1,6 +1,6 @@
 # How to: Add a service
 
-This guide shows you how to add a brand-new bus service to ObservableCAFE —
+This guide shows you how to add a brand-new bus service to CAFE —
 following the pattern used by `cafe-rot13`, the smallest service in the repo. You
 can clone it as your starting point.
 

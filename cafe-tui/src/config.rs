@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "cafe-tui", about = "ObservableCAFE terminal UI")]
+#[command(name = "cafe-tui", about = "CAFE terminal UI")]
 pub struct Config {
     /// cafe-server URL
     #[arg(long, env = "CAFE_SERVER_URL", default_value = "http://localhost:4000")]

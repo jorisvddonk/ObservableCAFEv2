@@ -1,7 +1,7 @@
 [project]
 name = "llm-cafe"
 version = "0.1.0"
-description = "LLM plugin for ObservableCAFE"
+description = "LLM plugin for CAFE"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28",

@@ -1,4 +1,4 @@
-module github.com/nominal-systems/observablecafe/cafe-telegram
+module github.com/nominal-systems/cafe/cafe-telegram
 
 go 1.25.0
 

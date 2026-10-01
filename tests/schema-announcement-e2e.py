@@ -135,11 +135,11 @@ def main():
 
         env = os.environ.copy()
         env["CAFE_BUS_SOCKET"] = bus_socket
-        # The runtime prefers ObservableCAFE_AGENT_SEARCH_PATHS over
+        # The runtime prefers CAFE_AGENT_SEARCH_PATHS over
         # CAFE_AGENT_PATHS; set both so the fixture is found regardless of the
         # caller's shell. (Also clear CAFE_JS_AGENT_PATHS so JS shadowing only
         # sees ./agents-js.)
-        env["ObservableCAFE_AGENT_SEARCH_PATHS"] = agents_dir
+        env["CAFE_AGENT_SEARCH_PATHS"] = agents_dir
         env["CAFE_AGENT_PATHS"] = agents_dir
         env.pop("CAFE_JS_AGENT_PATHS", None)
         env["RUST_LOG"] = "info"

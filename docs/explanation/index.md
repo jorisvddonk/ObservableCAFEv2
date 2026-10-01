@@ -1,6 +1,6 @@
 # Explanation
 
-Background and reasoning behind ObservableCAFE's design. Read these when you want
+Background and reasoning behind CAFE's design. Read these when you want
 to *understand* the system — not when you need to do a task (that's
 [How-to guides](../how-to/)) or look something up (that's [Reference](../reference/)).
 

@@ -1,6 +1,6 @@
 # How to: Write and run E2E tests
 
-This guide shows you how to write end-to-end tests for ObservableCAFE and run the
+This guide shows you how to write end-to-end tests for CAFE and run the
 existing suite. It also explains the hard rules this repo enforces around test
 reliability.
 
@@ -134,6 +134,6 @@ cargo test --workspace
 
 ## Reference
 
-- [README: E2E tests](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/README.md#e2e-tests) — the full runnable list
+- [README: E2E tests](https://github.com/jorisvddonk/CAFE/blob/main/README.md#e2e-tests) — the full runnable list
 - [Bus protocol spec](../spec-bus-protocol.md) — the messages the CLI wraps
 - [How to: use the cafe-cli](use-the-cli.md) — CLI commands used inside tests

@@ -2,7 +2,7 @@
 
 ## System overview
 
-ObservableCAFE is a suite of small, composable Unix processes that collectively implement
+CAFE is a suite of small, composable Unix processes that collectively implement
 a reactive multi-agent LLM platform. Processes communicate via a central message bus
 (`cafe-bus`) over a Unix domain socket. No process calls another directly.
 
@@ -198,7 +198,7 @@ Key endpoints:
 
 ## Repository layout
 
-See the [README](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/README.md#projects) for the current list of projects with descriptions and languages.
+See the [README](https://github.com/jorisvddonk/CAFE/blob/main/README.md#projects) for the current list of projects with descriptions and languages.
 
 ---
 

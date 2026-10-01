@@ -36,9 +36,10 @@ read/write them without bus-level meaning.
 
 | Key | Type | Added by | Meaning |
 |---|---|---|---|
-| `cafe.flow.signal` | `string` | Producer | Flow control signal (`"reset"`, `"tick"`, `"delete"`) |
+| `cafe.flow.signal` | `string` | Producer | Flow control signal (`"reset"`, `"tick"`, `"delete"`, `"reload-agents"`) |
 | `cafe.flow.agent_id` | `string` | Pipeline | Agent ID attached to initial config chunks |
 | `cafe.flow.tombstone` | `Vec<String>` | cafe-llm | IDs of transient token chunks to remove from display |
+| `flow.target_chunk_id` | `string` | cafe-server | With `cafe.flow.signal = "delete"`: the chunk to retire. The bus and café-store remove it from history/DB. |
 
 ## Tool Calls
 

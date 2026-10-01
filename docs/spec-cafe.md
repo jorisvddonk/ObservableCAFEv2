@@ -111,20 +111,32 @@ Annotation keys use dot-namespaced strings. All values are JSON-typed.
 | Key                       | Value type | Description                                      |
 |---------------------------|------------|--------------------------------------------------|
 | `config.type`             | string     | `runtime` — marks this as a config chunk         |
-| `config.backend`          | string     | LLM backend: `ollama`, `openai`, `kobold`        |
-| `config.model`            | string     | Model name                                       |
+| `config.backend`          | string     | LLM backend (legacy; prefer `config.llm.backend`) |
+| `config.model`            | string     | Model name (legacy; prefer `config.llm.model`)   |
 | `config.system_prompt`    | string     | System prompt for this session                   |
 | `config.temperature`      | number     | LLM temperature                                  |
 | `config.max_tokens`       | number     | Max tokens for LLM response                      |
 
-Namespaced LLM history-compaction keys (see ADR-125; `config.llm.*` on
-`config.type = "runtime"` null chunks):
+Namespaced LLM keys (`config.llm.*` on `config.type = "runtime"` null chunks):
 
 | Key                               | Value type | Description                                              |
 |-----------------------------------|------------|----------------------------------------------------------|
-| `config.llm.compaction_mode`      | string     | `none` (default), `truncate`, `summarize`                |
+| `config.llm.model`                | string     | Model name (per-session)                                 |
+| `config.llm.backend`              | string     | Per-session backend: `ollama`, `openai`, `opencode-go` (ADR-133/134) |
+| `config.llm.system_prompt`        | string     | System prompt                                            |
+| `config.llm.temperature`          | number     | LLM temperature                                          |
+| `config.llm.max_tokens`           | number     | Max tokens for the response                              |
+| `config.llm.compaction_mode`      | string     | `none` (default), `truncate`, `summarize` (ADR-125)      |
 | `config.llm.max_history_messages` | number     | Max user+assistant messages sent to the LLM              |
 | `config.llm.max_history_chars`    | number     | Max summed chars over user+assistant messages            |
+
+### Model catalog (registry session)
+
+cafe-llm publishes the model catalog to the `_cafe_llm_registry` session as a
+`config.model_catalog` annotation on a `config.type = "runtime"` null chunk: a
+serialized `ModelCatalog` describing every backend, its default model, and the
+models it serves (ADR-136). `config.available_models` carries the same models as
+a flat list for backward compatibility.
 
 ### Web content
 

@@ -32,7 +32,7 @@ server.
    only. Links to them from the site point at GitHub.
 4. **Out-of-tree links become GitHub URLs.** Links to `README.md`, `AGENTS.md`,
    `agents-js/*`, `cafe-*/src/*`, and `tests/*` are rewritten to
-   `github.com/jorisvddonk/ObservableCAFEv2/blob/main/...` so the static site
+   `github.com/jorisvddonk/CAFE/blob/main/...` so the static site
    doesn't 404.
 5. **Deploy** via `.github/workflows/docs.yml` on push to `main` using the
    GitHub Pages Actions flow (`configure-pages` → `upload-pages-artifact` →
@@ -60,5 +60,5 @@ server.
   plain markdown.
 - **Keep raw markdown on GitHub**: no navigation or search; the status quo.
 
-Related: [README project list](https://github.com/jorisvddonk/ObservableCAFEv2#projects),
+Related: [README project list](https://github.com/jorisvddonk/CAFE#projects),
 [ADR-001](./adr-001-unix-socket-message-bus.md) (the repo's ADR convention).

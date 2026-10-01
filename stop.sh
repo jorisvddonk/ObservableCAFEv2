@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "Stopping ObservableCAFE..."
+echo "Stopping CAFE..."
 process-compose kill --port 8082 2>/dev/null || true
 process-compose down --port 8082 2>/dev/null || true
 sleep 1

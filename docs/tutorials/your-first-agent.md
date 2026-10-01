@@ -2,7 +2,7 @@
 
 In [Tutorial 1](getting-started.md) you ran the stack and used the built-in
 `default` agent. Now you'll write your own agent — no Rust required. An agent in
-ObservableCAFE is just a TOML file that describes a pipeline of steps.
+CAFE is just a TOML file that describes a pipeline of steps.
 
 By the end of this tutorial you'll have an agent that ROT13-shifts every message
 sent to it.

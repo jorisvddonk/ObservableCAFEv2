@@ -123,7 +123,19 @@ name. See [JS agent reference](reference/js-agents.md).
 ### List models
 `GET /api/models`
 
-Models the configured LLM backend can reach (proxied from `cafe-llm`).
+Returns the LLM model catalog:
+```json
+{
+  "models": ["<model>", "..."],
+  "default_backend": "openai",
+  "backends": [
+    { "backend": "opencode-go", "default_model": "deepseek-v4.1-flash", "models": ["..."] }
+  ]
+}
+```
+Read from the model catalog cafe-llm publishes to the `_cafe_llm_registry`
+session (ADR-136). The web UI reads that session directly instead of this
+endpoint; it is retained for other consumers.
 
 ---
 
@@ -204,6 +216,11 @@ Response `200` with the updated chunk.
 
 ### Delete a chunk
 `DELETE /api/sessions/:id/chunks/:chunk_id`
+
+Publishes a `cafe.flow.signal = "delete"` control chunk carrying
+`flow.target_chunk_id`. The bus drops the target from history and retained
+buffers, and cafe-store removes it from its database, so it is gone for live
+clients and after a reload (ADR-135). Deleting an unknown id is a no-op.
 
 Response `204`.
 

@@ -13,7 +13,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Self {
         let mut agent_paths = vec!["./agents".to_string()];
-        if let Ok(paths_str) = std::env::var("ObservableCAFE_AGENT_SEARCH_PATHS")
+        if let Ok(paths_str) = std::env::var("CAFE_AGENT_SEARCH_PATHS")
             .or_else(|_| std::env::var("CAFE_AGENT_PATHS"))
         {
             agent_paths.extend(paths_str.split(':').map(String::from));

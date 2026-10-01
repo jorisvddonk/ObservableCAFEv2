@@ -1,6 +1,6 @@
 # Reference
 
-Complete, factual descriptions of every contract in ObservableCAFE. Use these
+Complete, factual descriptions of every contract in CAFE. Use these
 when you need an exact field name, message shape, or endpoint — not to learn how
 to do something (that's [How-to guides](../how-to/)) or why something is the way
 it is (that's [Explanation](../explanation/)).
@@ -21,7 +21,7 @@ it is (that's [Explanation](../explanation/)).
 |---|---|
 | [JS agent reference](js-agents.md) | The `agents-js/*.js` format: manifest, `main(cafe)`, events, promise RPC (current) |
 | [Agent config reference](agent-config.md) | The legacy TOML format: metadata fields, steps, triggers, initial chunk, tool definitions (frozen) |
-| [Environment variables](https://github.com/jorisvddonk/ObservableCAFEv2/blob/main/internal-docs/AGENT.md#environment-variables-global) | Every env var read by the services and its default |
+| [Environment variables](https://github.com/jorisvddonk/CAFE/blob/main/internal-docs/AGENT.md#environment-variables-global) | Every env var read by the services and its default |
 
 ## Interfaces
 

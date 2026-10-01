@@ -179,7 +179,7 @@ def main():
         env["LLM_BACKEND"] = "openai"
         env["OPENAI_URL"] = f"http://localhost:{MOCK_PORT}/v1"
         env["OPENAI_MODEL"] = "mock-model"
-        env["ObservableCAFE_AGENT_SEARCH_PATHS"] = agents_dir
+        env["CAFE_AGENT_SEARCH_PATHS"] = agents_dir
         env["CAFE_AGENT_PATHS"] = agents_dir
         env.pop("CAFE_JS_AGENT_PATHS", None)
 

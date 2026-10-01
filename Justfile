@@ -1,4 +1,4 @@
-# ObservableCAFE monorepo task runner
+# CAFE monorepo task runner
 # Install: https://github.com/casey/just
 
 default:

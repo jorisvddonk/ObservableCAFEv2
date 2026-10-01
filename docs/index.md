@@ -1,6 +1,6 @@
-# ObservableCAFE
+# CAFE
 
-ObservableCAFE is a **multi-agent LLM platform** built as a suite of small,
+CAFE is a **multi-agent LLM platform** built as a suite of small,
 composable programs that talk to each other over a central message bus. There
 is no monolith and no direct service-to-service calls: the LLM, speech, image
 generation, retrieval, and every tool are separate processes that connect to
@@ -26,8 +26,8 @@ API is promises all the way down — `await cafe.invoke("llm", {})`.
 ## Quick start
 
 ```sh
-git clone https://github.com/jorisvddonk/ObservableCAFEv2
-cd ObservableCAFEv2
+git clone https://github.com/jorisvddonk/CAFE
+cd CAFE
 cargo build --workspace     # build the Rust services
 ./start.sh                  # start the bus, services and HTTP API
 ```
@@ -77,4 +77,4 @@ New here? Read [Getting started](tutorials/getting-started.md), then
 ---
 
 Source, issues and the full project list are on
-[GitHub](https://github.com/jorisvddonk/ObservableCAFEv2). Licensed MIT.
+[GitHub](https://github.com/jorisvddonk/CAFE). Licensed MIT.

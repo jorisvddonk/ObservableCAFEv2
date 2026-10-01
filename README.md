@@ -1,6 +1,6 @@
-# ObservableCAFE
+# CAFE
 
-A Unix-philosophy reimplementation of the ObservableCAFE architecture as a suite
+A Unix-philosophy reimplementation of the CAFE architecture as a suite
 of small, composable programs. Services communicate through a central message
 bus (`cafe-bus`) over a Unix socket.
 
