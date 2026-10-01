@@ -72,11 +72,23 @@ export function ChatArea() {
   }, [modelQuery, catalog]);
 
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  // The model name committed by the first Enter/click. While the input is
+  // exactly `/model <pickedModel>` the picker stays closed so the next Enter
+  // sends the command instead of re-picking.
+  const [pickedModel, setPickedModel] = useState<string | null>(null);
   useEffect(() => {
     setSuggestionIndex(0);
   }, [modelQuery]);
+  useEffect(() => {
+    if (pickedModel !== null && input !== `/model ${pickedModel}`) {
+      setPickedModel(null);
+    }
+  }, [input, pickedModel]);
 
-  const showSuggestions = modelQuery !== null && suggestions.length > 0;
+  const showSuggestions =
+    modelQuery !== null &&
+    pickedModel === null &&
+    suggestions.length > 0;
 
   // Open a persistent SSE stream for the active session.
   // This is the mechanism that delivers binary chunks (audio, images) that
@@ -225,9 +237,14 @@ export function ChatArea() {
         return;
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        // First Enter fills the input with the full command; the next Enter
+        // (with the picker now closed) sends it.
         e.preventDefault();
         const pick = suggestions[suggestionIndex];
-        if (pick) setInput(`/model ${pick.model}`);
+        if (pick) {
+          setInput(`/model ${pick.model}`);
+          setPickedModel(pick.model);
+        }
         return;
       }
       if (e.key === 'Escape') {
@@ -264,6 +281,21 @@ export function ChatArea() {
   const displayMessages = store.showAllChunks
     ? rawViewChunks(store.allChunks)
     : chatMessagesFrom(store.messages);
+
+  // The session's latest configured model/backend, from runtime config chunks.
+  // Used to label the live streaming bubble in raw mode (the per-token deltas
+  // carry no model annotation of their own).
+  const activeModel = (() => {
+    for (let i = store.allChunks.length - 1; i >= 0; i--) {
+      const a = store.allChunks[i].annotations;
+      const model = a['config.llm.model'];
+      if (typeof model === 'string') {
+        const backend = a['config.llm.backend'];
+        return { model, backend: typeof backend === 'string' ? backend : undefined };
+      }
+    }
+    return null;
+  })();
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -361,7 +393,7 @@ export function ChatArea() {
             onClick={() => store.setSelectedChunkId(chunk.id)}
             style={{ cursor: store.chunkViewerOpen ? 'pointer' : undefined }}
           >
-            <Message chunk={chunk} />
+            <Message chunk={chunk} raw={store.showAllChunks} />
           </div>
         ))}
         {store.liveStream ? (
@@ -377,9 +409,15 @@ export function ChatArea() {
                 data: null,
                 mime_type: null,
                 producer: 'com.nominal.cafe-llm',
-                annotations: { 'chat.role': 'assistant', 'chat.is_streaming': true },
+                annotations: {
+                  'chat.role': 'assistant',
+                  'chat.is_streaming': true,
+                  ...(activeModel ? { 'chat.model': activeModel.model } : {}),
+                  ...(activeModel?.backend ? { 'config.llm.backend': activeModel.backend } : {}),
+                },
                 timestamp: Date.now(),
               }}
+              raw={store.showAllChunks}
             />
           </div>
         ) : null}
@@ -420,6 +458,7 @@ export function ChatArea() {
                 onMouseDown={(e) => {
                   e.preventDefault();
                   setInput(`/model ${s.model}`);
+                  setPickedModel(s.model);
                 }}
                 onMouseEnter={() => setSuggestionIndex(i)}
                 style={{

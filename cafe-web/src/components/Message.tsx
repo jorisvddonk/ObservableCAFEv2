@@ -10,9 +10,11 @@ import type { Chunk } from 'cafe-web-sdk';
 
 interface Props {
   chunk: Chunk;
+  /** Raw (chunk) view: show the model and its backend next to the label. */
+  raw?: boolean;
 }
 
-export function Message({ chunk }: Props) {
+export function Message({ chunk, raw }: Props) {
   if (isMediaChunk(chunk)) {
     return <MediaMessage chunk={chunk} />;
   }
@@ -30,6 +32,8 @@ export function Message({ chunk }: Props) {
   const role = chunk.annotations['chat.role'] as string | undefined;
   const isUser = role === 'user';
   const sourceLabel = role ?? chunk.producer.replace('com.nominal.', '');
+  const model = chunk.annotations['chat.model'] as string | undefined;
+  const backend = chunk.annotations['config.llm.backend'] as string | undefined;
 
   return (
     <div
@@ -47,9 +51,28 @@ export function Message({ chunk }: Props) {
           color: '#888',
           marginBottom: 2,
           textTransform: 'capitalize',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
         }}
       >
         {sourceLabel}
+        {raw && (model || backend) ? (
+          <span
+            style={{
+              textTransform: 'none',
+              background: '#0f3460',
+              border: '1px solid #2a2a4a',
+              borderRadius: 4,
+              padding: '0 5px',
+              fontSize: 10,
+              color: '#8ab4f8',
+              fontFamily: 'monospace',
+            }}
+          >
+            {[backend, model].filter(Boolean).join(' · ')}
+          </span>
+        ) : null}
       </span>
       <div
         style={{
