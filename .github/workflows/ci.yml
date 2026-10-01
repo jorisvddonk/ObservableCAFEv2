@@ -58,4 +58,5 @@ jobs:
           uv run tests/session-tags-e2e.py
           uv run tests/config-switching-e2e.py
           uv run tests/llm-compaction-e2e.py
+          uv run tests/opencode-go-e2e.py
           uv run tests/js-agents-e2e.py

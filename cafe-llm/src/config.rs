@@ -6,6 +6,9 @@ pub struct Config {
     pub openai_url: String,
     pub openai_api_key: String,
     pub openai_model: String,
+    pub opencode_go_url: String,
+    pub opencode_api_key: String,
+    pub opencode_go_model: String,
     pub model_list_urls: Vec<String>,
 }
 
@@ -26,6 +29,12 @@ impl Config {
                 .unwrap_or_default(),
             openai_model: std::env::var("OPENAI_MODEL")
                 .unwrap_or_default(),
+            opencode_go_url: std::env::var("OPENCODE_GO_URL")
+                .unwrap_or_else(|_| "https://opencode.ai/zen/go".into()),
+            opencode_api_key: std::env::var("OPENCODE_API_KEY")
+                .unwrap_or_default(),
+            opencode_go_model: std::env::var("OPENCODE_GO_MODEL")
+                .unwrap_or_else(|_| "deepseek-v4.1-flash".into()),
             model_list_urls: std::env::var("MODEL_LIST_URLS")
                 .map(|s| s.split(',').map(|u| u.trim().to_string()).collect())
                 .unwrap_or_default(),

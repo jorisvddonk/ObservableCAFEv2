@@ -113,6 +113,9 @@ in production paths.
 | `OLLAMA_MODEL`                   | `gemma3:1b`                    | cafe-llm                        |
 | `OPENAI_URL`                     | `http://localhost:6900`        | cafe-llm                        |
 | `OPENAI_API_KEY`                 | *(empty)*                      | cafe-llm                        |
+| `OPENCODE_GO_URL`                | `https://opencode.ai/zen/go`   | cafe-llm                        |
+| `OPENCODE_API_KEY`               | *(empty)*                      | cafe-llm                        |
+| `OPENCODE_GO_MODEL`              | `deepseek-v4.1-flash`          | cafe-llm                        |
 | `MODEL_LIST_URLS`                | —                              | cafe-llm                        |
 | `VOICEBOX_URL`                   | `http://127.0.0.1:17493`       | cafe-tts, cafe-stt              |
 | `COMFY_URL`                      | `http://127.0.0.1:8188`        | cafe-comfy                      |

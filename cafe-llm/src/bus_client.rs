@@ -36,14 +36,14 @@ async fn connect_and_run(
 
     let schema = EvaluatorSchema {
         name: "llm".into(),
-        description: "Large Language Model evaluator — generates text responses using Ollama or OpenAI".into(),
+        description: "Large Language Model evaluator — generates text responses using Ollama, OpenAI, or OpenCode Go".into(),
         config_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "config.llm.system_prompt": { "type": "string", "description": "System prompt prepended to every conversation" },
                 "config.llm.temperature": { "type": "number", "default": 0.7, "description": "Sampling temperature (0.0–2.0)" },
                 "config.llm.model": { "type": "string", "description": "Model name" },
-                "config.llm.backend": { "type": "string", "enum": ["ollama", "openai"], "description": "LLM backend" },
+                "config.llm.backend": { "type": "string", "enum": ["ollama", "openai", "opencode-go"], "description": "LLM backend" },
                 "config.llm.max_tokens": { "type": "integer", "minimum": 1, "description": "Maximum tokens in response" },
                 "config.llm.compaction_mode": { "type": "string", "enum": ["none", "truncate", "summarize"], "description": "History compaction mode oldest-first: none, truncate dropped prefix, or summarize dropped prefix into the prompt" },
                 "config.llm.max_history_messages": { "type": "integer", "minimum": 1, "description": "Max user+assistant messages sent to the backend (system excluded)" },

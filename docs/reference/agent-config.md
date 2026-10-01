@@ -119,7 +119,7 @@ Common keys:
 | `config.llm.temperature` | LLM temperature. |
 | `config.llm.max_tokens` | Max response tokens. |
 | `config.llm.model` | Model name. |
-| `config.llm.backend` | Backend: `ollama`, `openai`, `kobold`. |
+| `config.llm.backend` | Per-session backend: `ollama`, `openai`, `opencode-go`. Falls back to the process default (`LLM_BACKEND`) when unset. See [ADR-133](../adr-133-opencode-go-backend.md) and [ADR-134](../adr-134-per-session-llm-backend.md). |
 | `config.llm.compaction_mode` | History compaction: `none` (default), `truncate`, `summarize` (dropped prefix condensed into the prompt). See [ADR-125](../adr-125-llm-compaction.md). |
 | `config.llm.max_history_messages` | Max user+assistant messages sent to the LLM (system excluded, oldest dropped first). |
 | `config.llm.max_history_chars` | Max summed chars over user+assistant messages sent to the LLM (whichever budget hits first wins). |

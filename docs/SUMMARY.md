@@ -17,6 +17,7 @@
 
 - [How-to guides](how-to/index.md)
 - [How to: Run the stack](how-to/run-the-stack.md)
+- [How to: Use OpenCode Go with cafe-llm](how-to/use-opencode-go.md)
 - [How to: Use the cafe-cli](how-to/use-the-cli.md)
 - [How to: Connect via MCP](how-to/connect-mcp.md)
 - [How to: Work with binary assets](how-to/use-binary-assets.md)
@@ -104,3 +105,5 @@
 - [ADR-129: RSS as its own evaluator (cafe-rss)](adr-129-cafe-rss-service.md)
 - [ADR-131: Outbound HTTP from JS agents (cafe.fetch)](adr-131-js-agent-fetch.md)
 - [ADR-132: Agent reload control signal](adr-132-agent-reload-signal.md)
+- [ADR-133: OpenCode Go backend for cafe-llm](adr-133-opencode-go-backend.md)
+- [ADR-134: Per-session LLM backend selection](adr-134-per-session-llm-backend.md)

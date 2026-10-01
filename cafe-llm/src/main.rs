@@ -5,7 +5,10 @@ mod context;
 mod evaluator;
 
 use anyhow::Result;
-use backends::{ollama::OllamaBackend, openai::OpenAiBackend, LlmBackend};
+use backends::{
+    ollama::OllamaBackend, openai::OpenAiBackend, opencode_go::OpenCodeGoBackend, router::BackendRouter,
+    LlmBackend,
+};
 use config::Config;
 use std::sync::Arc;
 use tracing::info;
@@ -16,23 +19,42 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env();
 
-    let backend: Arc<dyn LlmBackend> = match config.backend.as_str() {
-        "openai" => {
-            info!("cafe-llm: using OpenAI-compatible backend at {}", config.openai_url);
-            Arc::new(OpenAiBackend::new(
-                config.openai_url.clone(),
-                config.openai_api_key.clone(),
-                config.model_list_urls.clone(),
-            ))
-        }
-        _ => {
-            info!("cafe-llm: using Ollama backend at {}", config.ollama_url);
-            Arc::new(OllamaBackend::new(config.ollama_url.clone()))
-        }
-    };
+    // Construct every backend regardless of the process default so a session
+    // can select one at runtime via `config.llm.backend` (ADR-134). Each client
+    // is cheap: just a `reqwest::Client` plus base URL.
+    let ollama: Arc<dyn LlmBackend> =
+        Arc::new(OllamaBackend::new(config.ollama_url.clone()));
+    let openai: Arc<dyn LlmBackend> = Arc::new(OpenAiBackend::new(
+        config.openai_url.clone(),
+        config.openai_api_key.clone(),
+        config.model_list_urls.clone(),
+    ));
+    let opencode_go: Arc<dyn LlmBackend> = Arc::new(OpenCodeGoBackend::new(
+        config.opencode_go_url.clone(),
+        config.opencode_api_key.clone(),
+    ));
+
+    let backend: Arc<dyn LlmBackend> = Arc::new(BackendRouter::new(
+        config.backend.clone(),
+        vec![
+            ("ollama".into(), ollama, Some(config.ollama_model.clone())),
+            ("openai".into(), openai, Some(config.openai_model.clone())),
+            (
+                "opencode-go".into(),
+                opencode_go,
+                Some(config.opencode_go_model.clone()),
+            ),
+        ],
+    ));
+
+    info!(
+        "cafe-llm: backend router ready (default: {}, ollama: {}, openai: {}, opencode-go: {})",
+        config.backend, config.ollama_url, config.openai_url, config.opencode_go_url
+    );
 
     let default_model = match config.backend.as_str() {
         "openai" => config.openai_model.clone(),
+        "opencode-go" | "opencode_go" => config.opencode_go_model.clone(),
         _ => config.ollama_model.clone(),
     };
 

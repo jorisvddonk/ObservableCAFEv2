@@ -4,6 +4,8 @@ use futures_util::stream::BoxStream;
 
 pub mod ollama;
 pub mod openai;
+pub mod opencode_go;
+pub mod router;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlmMessage {
@@ -15,6 +17,13 @@ pub struct LlmParams {
     pub model: String,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// Cafe session this generation belongs to. Backends that support
+    /// conversation-scoped routing/caching (e.g. OpenCode Go's
+    /// `x-opencode-session` header) forward it; others ignore it.
+    pub session_id: Option<String>,
+    /// Per-session backend override (e.g. `"opencode-go"`). Only the router
+    /// consults this; plain backends ignore it.
+    pub backend: Option<String>,
 }
 
 #[async_trait]
@@ -43,4 +52,11 @@ pub trait LlmBackend: Send + Sync {
 
     /// List available models from the backend.
     async fn list_models(&self) -> Result<Vec<String>>;
+
+    /// Default model to use when a session selects a provider but not a model.
+    /// Only the router (which owns multiple providers) returns `Some`; plain
+    /// backends return `None`.
+    fn default_model_for(&self, _backend: Option<&str>) -> Option<String> {
+        None
+    }
 }

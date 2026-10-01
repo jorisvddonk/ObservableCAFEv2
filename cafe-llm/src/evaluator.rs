@@ -139,7 +139,11 @@ pub async fn run_session(
                         };
 
                         let cfg = extract_config(&history);
-                        let model = cfg.model.clone().unwrap_or_else(|| default_model.clone());
+                        let model = cfg.model.clone().unwrap_or_else(|| {
+                            backend
+                                .default_model_for(cfg.backend.as_deref())
+                                .unwrap_or_else(|| default_model.clone())
+                        });
                         let messages = build_messages(&history, cfg.system_prompt.as_deref());
                         let (mut messages, compaction) = apply_compaction(messages, &cfg);
                         if compaction.dropped_messages > 0 {
@@ -151,7 +155,7 @@ pub async fn run_session(
                                 session_id
                             );
                             if cfg.compaction_mode.as_deref() == Some("summarize") {
-                                messages = summarize_prefix(&backend, &model, messages, &compaction.dropped, &session_id).await;
+                                messages = summarize_prefix(&backend, &model, cfg.backend.as_deref(), messages, &compaction.dropped, &session_id).await;
                             }
                         }
 
@@ -159,6 +163,8 @@ pub async fn run_session(
                             model: model.clone(),
                             temperature: cfg.temperature,
                             max_tokens: cfg.max_tokens,
+                            session_id: Some(session_id.clone()),
+                            backend: cfg.backend.clone(),
                         };
 
                         info!(
@@ -212,6 +218,8 @@ pub async fn run_session(
                             model: model_name.to_string(),
                             temperature,
                             max_tokens: None,
+                            session_id: Some(session_id.clone()),
+                            backend: None,
                         };
 
                         info!(
@@ -265,6 +273,7 @@ pub async fn run_session(
 async fn summarize_prefix(
     backend: &Arc<dyn LlmBackend>,
     model: &str,
+    backend_name: Option<&str>,
     messages: Vec<LlmMessage>,
     dropped: &[LlmMessage],
     session_id: &str,
@@ -272,7 +281,13 @@ async fn summarize_prefix(
     if dropped.is_empty() {
         return messages;
     }
-    let summary_params = LlmParams { model: model.to_string(), temperature: None, max_tokens: None };
+    let summary_params = LlmParams {
+        model: model.to_string(),
+        temperature: None,
+        max_tokens: None,
+        session_id: Some(session_id.to_string()),
+        backend: backend_name.map(String::from),
+    };
     match backend.complete_to_string(build_summary_request(dropped), &summary_params).await {
         Ok(summary) => {
             let summary = summary.trim();
