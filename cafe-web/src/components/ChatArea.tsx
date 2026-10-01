@@ -3,27 +3,14 @@ import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
 import { streamChat, openSessionStream, publishChunk } from 'cafe-web-sdk';
 import { Message } from './Message';
+import {
+  chatMessagesFrom,
+  endsLiveStream,
+  nextLiveStream,
+  rawViewChunks,
+  tombstoneIds,
+} from '../streaming';
 import type { Chunk } from 'cafe-web-sdk';
-
-/** True if a chunk should appear in the chat message list. */
-function isChatMessage(chunk: Chunk): boolean {
-  // Skip transient chunks — streaming tokens, RPC envelopes, etc.
-  if (chunk.annotations['cafe.transient']) return false;
-  if (
-    chunk.content_type === 'text' &&
-    (chunk.annotations['chat.role'] === 'user' ||
-      chunk.annotations['chat.role'] === 'assistant')
-  ) {
-    return true;
-  }
-  if (
-    (chunk.content_type === 'binary' || chunk.content_type === 'binary-ref') &&
-    chunk.annotations['chat.role'] === 'assistant'
-  ) {
-    return true;
-  }
-  return false;
-}
 
 export function ChatArea() {
   const store = useSessionStore();
@@ -34,7 +21,28 @@ export function ChatArea() {
   // Track which chunk IDs are already in messages to avoid duplicates from the
   // persistent stream replaying history we already loaded.
   const seenIds = useRef<Set<string>>(new Set());
+  // Chunk IDs already folded into the live streaming bubble. The chat SSE and
+  // the persistent session stream deliver the SAME chunk to both callbacks, so
+  // without this guard each token would be appended to the bubble twice
+  // (e.g. "DoDoing…").
+  const liveSeenIds = useRef<Set<string>>(new Set());
   const cleanupStream = useRef<(() => void) | null>(null);
+
+  // Fold a chunk into the single live streaming bubble. Guarded by chunk id so
+  // the chat SSE and the persistent session stream (which both deliver the same
+  // chunk) contribute each token exactly once.
+  const ingestLive = (state: typeof store, chunk: Chunk) => {
+    if (liveSeenIds.current.has(chunk.id)) return;
+    liveSeenIds.current.add(chunk.id);
+    // A tombstone or stream_complete retires the live view; the durable final
+    // response chunk is already in `messages` — never render both.
+    if (tombstoneIds(chunk) !== null || endsLiveStream(chunk)) {
+      state.setLiveStream(null);
+      return;
+    }
+    const live = nextLiveStream(state.liveStream, chunk);
+    if (live) state.setLiveStream(live);
+  };
 
   // Auto-scroll when messages change
   useEffect(() => {
@@ -49,6 +57,7 @@ export function ChatArea() {
     cleanupStream.current?.();
     cleanupStream.current = null;
     seenIds.current = new Set(store.messages.map((c) => c.id));
+    liveSeenIds.current = new Set();
 
     const sessionId = store.activeSessionId;
     if (!sessionId) return;
@@ -56,12 +65,14 @@ export function ChatArea() {
     const close = openSessionStream(
       sessionId,
       (chunk) => {
+        const state = useSessionStore.getState();
         // Always feed allChunks (chunk viewer)
         // Avoid double-adding chunks we loaded from history
         if (!seenIds.current.has(chunk.id)) {
           seenIds.current.add(chunk.id);
-          useSessionStore.getState().appendChunk(chunk);
+          state.appendChunk(chunk);
         }
+        ingestLive(state, chunk);
       },
       (_count) => {
         // history replay complete — future chunks are live
@@ -128,12 +139,14 @@ export function ChatArea() {
       state.activeSessionId,
       text,
       (chunk) => {
+        const s = useSessionStore.getState();
         // Chat SSE delivers text chunks; register them in seenIds so the
         // persistent stream doesn't duplicate them.
         if (!seenIds.current.has(chunk.id)) {
           seenIds.current.add(chunk.id);
-          useSessionStore.getState().appendChunk(chunk);
+          s.appendChunk(chunk);
         }
+        ingestLive(s, chunk);
       },
       () => {
         useSessionStore.getState().setStreaming(false);
@@ -169,10 +182,11 @@ export function ChatArea() {
     );
   }
 
-  // Filter messages for the chat display
+  // Filter messages for the chat display. Raw mode shows non-transient chunks
+  // (still hiding per-token deltas/tombstones) rather than only chat messages.
   const displayMessages = store.showAllChunks
-    ? store.allChunks
-    : store.messages.filter(isChatMessage);
+    ? rawViewChunks(store.allChunks)
+    : chatMessagesFrom(store.messages);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -273,20 +287,20 @@ export function ChatArea() {
             <Message chunk={chunk} />
           </div>
         ))}
-        {store.streaming && store.streamingText ? (
+        {store.liveStream ? (
           <div
-            key="__live_stream"
+            key={store.liveStream.key}
             style={{ cursor: store.chunkViewerOpen ? 'pointer' : undefined }}
           >
             <Message
               chunk={{
-                id: '__live_stream',
+                id: store.liveStream.key,
                 content_type: 'text',
-                content: store.streamingText,
+                content: store.liveStream.content,
                 data: null,
                 mime_type: null,
                 producer: 'com.nominal.cafe-llm',
-                annotations: { 'chat.role': 'assistant' },
+                annotations: { 'chat.role': 'assistant', 'chat.is_streaming': true },
                 timestamp: Date.now(),
               }}
             />

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { listQuickies, createSession, streamChat } from 'cafe-web-sdk';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
-import { isStreamingToken } from '../streaming';
+import { endsLiveStream, nextLiveStream, tombstoneIds } from '../streaming';
 import type { Quickie, Chunk } from 'cafe-web-sdk';
 
 function uuid(): string {
@@ -52,20 +52,14 @@ export function QuickiesPanel() {
         id,
         q.starter_message,
         (chunk) => {
-          if (chunk.annotations['chat.stream_complete']) {
-            // Single source of truth: the accumulated per-token deltas.
-            // The trailing full `response_chunk` (also is_streaming, but with
-            // chat.model) is NOT added again, so the text is not duplicated.
-            const finalChunk: Chunk = {
-              ...chunk,
-              content_type: 'text',
-              content: store.streamingText,
-              annotations: { ...chunk.annotations, 'chat.role': 'assistant' },
-            };
-            store.finaliseStream(finalChunk);
-          } else if (isStreamingToken(chunk)) {
-            store.appendStreamToken(typeof chunk.content === 'string' ? chunk.content : '');
+          const s = useSessionStore.getState();
+          s.appendChunk(chunk);
+          if (tombstoneIds(chunk) !== null || endsLiveStream(chunk)) {
+            s.setLiveStream(null);
+            return;
           }
+          const live = nextLiveStream(s.liveStream, chunk);
+          if (live) s.setLiveStream(live);
         },
         () => { store.setStreaming(false); store.clearStreamingText(); },
         (err) => { console.error(err); store.setStreaming(false); store.clearStreamingText(); },

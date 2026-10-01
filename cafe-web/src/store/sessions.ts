@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Chunk, SessionInfo } from 'cafe-web-sdk';
+import type { LiveStream } from '../streaming';
 
 function applyMutations(chunks: Chunk[]): Chunk[] {
   const mutations = chunks.filter(
@@ -30,6 +31,8 @@ interface SessionStore {
   allChunks: Chunk[];         // raw unfiltered chunks for the chunk viewer
   streaming: boolean;
   streamingText: string;
+  /** Non-transient accumulated streaming view (one bubble per turn). */
+  liveStream: LiveStream | null;
   chunkViewerOpen: boolean;
   showAllChunks: boolean;
   selectedChunkId: string | null;
@@ -40,6 +43,7 @@ interface SessionStore {
   setAllChunks: (chunks: Chunk[]) => void;
   appendChunk: (chunk: Chunk) => void;
   appendStreamToken: (text: string) => void;
+  setLiveStream: (live: LiveStream | null) => void;
   finaliseStream: (chunk: Chunk) => void;
   setStreaming: (v: boolean) => void;
   clearStreamingText: () => void;
@@ -58,6 +62,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   allChunks: [],
   streaming: false,
   streamingText: '',
+  liveStream: null,
   chunkViewerOpen: false,
   showAllChunks: false,
   selectedChunkId: null,
@@ -68,7 +73,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   setActiveSession: (id) => {
     console.log('[store] setActiveSession id=', id);
-    set({ activeSessionId: id, messages: [], allChunks: [], streamingText: '' });
+    set({ activeSessionId: id, messages: [], allChunks: [], streamingText: '', liveStream: null });
   },
   setMessages: (messages) => {
     const merged = applyMutations(messages);
@@ -114,14 +119,25 @@ export const useSessionStore = create<SessionStore>((set) => ({
       return;
     }
     console.log('[store] appendChunk id=', chunk.id, 'role=', chunk.annotations['chat.role']);
+    // Transient chunks (streaming token deltas, tombstones, RPC envelopes) are
+    // kept in `allChunks` for the raw viewer but never enter `messages`: the
+    // live streaming view is built separately (see `liveStream`), and the
+    // durable final response is its own non-transient chunk.
+    const transient = chunk.annotations['cafe.transient'] === true;
     set((s) => {
       if (s.allChunks.some((c) => c.id === chunk.id)) return s;
-      return { messages: [...s.messages, chunk], allChunks: [...s.allChunks, chunk] };
+      return {
+        messages: transient ? s.messages : [...s.messages, chunk],
+        allChunks: [...s.allChunks, chunk],
+      };
     });
   },
   appendStreamToken: (text) => {
     console.log('[store] appendStreamToken len=', text.length, 'total=', useSessionStore.getState().streamingText.length + text.length);
     set((s) => ({ streamingText: s.streamingText + text }));
+  },
+  setLiveStream: (live) => {
+    set({ liveStream: live });
   },
   finaliseStream: (chunk) => {
     // Handle mutation: merge annotations into target chunk in both allChunks and messages
@@ -155,6 +171,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           return c;
         }),
         streamingText: '',
+        liveStream: null,
         streaming: false,
       }));
       return;
@@ -164,6 +181,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
       messages: [...s.messages, chunk],
       allChunks: [...s.allChunks, chunk],
       streamingText: '',
+      liveStream: null,
       streaming: false,
     }));
   },
@@ -173,7 +191,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
   clearStreamingText: () => {
     console.log('[store] clearStreamingText');
-    set({ streamingText: '' });
+    set({ streamingText: '', liveStream: null });
   },
   toggleChunkViewer: () => {
     set((s) => ({ chunkViewerOpen: !s.chunkViewerOpen }));
@@ -198,6 +216,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
       allChunks: [],
       streaming: false,
       streamingText: '',
+      liveStream: null,
       chunkViewerOpen: false,
       showAllChunks: false,
       selectedChunkId: null,
