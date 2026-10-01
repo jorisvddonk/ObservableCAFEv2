@@ -81,6 +81,8 @@ processes:
     command: ./target/release/cafe-agent-js
     environment:
       - "RUST_BACKTRACE=1"
+      # Cold model loads can exceed the 30s default; allow long first RPCs.
+      - "CAFE_JS_RPC_TIMEOUT_SECS=120"
     readiness_probe:
       exec:
         command: "true"

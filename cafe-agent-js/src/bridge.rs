@@ -163,6 +163,18 @@ cafe._unwrap = async function (envelopeJson) {
   if (env.code !== undefined && env.code !== null) err.code = env.code;
   throw err;
 };
+// Human-readable error string. QuickJS's Error.stack holds only stack frames
+// (no message line), so prepend String(e) ("Error: message") to keep agent
+// failures diagnosable. V8-style stacks that already include the message are
+// left as-is to avoid duplication.
+cafe._errorString = function (e) {
+  if (e === null || e === undefined) return String(e);
+  const text = String(e);
+  const stack = e.stack ? String(e.stack) : "";
+  if (!stack) return text;
+  if (text && stack.indexOf(text) === 0) return stack;
+  return text + "\n" + stack;
+};
 cafe.invoke = async (evaluator, params) =>
   cafe._unwrap(await cafe._invoke(evaluator + ".invoke", JSON.stringify(params || {})));
 cafe.rpc = async (method, params) =>
@@ -816,7 +828,7 @@ pub(crate) async fn run_js_stream(
                 .eval(
                     r#"(main(cafe).then(
                         v => JSON.stringify({ ok: true, value: v === undefined ? null : v }),
-                        e => JSON.stringify({ ok: false, error: String((e && e.stack) || e) })
+                        e => JSON.stringify({ ok: false, error: cafe._errorString(e) })
                     ))"#,
                 )
                 .map_err(|e| anyhow::anyhow!("failed to call main(cafe): {e}"))?;
@@ -1537,6 +1549,12 @@ async function main(cafe) {
         assert!(
             msg.contains("js agent failed"),
             "error must be attributed to the JS agent, got: {msg}"
+        );
+        // QuickJS's stack holds only frames; the settlement must still surface
+        // the underlying message ("Error: subscribe failed: ...").
+        assert!(
+            msg.contains("subscribe failed"),
+            "agent error must include the underlying RPC message, got: {msg}"
         );
     }
 
