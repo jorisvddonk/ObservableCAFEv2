@@ -67,14 +67,14 @@ mod tests {
             default_backend: Some("ollama".into()),
             backends: vec![
                 BackendModels {
-                    backend: "ollama".into(),
-                    default_model: Some("gemma3:1b".into()),
-                    models: vec!["gemma3:1b".into(), "shared".into()],
+                    backend: "alpha".into(),
+                    default_model: Some("alpha-small".into()),
+                    models: vec!["alpha-small".into(), "shared".into()],
                 },
                 BackendModels {
-                    backend: "opencode-go".into(),
-                    default_model: Some("deepseek-v4.1-flash".into()),
-                    models: vec!["deepseek-v4.1-flash".into(), "shared".into(), "grok-4.6".into()],
+                    backend: "beta".into(),
+                    default_model: Some("beta-large".into()),
+                    models: vec!["beta-large".into(), "shared".into(), "beta-x".into()],
                 },
             ],
         }
@@ -84,7 +84,7 @@ mod tests {
     fn all_models_is_sorted_and_deduped() {
         assert_eq!(
             catalog().all_models(),
-            vec!["deepseek-v4.1-flash", "gemma3:1b", "grok-4.6", "shared"]
+            vec!["alpha-small", "beta-large", "beta-x", "shared"]
         );
     }
 
@@ -92,15 +92,15 @@ mod tests {
     fn backend_for_prefers_requested_backend() {
         let c = catalog();
         assert_eq!(
-            c.backend_for("shared", Some("opencode-go")).unwrap().backend,
-            "opencode-go"
+            c.backend_for("shared", Some("beta")).unwrap().backend,
+            "beta"
         );
         assert_eq!(
-            c.backend_for("shared", Some("ollama")).unwrap().backend,
-            "ollama"
+            c.backend_for("shared", Some("alpha")).unwrap().backend,
+            "alpha"
         );
         // No preference: first matching backend wins.
-        assert_eq!(c.backend_for("shared", None).unwrap().backend, "ollama");
+        assert_eq!(c.backend_for("shared", None).unwrap().backend, "alpha");
     }
 
     #[test]

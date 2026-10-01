@@ -195,8 +195,8 @@ mod tests {
                 ),
                 (
                     "opencode-go".into(),
-                    fake("go", &["deepseek-v4.1-flash"]),
-                    Some("deepseek-v4.1-flash".into()),
+                    fake("go", &["go-large"]),
+                    Some("go-large".into()),
                 ),
             ],
         )
@@ -256,7 +256,7 @@ mod tests {
         );
         assert_eq!(
             r.default_model_for(Some("opencode_go")).as_deref(),
-            Some("deepseek-v4.1-flash")
+            Some("go-large")
         );
         assert_eq!(
             r.default_model_for(Some("unknown")).as_deref(),
@@ -267,6 +267,6 @@ mod tests {
     #[tokio::test]
     async fn list_models_aggregates_backends() {
         let models = router().list_models().await.unwrap();
-        assert_eq!(models, vec!["deepseek-v4.1-flash", "local-a", "local-b"]);
+        assert_eq!(models, vec!["go-large", "local-a", "local-b"]);
     }
 }

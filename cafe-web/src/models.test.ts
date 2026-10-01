@@ -21,11 +21,11 @@ function registryChunk(annotations: Record<string, unknown>): Chunk {
 }
 
 const catalog: ModelCatalog = {
-  models: ['gemma3:1b', 'grok-4.6', 'shared'],
+  models: ['local-small', 'go-large', 'shared'],
   default_backend: 'openai',
   backends: [
-    { backend: 'openai', default_model: 'gemma3:1b', models: ['gemma3:1b', 'shared'] },
-    { backend: 'opencode-go', default_model: 'deepseek-v4.1-flash', models: ['grok-4.6', 'shared'] },
+    { backend: 'openai', default_model: 'local-small', models: ['local-small', 'shared'] },
+    { backend: 'opencode-go', default_model: 'go-large', models: ['go-large', 'shared'] },
   ],
 };
 
@@ -35,7 +35,7 @@ describe('parseModelCatalog', () => {
     const parsed = parseModelCatalog(chunks);
     expect(parsed.default_backend).toBe('openai');
     expect(parsed.backends).toHaveLength(2);
-    expect(parsed.models).toContain('grok-4.6');
+    expect(parsed.models).toContain('go-large');
   });
 
   it('uses the newest catalog chunk', () => {
@@ -61,8 +61,8 @@ describe('parseModelCatalog', () => {
 
 describe('backendForModel', () => {
   it('returns the backend serving the model', () => {
-    expect(backendForModel(catalog, 'grok-4.6')?.backend).toBe('opencode-go');
-    expect(backendForModel(catalog, 'gemma3:1b')?.backend).toBe('openai');
+    expect(backendForModel(catalog, 'go-large')?.backend).toBe('opencode-go');
+    expect(backendForModel(catalog, 'local-small')?.backend).toBe('openai');
   });
 
   it('prefers the requested backend when several serve the model', () => {

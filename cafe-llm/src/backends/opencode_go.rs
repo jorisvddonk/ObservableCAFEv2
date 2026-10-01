@@ -383,8 +383,8 @@ mod tests {
 
     #[test]
     fn chat_body_keeps_system_message() {
-        let body = chat_body(msgs(), &params("deepseek-v4.1-flash"));
-        assert_eq!(body["model"], "deepseek-v4.1-flash");
+        let body = chat_body(msgs(), &params("chat-model"));
+        assert_eq!(body["model"], "chat-model");
         assert_eq!(body["stream"], true);
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][0]["content"], "be terse");
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn responses_body_moves_system_to_instructions() {
-        let body = responses_body(msgs(), &params("grok-4.6"));
+        let body = responses_body(msgs(), &params("resp-model"));
         assert_eq!(body["instructions"], "be terse");
         let input = body["input"].as_array().unwrap();
         assert_eq!(input.len(), 3, "system must not remain in input");
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn messages_body_uses_top_level_system_and_default_max_tokens() {
-        let body = messages_body(msgs(), &params("minimax-m3"));
+        let body = messages_body(msgs(), &params("msg-model"));
         assert_eq!(body["system"], "be terse");
         assert_eq!(body["max_tokens"], DEFAULT_MAX_TOKENS);
         let msgs = body["messages"].as_array().unwrap();
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn messages_body_preserves_explicit_max_tokens_and_clamps_temperature() {
-        let mut p = params("qwen3.8-max");
+        let mut p = params("msg-model");
         p.max_tokens = Some(128);
         p.temperature = Some(1.7);
         let body = messages_body(msgs(), &p);
