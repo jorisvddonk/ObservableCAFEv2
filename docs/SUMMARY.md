@@ -107,3 +107,6 @@
 - [ADR-132: Agent reload control signal](adr-132-agent-reload-signal.md)
 - [ADR-133: OpenCode Go backend for cafe-llm](adr-133-opencode-go-backend.md)
 - [ADR-134: Per-session LLM backend selection](adr-134-per-session-llm-backend.md)
+- [ADR-135: Chunk deletion via flow.signal](adr-135-chunk-deletion.md)
+- [ADR-136: Structured LLM model catalog](adr-136-model-catalog.md)
+- [ADR-137: Web streaming render (one bubble)](adr-137-web-streaming-render.md)
