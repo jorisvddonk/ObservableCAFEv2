@@ -216,6 +216,16 @@ impl Db {
         Ok(())
     }
 
+    /// Delete a single chunk row by id. Used to honor `flow.signal = "delete"`.
+    pub async fn delete_chunk(&self, session_id: &str, chunk_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM chunks WHERE id = ? AND session_id = ?")
+            .bind(chunk_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub async fn load_history(&self, session_id: &str) -> Result<Vec<Chunk>> {
         let rows = sqlx::query(

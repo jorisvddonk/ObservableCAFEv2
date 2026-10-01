@@ -1,8 +1,25 @@
 use cafe_types::envelope::EphemeralConfig;
-use cafe_types::Chunk;
+use cafe_types::{keys, Chunk};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tokio::sync::broadcast;
+
+/// If `chunk` is a `cafe.flow.signal = "delete"` control chunk, return the id
+/// of the chunk it retires.
+fn delete_target(chunk: &Chunk) -> Option<String> {
+    let signal = chunk
+        .annotations
+        .get(keys::CAFE_FLOW_SIGNAL)
+        .and_then(|v| v.as_str());
+    if signal != Some("delete") {
+        return None;
+    }
+    chunk
+        .annotations
+        .get(keys::FLOW_TARGET_CHUNK_ID)
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
 
 /// Tracks a single subscriber's connection on a session.
 #[derive(Debug, Clone)]
@@ -45,6 +62,13 @@ impl SessionState {
     }
 
     pub fn publish(&mut self, chunk: Chunk) {
+        // A `cafe.flow.signal = "delete"` chunk retires its target: remove it
+        // from history/retained so it never replays to a (re)connecting client.
+        if let Some(target) = delete_target(&chunk) {
+            self.remove_chunk(&target);
+            let _ = self.tx.send(chunk);
+            return;
+        }
         if !chunk.is_transient() {
             self.history.push(chunk.clone());
         } else if let Some(secs) = chunk.retain_secs() {
@@ -53,6 +77,14 @@ impl SessionState {
         }
         // Ignore send errors — no active subscribers is fine
         let _ = self.tx.send(chunk);
+    }
+
+    /// Remove a chunk from history and retained buffers by id.
+    pub fn remove_chunk(&mut self, chunk_id: &str) -> bool {
+        let before = self.history.len();
+        self.history.retain(|c| c.id != chunk_id);
+        self.retained.retain(|(c, _)| c.id != chunk_id);
+        self.history.len() != before
     }
 
     /// Return all non-expired retained transient chunks (oldest first),
@@ -297,6 +329,50 @@ mod tests {
             }
             assert_eq!(state.history.len(), non_transient_count);
         });
+    }
+
+    #[test]
+    fn delete_signal_removes_target_from_history() {
+        let mut state = SessionState::new("test".into(), "test".into());
+        let a = Chunk::new_text("keep", "test");
+        let b = Chunk::new_text("drop", "test");
+        state.publish(a.clone());
+        state.publish(b.clone());
+        assert_eq!(state.history.len(), 2);
+
+        let del = Chunk::new_null("test")
+            .with_annotation(keys::CAFE_FLOW_SIGNAL, "delete")
+            .with_annotation(keys::FLOW_TARGET_CHUNK_ID, &b.id);
+        state.publish(del);
+
+        assert_eq!(state.history.len(), 1);
+        assert_eq!(state.history[0].id, a.id);
+    }
+
+    #[test]
+    fn delete_signal_removes_target_from_retained() {
+        let mut state = SessionState::new("test".into(), "test".into());
+        let t = Chunk::new_text("ephemeral", "test")
+            .as_transient()
+            .with_retain(60);
+        state.publish(t.clone());
+        assert!(state.drain_retained().iter().any(|c| c.id == t.id));
+
+        let del = Chunk::new_null("test")
+            .with_annotation(keys::CAFE_FLOW_SIGNAL, "delete")
+            .with_annotation(keys::FLOW_TARGET_CHUNK_ID, &t.id);
+        state.publish(del);
+        assert!(!state.drain_retained().iter().any(|c| c.id == t.id));
+    }
+
+    #[test]
+    fn non_delete_signal_does_not_remove() {
+        let mut state = SessionState::new("test".into(), "test".into());
+        let c = Chunk::new_text("stay", "test");
+        state.publish(c.clone());
+        let other = Chunk::new_null("test").with_annotation(keys::CAFE_FLOW_SIGNAL, "reset");
+        state.publish(other);
+        assert!(state.history.iter().any(|x| x.id == c.id));
     }
 
     #[test]

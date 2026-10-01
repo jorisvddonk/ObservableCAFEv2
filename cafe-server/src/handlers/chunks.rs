@@ -121,10 +121,12 @@ pub async fn delete_chunk(
     _auth: AuthUser,
     Path((session_id, chunk_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    // Publish a flow signal to mark the chunk as deleted
+    // Publish a flow signal to mark the chunk as deleted. The bus removes the
+    // target from history and cafe-store drops it from the DB, so it is gone
+    // for live clients and on reload alike.
     let del_chunk = Chunk::new_null("com.nominal.cafe-server")
         .with_annotation(keys::CAFE_FLOW_SIGNAL, "delete")
-        .with_annotation("flow.target_chunk_id", chunk_id);
+        .with_annotation(keys::FLOW_TARGET_CHUNK_ID, chunk_id);
 
     match state.bus.publish(&session_id, del_chunk).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

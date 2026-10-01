@@ -50,6 +50,25 @@ async fn connect_and_run(socket_path: &str, db: &Arc<Db>) -> anyhow::Result<()> 
                 }
             }
             ServerMessage::Chunk { session_id, chunk } => {
+                // Honor `flow.signal = "delete"`: drop the target row so the
+                // chunk is gone from history after a reload too.
+                if chunk
+                    .get_annotation::<String>(cafe_sdk::keys::CAFE_FLOW_SIGNAL)
+                    .as_deref()
+                    == Some("delete")
+                {
+                    if let Some(target) = chunk
+                        .get_annotation::<String>(cafe_sdk::keys::FLOW_TARGET_CHUNK_ID)
+                    {
+                        if let Err(e) = db.delete_chunk(&session_id, &target).await {
+                            error!(
+                                "cafe-store: failed to delete chunk {} for session {}: {}",
+                                target, session_id, e
+                            );
+                        }
+                    }
+                    continue;
+                }
                 let _ = db.ensure_session(&session_id).await;
                 if let Err(e) = db.insert_chunk(&session_id, &chunk).await {
                     error!(

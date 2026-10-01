@@ -66,6 +66,8 @@ pub mod keys {
     pub const FLOW_SIGNAL: &str = "flow.signal";
     pub const FLOW_AGENT_ID: &str = "flow.agent_id";
     pub const FLOW_TOMBSTONE: &str = "flow.tombstone";
+    /// Id of the chunk a `flow.signal = "delete"` control chunk retires.
+    pub const FLOW_TARGET_CHUNK_ID: &str = "flow.target_chunk_id";
     pub const MUTATES_TARGET_ID: &str = "mutates.target_id";
 
     pub const ERROR_MESSAGE: &str = "error.message";
