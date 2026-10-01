@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { listSessions, createSession, deleteSession, forkSession, getHistory, isAuthError } from 'cafe-web-sdk';
 import type { Chunk } from 'cafe-web-sdk';
+import { isChatMessage } from '../streaming';
 
 function applyMutations(chunks: Chunk[]): Chunk[] {
   const mutations = chunks.filter(
@@ -55,16 +56,9 @@ export function useSessions() {
       const { chunks } = await getHistory(id);
       const merged = applyMutations(chunks);
       store.setAllChunks(merged);
-      const chatChunks = merged.filter(
-        (c) =>
-          !c.annotations['cafe.transient'] &&
-          ((c.content_type === 'text' &&
-            (c.annotations['chat.role'] === 'user' ||
-              c.annotations['chat.role'] === 'assistant')) ||
-          ((c.content_type === 'binary' || c.content_type === 'binary-ref') &&
-            c.annotations['chat.role'] === 'assistant')),
-      );
-      store.setMessages(chatChunks);
+      // Shared filter applies tombstones + delete signals and drops transient
+      // per-token deltas, matching the live view exactly.
+      store.setMessages(merged.filter(isChatMessage));
     } catch (err) {
       console.error('Failed to load history:', err);
     }

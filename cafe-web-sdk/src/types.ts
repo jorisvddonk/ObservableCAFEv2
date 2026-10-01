@@ -145,6 +145,7 @@ export const CHAT_FINISH_REASON = 'chat.finish_reason';
 export const ERROR_MESSAGE = 'cafe.error.message';
 export const FLOW_SIGNAL = 'cafe.flow.signal';
 export const FLOW_TOMBSTONE = 'cafe.flow.tombstone';
+export const FLOW_TARGET_CHUNK_ID = 'flow.target_chunk_id';
 export const MUTATES_TARGET_ID = 'cafe.mutates.target_id';
 export const SECURITY_TRUST_LEVEL = 'security.trust-level';
 export const BINARY_READ_URL = 'cafe.binary.read_url';

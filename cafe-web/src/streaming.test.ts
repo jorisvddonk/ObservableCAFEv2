@@ -4,7 +4,9 @@ import {
   assembleStream,
   buildFinalContent,
   chatMessagesFrom,
+  deletionTarget,
   endsLiveStream,
+  hiddenChunkIds,
   isStreamingToken,
   nextLiveStream,
   rawViewChunks,
@@ -170,6 +172,45 @@ describe('chatMessagesFrom', () => {
     };
     const visible = chatMessagesFrom([transientDelta, fullResponse]);
     expect(visible.map((c) => c.id)).toEqual(['full-response']);
+  });
+});
+
+describe('delete signals', () => {
+  const target: Chunk = {
+    id: 'to-delete',
+    content_type: 'text',
+    content: 'bye',
+    data: null,
+    mime_type: null,
+    producer: 'com.nominal.cafe-server',
+    annotations: { 'chat.role': 'user' },
+    timestamp: 0,
+  };
+  const del: Chunk = {
+    id: 'del-signal',
+    content_type: 'null',
+    content: null,
+    data: null,
+    mime_type: null,
+    producer: 'com.nominal.cafe-server',
+    annotations: { 'cafe.flow.signal': 'delete', 'flow.target_chunk_id': 'to-delete' },
+    timestamp: 0,
+  };
+
+  it('extracts the deletion target', () => {
+    expect(deletionTarget(del)).toBe('to-delete');
+    expect(deletionTarget(target)).toBeNull();
+  });
+
+  it('hides deleted chunks from the chat and raw views', () => {
+    expect(hiddenChunkIds([target, del]).has('to-delete')).toBe(true);
+    expect(chatMessagesFrom([target, del]).map((c) => c.id)).toEqual([]);
+    expect(rawViewChunks([target, del]).map((c) => c.id)).toEqual([]);
+  });
+
+  it('keeps sibling chunks that were not deleted', () => {
+    const keep = { ...target, id: 'keep-me' };
+    expect(chatMessagesFrom([keep, target, del]).map((c) => c.id)).toEqual(['keep-me']);
   });
 });
 

@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
+import { deleteChunks } from 'cafe-web-sdk';
+import { hiddenChunkIds } from '../streaming';
 import type { Chunk } from 'cafe-web-sdk';
 
 // ── colour coding per content type / role ────────────────────────────────────
@@ -128,8 +130,42 @@ function ChunkRow({
 
 // ── detail pane ───────────────────────────────────────────────────────────────
 
-function ChunkDetail({ chunk }: { chunk: Chunk }) {
+function ChunkDetail({
+  chunk,
+  subsequentIds,
+  onStatus,
+}: {
+  chunk: Chunk;
+  subsequentIds: string[];
+  onStatus: (s: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const setSelectedChunkId = useSessionStore((s) => s.setSelectedChunkId);
+
+  const runDelete = async (ids: string[], describe: string) => {
+    if (!activeSessionId || deleting || ids.length === 0) return;
+    console.log('[ChunkViewer] deleting ids:', ids.length, ids);
+    if (!window.confirm(`Delete ${describe}?\n\nThis removes ${ids.length > 1 ? 'them' : 'it'} from the session history.`)) {
+      return;
+    }
+    setDeleting(true);
+    onStatus(`deleting ${ids.length}…`);
+    try {
+      await deleteChunks(activeSessionId, ids);
+      setSelectedChunkId(null);
+      onStatus(`deleted ${ids.length}`);
+    } catch (err) {
+      console.error('[ChunkViewer] delete failed', err);
+      onStatus(`partial: ${err instanceof Error ? err.message : String(err)}`);
+      setDeleting(false);
+    }
+  };
+
+  const delOne = () => runDelete([chunk.id], `chunk ${chunk.id}`);
+  const delSubsequent = () =>
+    runDelete([chunk.id, ...subsequentIds], `this chunk and the ${subsequentIds.length} after it`);
 
   const json = JSON.stringify(
     {
@@ -193,6 +229,40 @@ function ChunkDetail({ chunk }: { chunk: Chunk }) {
         >
           {copied ? '✓ Copied' : 'Copy JSON'}
         </button>
+        <button
+          onClick={delOne}
+          disabled={deleting}
+          title="Delete this chunk from the session (Shift+Delete removes this and all following)"
+          style={{
+            background: '#3a1a1a',
+            border: '1px solid #7a3030',
+            color: deleting ? '#666' : '#ff8080',
+            borderRadius: 4,
+            padding: '2px 8px',
+            fontSize: 11,
+            cursor: deleting ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {deleting ? 'Deleting…' : '🗑 Delete'}
+        </button>
+        {subsequentIds.length > 0 && (
+          <button
+            onClick={delSubsequent}
+            disabled={deleting}
+            title="Delete this chunk and every chunk after it"
+            style={{
+              background: '#4a1a1a',
+              border: '1px solid #a04040',
+              color: deleting ? '#666' : '#ff9e9e',
+              borderRadius: 4,
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: deleting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {deleting ? 'Deleting…' : `🗑 Delete +${subsequentIds.length} after`}
+          </button>
+        )}
       </div>
 
       {/* Audio preview for binary audio chunks */}
@@ -268,9 +338,25 @@ export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
   const [search, setSearch] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [status, setStatus] = useState<string>('');
   const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   const selected = selectedChunkId ? (allChunks.find((c) => c.id === selectedChunkId) ?? null) : null;
+
+  // The chunks shown in the list: filtered, minus any hidden by tombstones or
+  // delete signals.
+  const hidden = hiddenChunkIds(allChunks);
+  const visible = applyFilter(allChunks, filter, search).filter((c) => !hidden.has(c.id));
+
+  // Every chunk after the selected one in the SESSION (allChunks order),
+  // regardless of the active filter/search — "delete all after" should mean
+  // all of them, not just the ones currently on screen.
+  const subsequentIds = (() => {
+    if (!selectedChunkId) return [];
+    const ids = allChunks.map((c) => c.id);
+    const idx = ids.indexOf(selectedChunkId);
+    return idx === -1 ? [] : ids.slice(idx + 1);
+  })();
 
   // Auto-scroll list to bottom when new chunks arrive
   useEffect(() => {
@@ -293,9 +379,36 @@ export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
     setSelectedChunkId(null);
   }, [activeSessionId]);
 
-  if (!chunkViewerOpen) return null;
+  // Shift+Delete deletes the selected chunk and every chunk shown after it.
+  // Accepts Backspace too: macOS keyboards often report Shift+Delete as
+  // Backspace (and forward-delete is Fn+Delete).
+  useEffect(() => {
+    if (!chunkViewerOpen || !selectedChunkId || !activeSessionId) return;
+    const onKey = (e: KeyboardEvent) => {
+      const isDeleteKey = e.key === 'Delete' || e.key === 'Backspace';
+      if (!isDeleteKey || !e.shiftKey) return;
+      // Don't hijack the shortcut while typing in a field.
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      e.preventDefault();
+      if (!window.confirm(`Delete this chunk and the ${subsequentIds.length} after it?`)) return;
+      const all = [selectedChunkId, ...subsequentIds];
+      setStatus(`deleting ${all.length}…`);
+      deleteChunks(activeSessionId, all)
+        .then(() => {
+          setSelectedChunkId(null);
+          setStatus(`deleted ${all.length}`);
+        })
+        .catch((err) => {
+          console.error('[ChunkViewer] shift-delete failed', err);
+          setStatus(`delete failed: ${String(err)}`);
+        });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chunkViewerOpen, selectedChunkId, activeSessionId, subsequentIds]);
 
-  const visible = applyFilter(allChunks, filter, search);
+  if (!chunkViewerOpen) return null;
 
   const FILTER_BTNS: { key: FilterType; label: string }[] = [
     { key: 'all',    label: 'All' },
@@ -388,6 +501,14 @@ export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
 
         <span style={{ fontSize: 11, color: '#555', marginLeft: 4 }}>
           {visible.length}/{allChunks.length}
+          {selectedChunkId ? (
+            <span style={{ color: '#8ab4f8', marginLeft: 8 }}>
+              sel={selectedChunkId.slice(0, 8)} after={subsequentIds.length}
+            </span>
+          ) : null}
+          {status ? (
+            <span style={{ color: '#ff9e9e', marginLeft: 8 }}>{status}</span>
+          ) : null}
         </span>
 
         {/* Close */}
@@ -465,7 +586,7 @@ export function ChunkViewer({ zIndex = 1000 }: { zIndex?: number }) {
         {/* Detail pane */}
         {selected && (
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <ChunkDetail chunk={selected} />
+            <ChunkDetail chunk={selected} subsequentIds={subsequentIds} onStatus={setStatus} />
           </div>
         )}
       </div>

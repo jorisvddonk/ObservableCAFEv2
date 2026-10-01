@@ -3,6 +3,8 @@ import {
   CHAT_IS_STREAMING,
   CHAT_MODEL,
   CHAT_STREAM_COMPLETE,
+  FLOW_SIGNAL,
+  FLOW_TARGET_CHUNK_ID,
   FLOW_TOMBSTONE,
 } from 'cafe-web-sdk';
 
@@ -79,19 +81,16 @@ export function tombstoneIds(chunk: Chunk): string[] | null {
  * would otherwise render one bubble per token) and tombstoned chunks.
  */
 export function rawViewChunks(chunks: Chunk[]): Chunk[] {
-  const hidden = new Set<string>();
-  for (const chunk of chunks) {
-    const ids = tombstoneIds(chunk);
-    if (ids) for (const id of ids) hidden.add(id);
-  }
+  const hidden = hiddenChunkIds(chunks);
   return chunks.filter(
     (c) =>
       !hidden.has(c.id) &&
       // Per-token deltas are transient text with chat.is_streaming and no
       // chat.model — never render them individually.
       !isStreamingToken(c) &&
-      // Tombstone markers themselves are not rows.
-      tombstoneIds(c) === null,
+      // Tombstone markers and delete signals themselves are not rows.
+      tombstoneIds(c) === null &&
+      deletionTarget(c) === null,
   );
 }
 
@@ -120,17 +119,36 @@ export function isChatMessage(chunk: Chunk): boolean {
 }
 
 /**
- * Filter a raw chunk list down to the visible chat messages, applying
- * tombstones: any chunk whose id a later tombstone retired is hidden. Durable
- * final responses survive; transient streaming rows (if they slipped through)
- * are filtered by `isChatMessage`.
+ * The id a chunk retires via `flow.signal = "delete"`, if it is one. The bus
+ * removes the target from history, but live clients also need to hide it so
+ * the display updates immediately.
  */
-export function chatMessagesFrom(chunks: Chunk[]): Chunk[] {
+export function deletionTarget(chunk: Chunk): string | null {
+  if (chunk.annotations[FLOW_SIGNAL] !== 'delete') return null;
+  const id = chunk.annotations[FLOW_TARGET_CHUNK_ID];
+  return typeof id === 'string' ? id : null;
+}
+
+/** Collect every chunk id hidden by a tombstone or delete signal. */
+export function hiddenChunkIds(chunks: Chunk[]): Set<string> {
   const hidden = new Set<string>();
   for (const chunk of chunks) {
     const ids = tombstoneIds(chunk);
     if (ids) for (const id of ids) hidden.add(id);
+    const deleted = deletionTarget(chunk);
+    if (deleted) hidden.add(deleted);
   }
+  return hidden;
+}
+
+/**
+ * Filter a raw chunk list down to the visible chat messages, applying
+ * tombstones and delete signals: any chunk whose id a later tombstone or
+ * delete retired is hidden. Durable final responses survive; transient
+ * streaming rows (if they slipped through) are filtered by `isChatMessage`.
+ */
+export function chatMessagesFrom(chunks: Chunk[]): Chunk[] {
+  const hidden = hiddenChunkIds(chunks);
   return chunks.filter((c) => isChatMessage(c) && !hidden.has(c.id));
 }
 

@@ -76,6 +76,36 @@ export async function publishChunk(
   });
 }
 
+/**
+ * Delete a chunk. The server publishes a `flow.signal = "delete"` control
+ * chunk; the bus drops the target from history and cafe-store removes it, so
+ * it disappears live and on reload.
+ */
+export async function deleteChunk(sessionId: string, chunkId: string): Promise<void> {
+  await apiFetch(`/api/sessions/${sessionId}/chunks/${chunkId}`, { method: 'DELETE' });
+}
+
+/**
+ * Delete several chunks, one control signal each. Never aborts early: every
+ * id is attempted and per-id failures are collected, so one bad request cannot
+ * leave the rest undeleted. Throws only if every id failed, with the details.
+ */
+export async function deleteChunks(sessionId: string, chunkIds: string[]): Promise<void> {
+  const failures: string[] = [];
+  for (const id of chunkIds) {
+    try {
+      await deleteChunk(sessionId, id);
+    } catch (err) {
+      failures.push(`${id.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `${failures.length}/${chunkIds.length} deletes failed:\n${failures.slice(0, 5).join('\n')}`,
+    );
+  }
+}
+
 export function getBinaryUrl(sessionId: string, chunkId: string): string {
   const token = encodeURIComponent(getToken());
   return `${getBaseUrl()}/api/sessions/${sessionId}/chunks/${chunkId}/binary?token=${token}`;
