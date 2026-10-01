@@ -1,5 +1,6 @@
 import { apiFetch, getBaseUrl, getToken } from './client.js';
-import type { SessionInfo, SessionConfig, Chunk, AgentInfo } from './types.js';
+import type { SessionInfo, SessionConfig, Chunk, AgentInfo, ModelCatalog } from './types.js';
+import { LLM_REGISTRY_SESSION, parseModelCatalog } from './types.js';
 
 export async function listSessions(): Promise<SessionInfo[]> {
   return apiFetch<SessionInfo[]>('/api/sessions');
@@ -7,6 +8,20 @@ export async function listSessions(): Promise<SessionInfo[]> {
 
 export async function listAgents(): Promise<AgentInfo[]> {
   return apiFetch<AgentInfo[]>('/api/agents');
+}
+
+/** Fetch the LLM model catalog (models grouped by backend). */
+export async function listModels(): Promise<ModelCatalog> {
+  return apiFetch<ModelCatalog>('/api/models');
+}
+
+/**
+ * Read the model catalog straight from the `_cafe_llm_registry` session
+ * history, so the UI reflects exactly what cafe-llm published.
+ */
+export async function readModelCatalog(): Promise<ModelCatalog> {
+  const { chunks } = await getHistory(LLM_REGISTRY_SESSION);
+  return parseModelCatalog(chunks);
 }
 
 export async function createSession(

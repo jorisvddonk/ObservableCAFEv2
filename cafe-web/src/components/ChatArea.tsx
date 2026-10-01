@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { useSessions } from '../hooks/useSessions';
-import { streamChat, openSessionStream, publishChunk } from 'cafe-web-sdk';
+import { useModels } from '../hooks/useModels';
+import { streamChat, openSessionStream, publishChunk, backendForModel } from 'cafe-web-sdk';
 import { Message } from './Message';
 import {
   chatMessagesFrom,
@@ -15,6 +16,7 @@ import type { Chunk } from 'cafe-web-sdk';
 export function ChatArea() {
   const store = useSessionStore();
   const { removeSession, duplicateSession } = useSessions();
+  const { catalog } = useModels();
   const [input, setInput] = useState('');
   const [forking, setForking] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -48,6 +50,33 @@ export function ChatArea() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [store.messages]);
+
+  // `/model` autocomplete: when the input is a model command, suggest matching
+  // models from the catalog (each labelled with its serving backend).
+  const modelQuery = useMemo(() => {
+    const m = input.match(/^\/model(?:\s+(.*))?$/);
+    return m ? (m[1] ?? '') : null;
+  }, [input]);
+
+  const suggestions = useMemo(() => {
+    if (modelQuery === null) return [];
+    const q = modelQuery.toLowerCase();
+    const rows = catalog.backends.flatMap((b) =>
+      b.models.map((model) => ({ model, backend: b.backend })),
+    );
+    // De-duplicate by model, keeping the first backend that serves it.
+    const byModel = new Map<string, { model: string; backend: string }>();
+    for (const r of rows) if (!byModel.has(r.model)) byModel.set(r.model, r);
+    const all = [...byModel.values()].sort((a, b) => a.model.localeCompare(b.model));
+    return q ? all.filter((r) => r.model.toLowerCase().includes(q)) : all;
+  }, [modelQuery, catalog]);
+
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  useEffect(() => {
+    setSuggestionIndex(0);
+  }, [modelQuery]);
+
+  const showSuggestions = modelQuery !== null && suggestions.length > 0;
 
   // Open a persistent SSE stream for the active session.
   // This is the mechanism that delivers binary chunks (audio, images) that
@@ -85,6 +114,22 @@ export function ChatArea() {
       cleanupStream.current = null;
     };
   }, [store.activeSessionId]);
+
+  // Apply a model choice: publish the model and, when known, the backend that
+  // serves it, so a later generation routes to the right provider (ADR-134).
+  const applyModel = async (sessionId: string, model: string) => {
+    const backend = backendForModel(catalog, model, catalog.default_backend ?? null);
+    const annotations: Record<string, unknown> = {
+      'config.type': 'runtime',
+      'config.llm.model': model,
+    };
+    if (backend) annotations['config.llm.backend'] = backend.backend;
+    try {
+      await publishChunk(sessionId, 'null', annotations);
+    } catch (err) {
+      console.error('[ChatArea] /model error', err);
+    }
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -133,6 +178,15 @@ export function ChatArea() {
       return;
     }
 
+    // /model <name> — select the model and its serving backend for this session
+    if (text === '/model' || text.startsWith('/model ')) {
+      const name = text.slice('/model'.length).trim();
+      if (name) {
+        await applyModel(state.activeSessionId, name);
+      }
+      return;
+    }
+
     state.setStreaming(true);
 
     await streamChat(
@@ -159,6 +213,29 @@ export function ChatArea() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showSuggestions) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSuggestionIndex((i) => (i + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSuggestionIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        const pick = suggestions[suggestionIndex];
+        if (pick) setInput(`/model ${pick.model}`);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setInput('');
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -317,8 +394,51 @@ export function ChatArea() {
           background: '#16213e',
           display: 'flex',
           gap: 8,
+          position: 'relative',
         }}
       >
+        {showSuggestions && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '100%',
+              left: 16,
+              right: 16,
+              maxHeight: 240,
+              overflowY: 'auto',
+              background: '#0f3460',
+              border: '1px solid #2a2a4a',
+              borderRadius: 6,
+              marginBottom: 4,
+              boxShadow: '0 -4px 16px rgba(0,0,0,0.4)',
+              zIndex: 20,
+            }}
+          >
+            {suggestions.map((s, i) => (
+              <div
+                key={`${s.backend}:${s.model}`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setInput(`/model ${s.model}`);
+                }}
+                onMouseEnter={() => setSuggestionIndex(i)}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  color: i === suggestionIndex ? '#1a1a2e' : '#ccc',
+                  background: i === suggestionIndex ? '#4fc3f7' : 'transparent',
+                }}
+              >
+                <span>{s.model}</span>
+                <span style={{ fontSize: 11, opacity: 0.7 }}>{s.backend}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

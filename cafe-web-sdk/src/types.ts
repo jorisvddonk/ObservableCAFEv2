@@ -52,6 +52,84 @@ export interface SessionConfig {
   tags?: string[];
 }
 
+/** The models a single LLM backend serves, and its default. */
+export interface BackendModels {
+  backend: string;
+  default_model?: string | null;
+  models: string[];
+}
+
+/** The LLM model catalog exposed by cafe-server at `GET /api/models`. */
+export interface ModelCatalog {
+  /** Flat list of every model across all backends. */
+  models: string[];
+  /** Backend used when a session sets no `config.llm.backend`. */
+  default_backend?: string | null;
+  backends: BackendModels[];
+}
+
+/** The session cafe-llm publishes its model catalog to. */
+export const LLM_REGISTRY_SESSION = '_cafe_llm_registry';
+/** Annotation on a registry chunk holding a serialized {@link ModelCatalog}. */
+export const CONFIG_MODEL_CATALOG = 'config.model_catalog';
+/** Legacy flat annotation on a registry chunk holding model names. */
+export const CONFIG_AVAILABLE_MODELS = 'config.available_models';
+
+/**
+ * Parse the model catalog out of the `_cafe_llm_registry` session's chunks.
+ *
+ * Reads the structured `config.model_catalog` annotation (which carries backend
+ * + default model per model) from the newest chunk that has it, falling back to
+ * the legacy flat `config.available_models` list.
+ */
+export function parseModelCatalog(chunks: Chunk[]): ModelCatalog {
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const raw = chunks[i].annotations[CONFIG_MODEL_CATALOG];
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw) as ModelCatalog;
+        if (parsed && Array.isArray(parsed.backends)) {
+          return {
+            models: parsed.models ?? parsed.backends.flatMap((b) => b.models),
+            default_backend: parsed.default_backend ?? null,
+            backends: parsed.backends,
+          };
+        }
+      } catch {
+        // fall through to the legacy key
+      }
+    }
+  }
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const raw = chunks[i].annotations[CONFIG_AVAILABLE_MODELS];
+    if (typeof raw === 'string') {
+      try {
+        const models = JSON.parse(raw) as string[];
+        if (Array.isArray(models)) {
+          return { models, default_backend: null, backends: [] };
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return { models: [], default_backend: null, backends: [] };
+}
+
+/** The backend serving `model`, preferring `preferred` when several match. */
+export function backendForModel(
+  catalog: ModelCatalog,
+  model: string,
+  preferred?: string | null,
+): BackendModels | null {
+  const candidates = catalog.backends.filter((b) => b.models.includes(model));
+  if (preferred) {
+    const hit = candidates.find((b) => b.backend === preferred);
+    if (hit) return hit;
+  }
+  return candidates[0] ?? null;
+}
+
 export interface AgentInfo {
   id: string;
   description: string;
